@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cashew-nut/clinical-study-endpoint-knowledge-base/schemas/axis.schema.json",
+  "title": "Controlled vocabulary axis",
+  "description": "One axis of the endpoint parameter model. An axis is a closed or extensible set of terms describing a single dimension of endpoint structure.",
+  "type": "object",
+  "required": ["axis_id", "label", "definition", "extensible", "terms"],
+  "additionalProperties": false,
+  "properties": {
+    "axis_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Stable machine identifier for the axis."
+    },
+    "label": { "type": "string", "minLength": 1 },
+    "definition": { "type": "string", "minLength": 1 },
+    "extensible": {
+      "type": "boolean",
+      "description": "Whether downstream users may add terms beyond those defined here."
+    },
+    "usdm_alignment": {
+      "type": "object",
+      "description": "Where this axis corresponds to a USDM/DDF attribute and codelist.",
+      "additionalProperties": false,
+      "properties": {
+        "entity": { "type": "string" },
+        "attribute": { "type": "string" },
+        "codelist_c_code": { "type": "string", "pattern": "^C[0-9]+$" }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reference" }
+    },
+    "terms": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/term" }
+    }
+  },
+  "$defs": {
+    "reference": {
+      "type": "object",
+      "required": ["citation"],
+      "additionalProperties": false,
+      "properties": {
+        "citation": { "type": "string" },
+        "url": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "external_mapping": {
+      "type": "object",
+      "description": "A mapping to an external terminology. 'verified' must be false unless the code was checked against the named system at the named version.",
+      "required": ["system", "code", "verified"],
+      "additionalProperties": false,
+      "properties": {
+        "system": {
+          "type": "string",
+          "enum": ["NCIt", "CDISC-CT", "LOINC", "SNOMED-CT", "MedDRA", "UCUM", "UMLS"]
+        },
+        "code": { "type": "string", "minLength": 1 },
+        "display": { "type": "string" },
+        "system_version": { "type": "string" },
+        "verified": {
+          "type": "boolean",
+          "description": "True only when the code has been checked against the source terminology."
+        },
+        "verified_against": {
+          "type": "string",
+          "description": "The artefact the code was checked against, e.g. a specific CDISC deliverable file."
+        }
+      }
+    },
+    "term": {
+      "type": "object",
+      "required": ["term_id", "label", "definition"],
+      "additionalProperties": false,
+      "properties": {
+        "term_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "label": { "type": "string", "minLength": 1 },
+        "definition": { "type": "string", "minLength": 1 },
+        "synonyms": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": "string" },
+        "broader": {
+          "type": "string",
+          "description": "term_id of a broader term within the same axis, forming a shallow hierarchy."
+        },
+        "attributes": {
+          "type": "object",
+          "description": "Axis-specific structured attributes; validated per-axis by axis_attributes.schema.json.",
+          "additionalProperties": true
+        },
+        "external_mappings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/external_mapping" }
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "reviewed", "deprecated"],
+          "default": "draft"
+        },
+        "deprecated_by": { "type": "string" }
+      }
+    }
+  }
+}

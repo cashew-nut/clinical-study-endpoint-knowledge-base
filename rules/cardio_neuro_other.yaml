@@ -1,0 +1,210 @@
+rulepack_id: cardio_neuro_other
+version: 1.0.0
+description: Cardiovascular, renal, neurology, psychiatry, infection, ophthalmology and cross-cutting concepts.
+rules:
+  # ---------------- cardiovascular / renal ----------------
+  - rule_id: mace.time_to_first
+    concept_id: MACE_TIME_TO_FIRST
+    priority: 250
+    confidence: 0.9
+    match:
+      any_of:
+        - '\bMACE\b'
+        - '\bmajor adverse cardiovascular event'
+        - '\bmajor adverse cardiac event'
+      none_of:
+        - '\btotal number\b'
+        - '\brecurrent\b'
+      fields: [measure_and_description]
+
+  - rule_id: sbp.change_from_baseline
+    concept_id: SBP_CFB
+    priority: 245
+    confidence: 0.92
+    match:
+      all_of:
+        - '\bsystolic blood pressure\b|\bSBP\b'
+        - '\bchange (?:from|since) baseline\b|\breduction in\b'
+      fields: [measure]
+
+  - rule_id: hf_hosp.recurrent
+    concept_id: HF_HOSPITALISATION_RECURRENT
+    priority: 250
+    confidence: 0.88
+    match:
+      all_of:
+        - '\bheart failure\b|\bHF\b'
+        - '\bhospitali[sz]ation'
+        - '\btotal\b|\brecurrent\b|\bnumber of\b'
+      fields: [measure_and_description]
+
+  - rule_id: egfr.slope
+    concept_id: EGFR_SLOPE
+    priority: 250
+    confidence: 0.9
+    match:
+      all_of:
+        - '\beGFR\b|\bglomerular filtration rate\b'
+        - '\bslope\b|\brate of (?:change|decline)\b|\bannual .{0,15}decline\b'
+      fields: [measure_and_description]
+
+  - rule_id: uacr.percent_change
+    concept_id: UACR_PCT_CFB
+    priority: 245
+    confidence: 0.9
+    match:
+      all_of:
+        - '\bUACR\b|\balbumin[- ]to[- ]creatinine ratio\b|\balbumin creatinine ratio\b'
+        - '\b(?:percent|percentage|%)\s?change\b'
+      fields: [measure_and_description]
+
+  # ---------------- neurology / psychiatry ----------------
+  - rule_id: arr.annualised_relapse_rate
+    concept_id: ANNUALISED_RELAPSE_RATE
+    priority: 255
+    confidence: 0.94
+    match:
+      any_of:
+        - '\bannuali[sz]ed relapse rate\b'
+        - '\bARR\b'
+      fields: [measure_and_description]
+
+  - rule_id: cdp.confirmed_disability_progression
+    concept_id: CONFIRMED_DISABILITY_PROGRESSION
+    priority: 255
+    confidence: 0.92
+    match:
+      all_of:
+        - '\bdisability (?:progression|worsening|accumulation)\b'
+        - '\bconfirmed\b'
+      fields: [measure_and_description]
+
+  - rule_id: adas_cog.change_from_baseline
+    concept_id: ADAS_COG_CFB
+    priority: 250
+    confidence: 0.92
+    match:
+      all_of:
+        - '\bADAS[- ]?Cog\b'
+        - '\bchange (?:from|since) baseline\b'
+      fields: [measure]
+
+  - rule_id: depression.change_from_baseline
+    concept_id: DEPRESSION_SCALE_CFB
+    priority: 245
+    confidence: 0.9
+    match:
+      all_of:
+        - '\bMADRS\b|\bHAM[- ]?D\b|\bHDRS\b|\bHamilton Depression\b|\bMontgomery[- ]?.sberg\b|\bPHQ[- ]?9\b'
+        - '\bchange (?:from|since) baseline\b'
+      fields: [measure]
+
+  - rule_id: seizure.percent_change
+    concept_id: SEIZURE_FREQUENCY_PCT_CFB
+    priority: 245
+    confidence: 0.9
+    match:
+      all_of:
+        - '\bseizure frequency\b'
+        - '\b(?:percent|percentage|%)\s?change\b|\bpercent(?:age)? reduction\b'
+      fields: [measure_and_description]
+
+  # ---------------- infection / vaccines ----------------
+  - rule_id: viral_suppression
+    concept_id: VIRAL_SUPPRESSION_RATE
+    priority: 250
+    confidence: 0.9
+    match:
+      all_of:
+        - '\bviral load\b|\bHIV[- ]1 RNA\b|\bHBV DNA\b|\bHCV RNA\b|\bvirologic\w* suppression\b'
+        - '(?:percentage|proportion|number) of (?:participants|patients|subjects)|\brate\b'
+      fields: [measure_and_description]
+
+  - rule_id: seroconversion
+    concept_id: SEROCONVERSION_RATE
+    priority: 250
+    confidence: 0.9
+    match:
+      any_of:
+        - '\bseroconversion rate\b'
+        - '\bseroresponse rate\b'
+        - '\bseroconversion\b'
+      fields: [measure_and_description]
+
+  # ---------------- ophthalmology and cross-cutting ----------------
+  - rule_id: bcva.change_from_baseline
+    concept_id: BCVA_CFB
+    priority: 250
+    confidence: 0.92
+    match:
+      all_of:
+        - '\bBCVA\b|\bbest[- ]corrected visual acuity\b|\bvisual acuity\b'
+        - '\bchange (?:from|since) baseline\b|\bmean change\b'
+      none_of:
+        - '(?:percentage|proportion|number) of (?:participants|patients|subjects)'
+      fields: [measure]
+
+  - rule_id: bcva.letter_gain_responder
+    concept_id: BCVA_LETTER_GAIN_RESPONDER
+    priority: 255
+    confidence: 0.9
+    match:
+      all_of:
+        - '\bBCVA\b|\bvisual acuity\b'
+        - '\bletter'
+        - '(?:percentage|proportion|number) of (?:participants|patients|subjects)|\bgain\w*\b'
+      fields: [measure_and_description]
+
+  - rule_id: six_mwd.change_from_baseline
+    concept_id: SIX_MWD_CFB
+    priority: 250
+    confidence: 0.92
+    match:
+      all_of:
+        - '\b6[- ]?(?:minute|min)[- ]?walk\b|\bsix[- ]minute walk\b|\b6MWD\b|\b6MWT\b'
+        - '\bchange (?:from|since) baseline\b'
+      fields: [measure]
+
+  - rule_id: pain.change_from_baseline
+    concept_id: PAIN_INTENSITY_CFB
+    priority: 240
+    confidence: 0.88
+    match:
+      all_of:
+        - '\bpain (?:intensity|score|severity|NRS|VAS)\b|\baverage pain\b'
+        - '\bchange (?:from|since) baseline\b'
+      fields: [measure]
+
+  - rule_id: hrqol.change_from_baseline
+    concept_id: HRQOL_CFB
+    priority: 200
+    confidence: 0.8
+    match:
+      all_of:
+        - '\bquality of life\b|\bHRQoL\b|\bEQ[- ]?5D\b|\bSF[- ]?36\b|\bPROMIS\b|\bSGRQ\b|\bSt\.? George''s Respiratory Questionnaire\b|\bKCCQ\b|\bFACT[- ]\w+\b|\bEORTC QLQ\b'
+        - '\bchange (?:from|since) baseline\b'
+      fields: [measure]
+    notes: >-
+      Includes the common disease-specific instruments alongside the generic ones. They
+      are all the same endpoint structure; the instrument identity is a Layer B
+      qualifier, not a separate concept.
+
+  - rule_id: ae.incidence
+    concept_id: AE_INCIDENCE
+    priority: 210
+    confidence: 0.9
+    match:
+      all_of:
+        - '\badverse event'
+      any_of:
+        - '(?:number|percentage|proportion|incidence) of (?:participants|patients|subjects)'
+        - '\bincidence of\b'
+        - '\bfrequency of\b'
+        - '\bnumber of (?:participants|patients|subjects) with\b'
+      none_of:
+        - '\btime to\b'
+      fields: [measure]
+    notes: >-
+      Deliberately broad. Adverse-event counting dominates registry outcome text, and
+      capturing it explicitly keeps it out of the efficacy statistics and gives an
+      honest coverage denominator.

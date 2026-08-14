@@ -1,0 +1,59 @@
+axis_id: intercurrent_event_strategy
+label: Intercurrent event handling strategy
+definition: >-
+  How events occurring after treatment initiation that affect interpretation of the
+  endpoint are handled in its definition. Taken directly from the ICH E9(R1) addendum,
+  where the five strategies are named and defined. This axis is what turns an endpoint
+  into an estimand, and it maps onto USDM IntercurrentEvent.strategy.
+extensible: false
+usdm_alignment:
+  entity: IntercurrentEvent
+  attribute: strategy
+references:
+  - citation: "ICH E9(R1) Addendum on Estimands and Sensitivity Analysis in Clinical Trials, Section A.3.2"
+terms:
+  - term_id: treatment_policy
+    label: Treatment policy
+    definition: >-
+      The value of the endpoint is used regardless of whether the intercurrent event
+      occurred; the event is considered part of the treatment strategy being evaluated.
+    synonyms: ["intention to treat approach", "regardless of adherence"]
+    status: reviewed
+
+  - term_id: hypothetical
+    label: Hypothetical
+    definition: >-
+      The endpoint is defined under a hypothetical scenario in which the intercurrent
+      event would not occur, or would occur differently.
+    synonyms: ["if all had remained on treatment"]
+    status: reviewed
+
+  - term_id: composite_variable
+    label: Composite variable
+    definition: >-
+      The intercurrent event is incorporated into the endpoint definition itself, for
+      instance by counting treatment discontinuation as non-response.
+    synonyms: ["treated as non-responder", "non-responder imputation"]
+    status: reviewed
+
+  - term_id: while_on_treatment
+    label: While on treatment
+    definition: >-
+      Only the response up to the occurrence of the intercurrent event is used.
+    synonyms: ["on-treatment analysis", "up to discontinuation"]
+    status: reviewed
+
+  - term_id: principal_stratum
+    label: Principal stratum
+    definition: >-
+      The endpoint is defined within the subpopulation in which the intercurrent event
+      would or would not occur under either treatment condition.
+    status: reviewed
+
+  - term_id: unspecified
+    label: Unspecified
+    definition: >-
+      No strategy is stated in the source. Registry records almost never state one, so
+      this is the expected value for endpoints derived from registry text alone.
+    attributes: { is_unresolved: true }
+    status: reviewed

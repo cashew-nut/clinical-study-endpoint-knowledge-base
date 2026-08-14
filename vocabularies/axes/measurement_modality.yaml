@@ -1,0 +1,83 @@
+axis_id: measurement_modality
+label: Measurement modality
+definition: >-
+  How a measurement is obtained, and therefore who or what generates it. Modality drives
+  the operational consequences of an endpoint: which procedure and equipment are needed,
+  who must be blinded, and whether central reading or adjudication applies. This axis is
+  the intended attachment point for the procedure and equipment layer on the roadmap.
+extensible: true
+terms:
+  - term_id: imaging
+    label: Imaging
+    definition: Derived from radiological or other imaging assessment.
+    synonyms: ["CT", "MRI", "PET", "radiographic", "ultrasound", "X-ray"]
+    attributes: { commonly_centrally_read: true }
+    status: reviewed
+  - term_id: laboratory
+    label: Laboratory assay
+    definition: Derived from analysis of a biological sample.
+    synonyms: ["blood test", "serum", "plasma", "urine", "assay", "biomarker"]
+    attributes: { commonly_centrally_read: true }
+    status: reviewed
+  - term_id: physiological_measurement
+    label: Physiological measurement
+    definition: >-
+      Direct instrumented measurement of a bodily function, such as spirometry, blood
+      pressure, or electrocardiography.
+    synonyms: ["spirometry", "ECG", "blood pressure", "vital signs"]
+    attributes: { requires_calibrated_equipment: true }
+    status: reviewed
+  - term_id: clinician_reported
+    label: Clinician-reported outcome
+    definition: An assessment made and scored by a trained health professional.
+    synonyms: ["ClinRO", "investigator assessment", "physician global assessment"]
+    attributes: { blinding_sensitive: true }
+    status: reviewed
+  - term_id: patient_reported
+    label: Patient-reported outcome
+    definition: A report coming directly from the participant without interpretation by anyone else.
+    synonyms: ["PRO", "questionnaire", "patient diary", "self-reported"]
+    attributes: { blinding_sensitive: true, requires_instrument_version: true }
+    status: reviewed
+  - term_id: observer_reported
+    label: Observer-reported outcome
+    definition: >-
+      A report by a caregiver or other non-clinician observer, used where the participant
+      cannot self-report.
+    synonyms: ["ObsRO", "caregiver-reported", "parent-reported"]
+    status: reviewed
+  - term_id: performance_outcome
+    label: Performance outcome
+    definition: >-
+      A standardised task performed by the participant and measured objectively, such as
+      a six-minute walk test or a cognitive test battery.
+    synonyms: ["PerfO", "walk test", "functional test"]
+    status: reviewed
+  - term_id: event_adjudication
+    label: Adjudicated clinical event
+    definition: >-
+      A clinical event confirmed against pre-specified criteria by an independent
+      committee rather than by the site investigator.
+    synonyms: ["adjudicated", "clinical events committee", "CEC-confirmed"]
+    attributes: { requires_adjudication_committee: true }
+    status: reviewed
+  - term_id: healthcare_utilisation
+    label: Healthcare utilisation record
+    definition: >-
+      Derived from records of care delivery such as hospitalisation, emergency attendance,
+      or medication dispensing.
+    synonyms: ["hospitalisation", "hospitalization", "admission", "healthcare resource use"]
+    status: reviewed
+  - term_id: survival_status
+    label: Vital status
+    definition: Ascertainment of whether a participant is alive, from any source.
+    synonyms: ["mortality", "death", "vital status"]
+    status: reviewed
+  - term_id: device_or_sensor
+    label: Device or sensor
+    definition: >-
+      Continuously or frequently sampled data from a wearable, implanted, or ambulatory
+      monitoring device.
+    synonyms: ["CGM", "actigraphy", "wearable", "digital endpoint", "ambulatory monitoring"]
+    attributes: { requires_calibrated_equipment: true, high_sampling_frequency: true }
+    status: reviewed

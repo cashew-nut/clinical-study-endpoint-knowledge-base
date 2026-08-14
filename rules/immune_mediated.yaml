@@ -1,0 +1,71 @@
+rulepack_id: immune_mediated
+version: 1.0.0
+description: Rheumatology and dermatology endpoint concepts, which are dominated by named responder criteria.
+rules:
+  - rule_id: acr20
+    concept_id: ACR20
+    priority: 260
+    confidence: 0.96
+    match:
+      any_of:
+        - '\bACR\s?-?\s?20\b'
+        - '\bACR 20% response\b'
+      fields: [measure_and_description]
+
+  - rule_id: acr50
+    concept_id: ACR50
+    priority: 260
+    confidence: 0.96
+    match:
+      any_of:
+        - '\bACR\s?-?\s?50\b'
+      fields: [measure_and_description]
+
+  - rule_id: acr70
+    concept_id: ACR70
+    priority: 260
+    confidence: 0.96
+    match:
+      any_of:
+        - '\bACR\s?-?\s?70\b'
+      fields: [measure_and_description]
+
+  - rule_id: das28.change_from_baseline
+    concept_id: DAS28_CFB
+    priority: 250
+    confidence: 0.92
+    match:
+      all_of:
+        - '\bDAS\s?-?\s?28\b'
+        - '\bchange (?:from|since) baseline\b'
+      fields: [measure]
+
+  - rule_id: pasi75
+    concept_id: PASI75
+    priority: 260
+    confidence: 0.95
+    match:
+      any_of:
+        - '\bPASI\s?-?\s?75\b'
+        - '\b75\s?%? (?:improvement|reduction) .{0,20}\bPASI\b'
+      fields: [measure_and_description]
+
+  - rule_id: pasi90
+    concept_id: PASI90
+    priority: 260
+    confidence: 0.95
+    match:
+      any_of:
+        - '\bPASI\s?-?\s?90\b'
+        - '\b90\s?%? (?:improvement|reduction) .{0,20}\bPASI\b'
+      fields: [measure_and_description]
+
+  - rule_id: easi75
+    concept_id: EASI75
+    priority: 260
+    confidence: 0.95
+    match:
+      any_of:
+        - '\bEASI\s?-?\s?75\b'
+        - '\b75\s?%? (?:improvement|reduction) .{0,20}\bEASI\b'
+      fields: [measure_and_description]

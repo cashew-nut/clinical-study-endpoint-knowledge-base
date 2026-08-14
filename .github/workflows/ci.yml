@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      - name: Validate vocabularies and rule packs
+        run: ceskb validate
+
+      - name: Fixtures are up to date with their generator
+        run: |
+          python scripts/make_fixtures.py
+          git diff --exit-code data/fixtures/
+
+      - name: Tests
+        run: pytest -q
+
+      - name: End-to-end pipeline
+        run: |
+          ceskb refresh --source fixtures
+          ceskb stats
+          ceskb export
