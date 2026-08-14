@@ -43,16 +43,38 @@ sponsors and conditions are invented. Fixture studies use `SYNTH-nnnn` identifie
 than NCT numbers and are badged as synthetic everywhere they appear. See
 [`data/fixtures/README.md`](data/fixtures/README.md).
 
+Re-checked 2026-08-14: the gateway still answers `403 to CONNECT — policy denial` for
+`clinicaltrials.gov:443`. Only the environment's network policy can change this; it is
+unrelated to the operator's own network, since the container runs in the cloud.
+
 To connect real data, allowlist `clinicaltrials.gov` for the environment and run:
 
 ```bash
-ceskb probe   --source ctgov --limit 50      # verify the API shape first
-ceskb refresh --source ctgov --incremental
+ceskb probe   --preset phase3-recent-100 --limit 50   # verify the API shape first
+ceskb refresh --preset phase3-recent-100
 ```
 
 `probe` checks every declared field path against live payloads and exits non-zero if any
 path fails to resolve — run it before trusting a bulk load, since the field paths were
 written from documentation rather than from observed responses.
+
+### Scope presets
+
+| Preset | Selects |
+|---|---|
+| `phase3-recent-100` | The 100 most recently updated phase 3 interventional studies. The testing slice. |
+| `phase3-recent-1000` | The same, at a size where coverage numbers start to mean something. |
+| `phase2-3-oncology` | 500 recent phase 2/3 oncology studies — the densest area of the concept set. |
+
+A preset supplies defaults only; any explicit flag wins, so
+`--preset phase3-recent-100 --max-studies 25` pulls 25. Presets compile to an Essie
+expression, e.g. `AREA[Phase]PHASE3 AND AREA[StudyType]INTERVENTIONAL`, combined with
+the incremental date range when `--incremental` is set.
+
+**Capped runs deliberately do not advance the update watermark.** A run sorted by
+recency and capped at 100 has seen only the head of the result set; advancing the
+watermark would make the next incremental run start after records it never fetched.
+`ceskb ingest` reports `truncated` and `watermark_advanced` so this is visible.
 
 ---
 

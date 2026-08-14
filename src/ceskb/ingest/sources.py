@@ -23,6 +23,32 @@ class SourceError(Exception):
     """Raised when a source cannot supply records."""
 
 
+EGRESS_DENIED_MESSAGE = (
+    "ClinicalTrials.gov is blocked by this environment's network egress policy "
+    "({error}).\n"
+    "\n"
+    "This is a policy denial at the proxy in front of the container, not a transient\n"
+    "network fault, so retrying will not help. Allowlist clinicaltrials.gov for the\n"
+    "environment, then re-run. Until then, use --source fixtures to exercise the\n"
+    "pipeline against the synthetic corpus."
+)
+
+#: A proxy answering 403 or 407 to CONNECT surfaces as a transport error rather than
+#: an HTTP status, because the tunnel was refused before any request was sent. Without
+#: this check the retry loop treats an organisation policy denial as a flaky network
+#: and spends its whole backoff budget on it.
+_EGRESS_DENIAL_MARKERS = ("403 forbidden", "407 proxy", "proxy authentication")
+
+
+def _is_egress_denial(exc: Exception) -> bool:
+    if isinstance(exc, httpx.ProxyError):
+        return True
+    if isinstance(exc, httpx.TransportError):
+        text = str(exc).lower()
+        return any(marker in text for marker in _EGRESS_DENIAL_MARKERS)
+    return False
+
+
 class StudySource(Protocol):
     """Yields raw study records and identifies itself for provenance."""
 
@@ -65,13 +91,41 @@ class CtgovApiSource:
     condition: str | None = None
     updated_since: str | None = None
     max_studies: int | None = None
+    phases: tuple[str, ...] = ()
+    study_type: str | None = None
+    sort: str | None = None
     config: CtgovConfig = CTGOV
     name: str = "clinicaltrials.gov"
 
+    #: Set when iteration stopped because max_studies was reached rather than because
+    #: the source ran out. The pipeline reads this: a truncated run has not seen
+    #: everything, so advancing the update watermark would permanently skip whatever
+    #: was left unfetched.
+    truncated: bool = False
+
+    def _advanced_filter(self) -> str | None:
+        """Build an Essie expression from the active filters.
+
+        Essie is used rather than the dedicated filter parameters because it composes:
+        phase, study type and date range join with AND in a single expression.
+        """
+        clauses: list[str] = []
+        if self.phases:
+            joined = " OR ".join(f"AREA[Phase]{p}" for p in self.phases)
+            clauses.append(f"({joined})" if len(self.phases) > 1 else joined)
+        if self.study_type:
+            clauses.append(f"AREA[StudyType]{self.study_type}")
+        if self.updated_since:
+            clauses.append(f"AREA[LastUpdatePostDate]RANGE[{self.updated_since},MAX]")
+        return " AND ".join(clauses) if clauses else None
+
     def _params(self, page_token: str | None) -> dict[str, Any]:
+        page_size = self.config.page_size
+        if self.max_studies is not None:
+            page_size = min(page_size, max(self.max_studies, 1))
         params: dict[str, Any] = {
             "format": "json",
-            "pageSize": self.config.page_size,
+            "pageSize": page_size,
             "countTotal": "true",
             "fields": "|".join(self.config.fields),
         }
@@ -79,9 +133,11 @@ class CtgovApiSource:
             params["query.term"] = self.query_term
         if self.condition:
             params["query.cond"] = self.condition
-        if self.updated_since:
-            # Essie range syntax; MAX is the open upper bound.
-            params["filter.advanced"] = f"AREA[LastUpdatePostDate]RANGE[{self.updated_since},MAX]"
+        advanced = self._advanced_filter()
+        if advanced:
+            params["filter.advanced"] = advanced
+        if self.sort:
+            params["sort"] = self.sort
         if page_token:
             params["pageToken"] = page_token
         return params
@@ -101,6 +157,8 @@ class CtgovApiSource:
                 return response.json()
             except (httpx.HTTPStatusError, httpx.TransportError) as exc:
                 last_error = exc
+                if _is_egress_denial(exc):
+                    raise SourceError(EGRESS_DENIED_MESSAGE.format(error=exc)) from exc
                 status = getattr(getattr(exc, "response", None), "status_code", None)
                 # 4xx other than 429 will not succeed on retry.
                 if status is not None and 400 <= status < 500 and status != 429:
@@ -116,6 +174,7 @@ class CtgovApiSource:
         limiter = _RateLimiter(self.config.requests_per_minute)
         yielded = 0
         page_token: str | None = None
+        self.truncated = False
         with httpx.Client(
             base_url=self.config.base_url,
             timeout=self.config.timeout_seconds,
@@ -132,6 +191,7 @@ class CtgovApiSource:
                     yield study
                     yielded += 1
                     if self.max_studies is not None and yielded >= self.max_studies:
+                        self.truncated = True
                         return
                 page_token = payload.get("nextPageToken")
                 if not page_token:
@@ -145,6 +205,10 @@ class CtgovApiSource:
             "condition": self.condition,
             "updated_since": self.updated_since,
             "max_studies": self.max_studies,
+            "phases": list(self.phases),
+            "study_type": self.study_type,
+            "sort": self.sort,
+            "filter.advanced": self._advanced_filter(),
         }
 
 

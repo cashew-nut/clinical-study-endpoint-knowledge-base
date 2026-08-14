@@ -28,6 +28,51 @@ def _print(payload: Any) -> None:
     print(json.dumps(payload, indent=2, default=str))
 
 
+#: Named scopes, so a routine slice does not have to be retyped or half-remembered.
+#: A preset supplies defaults only; any explicit flag on the command line wins.
+PRESETS: dict[str, dict[str, Any]] = {
+    "phase3-recent-100": {
+        "source": "ctgov",
+        "phase": ["PHASE3"],
+        "study_type": "INTERVENTIONAL",
+        "sort": "LastUpdatePostDate:desc",
+        "max_studies": 100,
+        "_note": "The 100 most recently updated phase 3 interventional studies.",
+    },
+    "phase3-recent-1000": {
+        "source": "ctgov",
+        "phase": ["PHASE3"],
+        "study_type": "INTERVENTIONAL",
+        "sort": "LastUpdatePostDate:desc",
+        "max_studies": 1000,
+        "_note": "As above, at a size where coverage numbers start to mean something.",
+    },
+    "phase2-3-oncology": {
+        "source": "ctgov",
+        "phase": ["PHASE2", "PHASE3"],
+        "study_type": "INTERVENTIONAL",
+        "condition": "cancer",
+        "sort": "LastUpdatePostDate:desc",
+        "max_studies": 500,
+        "_note": "Oncology slice, the densest area of the concept set.",
+    },
+}
+
+
+def _apply_preset(args: argparse.Namespace, argv: list[str]) -> None:
+    """Fill unset options from a preset, leaving anything explicit untouched."""
+    name = getattr(args, "preset", None)
+    if not name:
+        return
+    supplied = {token.split("=", 1)[0] for token in argv if token.startswith("--")}
+    for key, value in PRESETS[name].items():
+        if key.startswith("_"):
+            continue
+        if f"--{key.replace('_', '-')}" in supplied:
+            continue
+        setattr(args, key, value)
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     from ceskb.vocab.loader import VocabularyError, reload_vocabulary
 
@@ -75,11 +120,15 @@ def _build_source(args: argparse.Namespace):
     if updated_since is None and getattr(args, "incremental", False):
         with connect(args.database, read_only=True) as conn:
             updated_since = get_watermark(conn, "clinicaltrials.gov", "last_update_posted")
+    phases = tuple(p.strip().upper() for p in (args.phase or []) if p.strip())
     return CtgovApiSource(
         query_term=args.query,
         condition=args.condition,
         updated_since=updated_since,
         max_studies=args.max_studies,
+        phases=phases,
+        study_type=args.study_type,
+        sort=args.sort,
     )
 
 
@@ -238,11 +287,32 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--condition", help="condition query (ctgov)")
         p.add_argument("--updated-since", help="ISO date; only studies updated on or after")
         p.add_argument("--max-studies", type=int, default=None)
+        p.add_argument(
+            "--phase",
+            action="append",
+            choices=["EARLY_PHASE1", "PHASE1", "PHASE2", "PHASE3", "PHASE4", "NA"],
+            help="restrict to a study phase; repeat to allow several",
+        )
+        p.add_argument(
+            "--study-type",
+            choices=["INTERVENTIONAL", "OBSERVATIONAL", "EXPANDED_ACCESS"],
+            default=None,
+        )
+        p.add_argument(
+            "--sort",
+            default=None,
+            help="server-side sort, e.g. LastUpdatePostDate:desc for most-recent-first",
+        )
         p.add_argument("--fixtures", help="fixture directory")
         p.add_argument(
             "--incremental",
             action="store_true",
             help="resume from the stored last-update watermark",
+        )
+        p.add_argument(
+            "--preset",
+            choices=sorted(PRESETS),
+            help="apply a named scope preset before any explicit flags",
         )
 
     ingest_p = sub.add_parser("ingest", help="pull studies from a source")
@@ -280,8 +350,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(argv)
+    _apply_preset(args, argv)
     return args.func(args)
 
 

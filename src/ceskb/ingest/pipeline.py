@@ -40,6 +40,7 @@ class IngestStats:
     studies_unchanged: int = 0
     outcomes_written: int = 0
     max_last_update_posted: str | None = None
+    truncated: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -49,6 +50,8 @@ class IngestStats:
             "studies_unchanged": self.studies_unchanged,
             "outcomes_written": self.outcomes_written,
             "max_last_update_posted": self.max_last_update_posted,
+            "truncated": self.truncated,
+            "watermark_advanced": bool(self.max_last_update_posted) and not self.truncated,
         }
 
 
@@ -218,7 +221,11 @@ def ingest(
                     ):
                         stats.max_last_update_posted = study.last_update_posted
 
-        if stats.max_last_update_posted:
+        # A run truncated by max_studies has seen only the head of the result set.
+        # Advancing the watermark then would permanently skip everything it never
+        # fetched, so capped runs deliberately leave the watermark where it was.
+        stats.truncated = bool(getattr(source, "truncated", False))
+        if stats.max_last_update_posted and not stats.truncated:
             set_watermark(
                 conn, source.name, "last_update_posted", stats.max_last_update_posted
             )
