@@ -1,0 +1,174 @@
+rulepack_id: respiratory_metabolic
+version: 1.0.0
+description: Respiratory and metabolic endpoint concepts.
+rules:
+  # ---------------- respiratory ----------------
+  - rule_id: fev1.change_from_baseline
+    concept_id: FEV1_CFB
+    priority: 240
+    confidence: 0.93
+    match:
+      all_of:
+        - '\bFEV\s?-?\s?1\b|\bforced expiratory volume\b'
+        - '\bchange (?:from|since) baseline\b|\bbaseline[- ]adjusted\b'
+      none_of:
+        - '\b(?:percent|%) predicted\b'
+        - '\bpredicted FEV\b'
+      fields: [measure]
+
+  - rule_id: fev1.percent_predicted
+    concept_id: FEV1_PCT_PREDICTED
+    priority: 250
+    confidence: 0.9
+    match:
+      all_of:
+        - '\bFEV\s?-?\s?1\b|\bforced expiratory volume\b'
+        - '\b(?:percent|per cent|%)\s?predicted\b|\bppFEV\b'
+      fields: [measure]
+
+  - rule_id: fev1.percent_predicted_change_from_baseline
+    concept_id: FEV1_PCT_PREDICTED
+    priority: 255
+    confidence: 0.92
+    match:
+      all_of:
+        - '\bFEV\s?-?\s?1\b|\bforced expiratory volume\b'
+        - '\b(?:percent|per cent|%)\s?predicted\b|\bppFEV\b'
+        - '\bchange (?:from|since) baseline\b'
+      none_of:
+        - '\b(?:percent|per cent|relative) change (?:from|since) baseline\b'
+      fields: [measure]
+    asserts:
+      endpoint_form: change_from_baseline
+      reference_type: patient_baseline
+    notes: >-
+      Two references are in play and they belong to different things. "Percent predicted"
+      references the measurement to a population norm, which is what FEV1_PCT_PREDICTED
+      carries by default. But when the endpoint is the *change* in that quantity, the
+      comparison the endpoint makes is against the participant's own earlier value, so
+      the endpoint-level reference is the patient baseline and the population norm has
+      become an attribute of how the measurement is expressed.
+
+  - rule_id: exacerbation.rate
+    concept_id: EXACERBATION_RATE
+    priority: 240
+    confidence: 0.9
+    match:
+      all_of:
+        - '\bexacerbation'
+        - '\bannuali[sz]ed\b|\brate of\b|\brate\b|\bper (?:patient|participant)[- ]year\b'
+      none_of:
+        - '\btime to\b'
+      fields: [measure]
+
+  - rule_id: exacerbation.count
+    concept_id: EXACERBATION_RATE
+    priority: 230
+    confidence: 0.75
+    match:
+      all_of:
+        - '\bexacerbation'
+        - '\bnumber of\b|\btotal number\b'
+      none_of:
+        - '\btime to\b'
+        - '\bannuali[sz]ed\b'
+        - '\brate\b'
+      fields: [measure]
+    asserts:
+      endpoint_form: count
+      scale_type: count
+    notes: >-
+      A count of exacerbations is the same measurement as the annualised rate but a
+      different form, because it is not normalised by time at risk. The rule keeps the
+      concept and overrides the form rather than inventing a near-duplicate concept.
+
+  - rule_id: exacerbation.time_to_first
+    concept_id: TIME_TO_FIRST_EXACERBATION
+    priority: 250
+    confidence: 0.9
+    match:
+      all_of:
+        - '\btime to (?:the )?first\b'
+        - '\bexacerbation'
+      fields: [measure]
+
+  # ---------------- metabolic ----------------
+  - rule_id: hba1c.change_from_baseline
+    concept_id: HBA1C_CFB
+    priority: 240
+    confidence: 0.95
+    match:
+      all_of:
+        - '\bHbA1c\b|\bhemoglobin A1c\b|\bhaemoglobin A1c\b|\bglycated h(?:a)?emoglobin\b|\bA1C\b'
+        - '\bchange (?:from|since) baseline\b|\breduction (?:from|in) baseline\b'
+      none_of:
+        - '\b(?:percentage|proportion|number) of (?:participants|patients|subjects)\b'
+      fields: [measure]
+
+  - rule_id: hba1c.target_responder
+    concept_id: HBA1C_TARGET_RESPONDER
+    priority: 250
+    confidence: 0.9
+    match:
+      all_of:
+        - '\bHbA1c\b|\bhemoglobin A1c\b|\bhaemoglobin A1c\b|\bA1C\b'
+        - '(?:percentage|proportion|number) of (?:participants|patients|subjects)'
+        - '(?:<|less than|below|achiev\w*)'
+      fields: [measure_and_description]
+
+  - rule_id: body_weight.percent_change
+    concept_id: BODY_WEIGHT_PCT_CFB
+    priority: 245
+    confidence: 0.92
+    match:
+      all_of:
+        - '\bbody weight\b|\bweight\b'
+        - '\b(?:percent|percentage|%)\s?change\b'
+      none_of:
+        - '(?:percentage|proportion|number) of (?:participants|patients|subjects)'
+        - '\bbirth weight\b'
+      fields: [measure]
+
+  - rule_id: body_weight.absolute_change
+    concept_id: BODY_WEIGHT_CFB
+    priority: 240
+    confidence: 0.9
+    match:
+      all_of:
+        - '\bbody weight\b'
+        - '\bchange (?:from|since) baseline\b'
+      none_of:
+        - '\b(?:percent|percentage|%)\s?change\b'
+        - '(?:percentage|proportion|number) of (?:participants|patients|subjects)'
+      fields: [measure]
+
+  - rule_id: weight_loss.responder
+    concept_id: WEIGHT_LOSS_RESPONDER
+    priority: 250
+    confidence: 0.88
+    match:
+      all_of:
+        - '\bweight\b'
+        - '(?:percentage|proportion|number) of (?:participants|patients|subjects)'
+        - '(?:at least|>=|≥|greater than or equal)'
+      fields: [measure_and_description]
+
+  - rule_id: cgm.time_in_range
+    concept_id: CGM_TIME_IN_RANGE
+    priority: 250
+    confidence: 0.9
+    match:
+      any_of:
+        - '\btime in (?:target )?range\b'
+        - '\bpercent(?:age)? of time .{0,30}\bglucose\b'
+      fields: [measure_and_description]
+
+  - rule_id: ldl.percent_change
+    concept_id: LDL_C_PCT_CFB
+    priority: 245
+    confidence: 0.92
+    match:
+      all_of:
+        - '\bLDL[- ]?C\b|\bLDL cholesterol\b|\blow[- ]density lipoprotein\b'
+        - '\b(?:percent|percentage|%)\s?change\b'
+      fields: [measure]

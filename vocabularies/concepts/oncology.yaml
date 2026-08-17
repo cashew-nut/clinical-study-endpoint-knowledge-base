@@ -1,0 +1,293 @@
+concepts:
+  - concept_id: OS
+    label: Overall survival
+    abbreviation: OS
+    definition: >-
+      Time from the time origin until death from any cause. The reference endpoint of
+      oncology drug development because it requires no assessment schedule, no imaging
+      criteria, and no adjudication, and is therefore insensitive to assessment bias.
+    synonyms: ["overall survival", "OS", "time to death", "all-cause mortality"]
+    therapeutic_areas: [oncology, cross_cutting]
+    structure:
+      endpoint_form: time_to_event
+      measurement_concept: death_any_cause
+      reference_type: randomisation_time
+      direction: longer_is_better
+      scale_type: time_to_event
+      default_summary_measure: hazard_ratio
+      default_timepoint_selection: first_occurrence
+    definitional_threshold: null
+    typical_units: [month]
+    related_concepts:
+      - { concept_id: PFS, relation: often_paired_with, note: "PFS is commonly the primary endpoint with OS as a key secondary." }
+    usdm_hints:
+      objective_text_template: "To compare overall survival between [IntArm] and [CtlArm]."
+      endpoint_text_template: "Overall survival, defined as the time from [TimeOrigin] to death from any cause."
+      suggested_activity_labels: ["Survival follow-up contact"]
+    status: reviewed
+
+  - concept_id: PFS
+    label: Progression-free survival
+    abbreviation: PFS
+    definition: >-
+      Time from the time origin until documented disease progression or death from any
+      cause, whichever occurs first. A composite time-to-event endpoint whose progression
+      component depends on an imaging schedule and criteria set, which is why assessment
+      frequency and blinded independent review materially affect its estimate.
+    synonyms: ["progression-free survival", "PFS", "progression free survival"]
+    therapeutic_areas: [oncology]
+    structure:
+      endpoint_form: time_to_event
+      measurement_concept: disease_progression
+      reference_type: randomisation_time
+      direction: longer_is_better
+      scale_type: time_to_event
+      default_summary_measure: hazard_ratio
+      default_timepoint_selection: first_occurrence
+    definitional_threshold: null
+    typical_units: [month]
+    governing_criteria:
+      - name: "RECIST"
+        version: "1.1"
+        citation: "Eisenhauer EA et al. New response evaluation criteria in solid tumours: revised RECIST guideline (version 1.1). Eur J Cancer 2009;45:228-247."
+    components:
+      - { label: "Documented disease progression", measurement_concept: disease_progression, note: "Under RECIST 1.1, progressive disease is assessed against the smallest sum of diameters recorded on study (the nadir), not against baseline. This is a different reference from the one used for response." }
+      - { label: "Death from any cause", measurement_concept: death_any_cause }
+    related_concepts:
+      - { concept_id: TTP, relation: variant_of, note: "Time to progression censors rather than counts deaths, so it is not interchangeable with PFS." }
+      - { concept_id: ORR, relation: often_paired_with }
+    usdm_hints:
+      objective_text_template: "To compare progression-free survival between [IntArm] and [CtlArm]."
+      endpoint_text_template: "Progression-free survival, defined as the time from [TimeOrigin] to the first of documented disease progression per [Criteria] assessed by [Assessor] or death from any cause."
+      suggested_activity_labels: ["Tumour imaging assessment"]
+    notes: >-
+      Assessment schedule is not incidental to this endpoint. Because progression can only
+      be observed at a scan, a study assessing every 6 weeks and one assessing every 12
+      weeks estimate systematically different quantities from the same underlying biology.
+      Layer B records the assessment interval for exactly this reason.
+    status: reviewed
+
+  - concept_id: TTP
+    label: Time to progression
+    abbreviation: TTP
+    definition: >-
+      Time from the time origin until documented disease progression, with deaths not due
+      to the disease treated as censoring events rather than as events.
+    synonyms: ["time to progression", "TTP"]
+    therapeutic_areas: [oncology]
+    structure:
+      endpoint_form: time_to_event
+      measurement_concept: disease_progression
+      reference_type: randomisation_time
+      direction: longer_is_better
+      scale_type: time_to_event
+      default_summary_measure: hazard_ratio
+      default_timepoint_selection: first_occurrence
+    definitional_threshold: null
+    typical_units: [month]
+    related_concepts:
+      - { concept_id: PFS, relation: variant_of }
+    status: reviewed
+
+  - concept_id: ORR
+    label: Objective response rate
+    abbreviation: ORR
+    definition: >-
+      The proportion of participants achieving a best overall response of complete or
+      partial response under a named criteria set. A responder endpoint derived by
+      thresholding tumour burden, evaluated as the best value across all assessments
+      rather than at a fixed visit.
+    synonyms: ["objective response rate", "ORR", "overall response rate", "objective tumour response rate", "best overall response rate"]
+    therapeutic_areas: [oncology]
+    structure:
+      endpoint_form: responder_binary
+      measurement_concept: tumour_burden_recist
+      reference_type: patient_baseline
+      direction: increase_is_better
+      scale_type: proportion
+      default_summary_measure: risk_difference
+      default_timepoint_selection: best_across_timepoints
+    definitional_threshold:
+      kind: category_attainment
+      operator: eq
+      value: "complete_response_or_partial_response"
+      applies_to: "best overall response category"
+      note: >-
+        Under RECIST 1.1 partial response requires at least a 30 percent decrease in the
+        sum of target lesion diameters referenced to the baseline sum, and complete
+        response requires disappearance of all target lesions. The 30 percent rule is the
+        underlying continuous threshold; the endpoint threshold is category attainment.
+    typical_units: [percent]
+    governing_criteria:
+      - name: "RECIST"
+        version: "1.1"
+        citation: "Eisenhauer EA et al. Eur J Cancer 2009;45:228-247."
+    components:
+      - { label: "Complete response", measurement_concept: objective_tumour_response }
+      - { label: "Partial response", measurement_concept: objective_tumour_response, note: "At least a 30 percent decrease in the sum of diameters from the baseline sum." }
+    related_concepts:
+      - { concept_id: DOR, relation: often_paired_with, note: "Duration of response is conditional on being a responder under ORR." }
+      - { concept_id: CR_RATE, relation: narrower_than }
+    usdm_hints:
+      objective_text_template: "To evaluate the objective response rate of [IntArm]."
+      endpoint_text_template: "Objective response rate, defined as the proportion of participants with a best overall response of complete or partial response per [Criteria] as assessed by [Assessor]."
+      suggested_activity_labels: ["Tumour imaging assessment"]
+    notes: >-
+      Whether response must be confirmed at a repeat assessment is a protocol choice, not
+      part of the concept, and it changes the estimate materially. It is captured in
+      Layer B as a sustained_over_window timepoint selection.
+    status: reviewed
+
+  - concept_id: CR_RATE
+    label: Complete response rate
+    definition: >-
+      The proportion of participants achieving complete response, the most stringent
+      response category.
+    synonyms: ["complete response rate", "CR rate", "complete remission rate"]
+    therapeutic_areas: [oncology]
+    structure:
+      endpoint_form: responder_binary
+      measurement_concept: objective_tumour_response
+      reference_type: patient_baseline
+      direction: increase_is_better
+      scale_type: proportion
+      default_summary_measure: risk_difference
+      default_timepoint_selection: best_across_timepoints
+    definitional_threshold:
+      kind: category_attainment
+      operator: eq
+      value: "complete_response"
+    typical_units: [percent]
+    related_concepts:
+      - { concept_id: ORR, relation: broader_than }
+    status: reviewed
+
+  - concept_id: DOR
+    label: Duration of response
+    abbreviation: DOR
+    definition: >-
+      Time from first documented response until progression or death, evaluated only in
+      participants who responded. The responder-only denominator makes it a conditional
+      quantity that is not randomised and therefore not directly comparable between arms.
+    synonyms: ["duration of response", "DOR", "DoR"]
+    therapeutic_areas: [oncology]
+    structure:
+      endpoint_form: time_to_event
+      measurement_concept: disease_progression
+      reference_type: best_previous_value
+      direction: longer_is_better
+      scale_type: time_to_event
+      default_summary_measure: median_time_to_event
+      default_timepoint_selection: first_occurrence
+    definitional_threshold: null
+    typical_units: [month]
+    related_concepts:
+      - { concept_id: ORR, relation: component_of }
+    notes: >-
+      The time origin is the participant's own first documented response, not
+      randomisation, which is why reference_type is the participant's best previous value
+      rather than a trial-level time origin.
+    status: reviewed
+
+  - concept_id: DFS
+    label: Disease-free survival
+    abbreviation: DFS
+    definition: >-
+      Time from the time origin until disease recurrence or death from any cause, used in
+      the curative or adjuvant setting where participants start without measurable disease.
+    synonyms: ["disease-free survival", "DFS", "relapse-free survival", "RFS", "recurrence-free survival"]
+    therapeutic_areas: [oncology]
+    structure:
+      endpoint_form: time_to_event
+      measurement_concept: disease_progression
+      reference_type: randomisation_time
+      direction: longer_is_better
+      scale_type: time_to_event
+      default_summary_measure: hazard_ratio
+      default_timepoint_selection: first_occurrence
+    definitional_threshold: null
+    typical_units: [month]
+    related_concepts:
+      - { concept_id: EFS, relation: variant_of }
+      - { concept_id: PFS, relation: variant_of, note: "PFS is used in advanced disease where measurable disease is present at baseline; DFS in the adjuvant setting where it is not." }
+    status: reviewed
+
+  - concept_id: EFS
+    label: Event-free survival
+    abbreviation: EFS
+    definition: >-
+      Time from the time origin until any of a protocol-defined set of events, which
+      typically extends beyond recurrence and death to include failure to achieve
+      remission or start of new therapy.
+    synonyms: ["event-free survival", "EFS"]
+    therapeutic_areas: [oncology]
+    structure:
+      endpoint_form: time_to_event
+      measurement_concept: disease_progression
+      reference_type: randomisation_time
+      direction: longer_is_better
+      scale_type: time_to_event
+      default_summary_measure: hazard_ratio
+      default_timepoint_selection: first_occurrence
+    definitional_threshold: null
+    typical_units: [month]
+    notes: >-
+      The event set is not standardised across protocols, so the component list in Layer B
+      is required for any cross-study comparison to be meaningful.
+    status: reviewed
+
+  - concept_id: PCR_RATE
+    label: Pathological complete response rate
+    abbreviation: pCR
+    definition: >-
+      The proportion of participants with no residual invasive disease on pathological
+      examination of the surgical specimen after neoadjuvant therapy.
+    synonyms: ["pathological complete response", "pathologic complete response", "pCR rate", "pCR"]
+    therapeutic_areas: [oncology]
+    structure:
+      endpoint_form: responder_binary
+      measurement_concept: objective_tumour_response
+      reference_type: none
+      direction: increase_is_better
+      scale_type: proportion
+      default_summary_measure: risk_difference
+      default_timepoint_selection: single_timepoint
+    definitional_threshold:
+      kind: category_attainment
+      operator: eq
+      value: "no_residual_invasive_disease"
+    typical_units: [percent]
+    notes: >-
+      Assessed once, at definitive surgery, so unlike most oncology response endpoints it
+      has a single natural assessment point and no best-across-visits selection.
+    status: reviewed
+
+  - concept_id: MRD_NEGATIVITY_RATE
+    label: Minimal residual disease negativity rate
+    abbreviation: MRD-negativity
+    definition: >-
+      The proportion of participants whose residual disease falls below a stated assay
+      sensitivity threshold.
+    synonyms: ["MRD negativity", "MRD-negative rate", "measurable residual disease negativity"]
+    therapeutic_areas: [oncology]
+    structure:
+      endpoint_form: responder_binary
+      measurement_concept: minimal_residual_disease
+      reference_type: fixed_clinical_target
+      direction: increase_is_better
+      scale_type: proportion
+      default_summary_measure: risk_difference
+      default_timepoint_selection: single_timepoint
+    definitional_threshold:
+      kind: absolute_value
+      operator: lt
+      value: 0.0001
+      unit: proportion_unit
+      applies_to: "residual disease fraction"
+      note: >-
+        Ten to the minus four is the most commonly used sensitivity, but assays are
+        applied at ten to the minus five and ten to the minus six. The threshold is
+        therefore only meaningful alongside the assay and its sensitivity, both recorded
+        in Layer B.
+    typical_units: [percent]
+    status: reviewed

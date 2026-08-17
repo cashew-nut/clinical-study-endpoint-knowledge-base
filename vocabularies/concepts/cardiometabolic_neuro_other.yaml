@@ -1,0 +1,435 @@
+concepts:
+  # ---------------- cardiovascular / renal ----------------
+  - concept_id: MACE_TIME_TO_FIRST
+    label: Time to first major adverse cardiovascular event
+    definition: >-
+      Time from the time origin until the first occurrence of any component of an
+      adjudicated cardiovascular composite, most often cardiovascular death, non-fatal
+      myocardial infarction, or non-fatal stroke.
+    synonyms: ["time to first MACE", "MACE", "major adverse cardiovascular events", "3-point MACE", "time to first occurrence of MACE"]
+    therapeutic_areas: [cardiovascular]
+    structure:
+      endpoint_form: time_to_event
+      measurement_concept: major_adverse_cardiovascular_event
+      reference_type: randomisation_time
+      direction: longer_is_better
+      scale_type: time_to_event
+      default_summary_measure: hazard_ratio
+      default_timepoint_selection: first_occurrence
+    definitional_threshold: null
+    typical_units: [month]
+    components:
+      - { label: "Cardiovascular death", measurement_concept: death_cause_specific }
+      - { label: "Non-fatal myocardial infarction", measurement_concept: major_adverse_cardiovascular_event }
+      - { label: "Non-fatal stroke", measurement_concept: major_adverse_cardiovascular_event }
+    notes: >-
+      Three-point and four- or five-point variants differ by the inclusion of
+      hospitalisation for unstable angina or heart failure, and the components are not
+      standardised. The per-study component list in Layer B is mandatory for any
+      meaningful pooling.
+    status: reviewed
+
+  - concept_id: SBP_CFB
+    label: Change from baseline in systolic blood pressure
+    definition: >-
+      The difference between a participant's systolic blood pressure at a specified
+      timepoint and their own baseline value.
+    synonyms: ["change from baseline in systolic blood pressure", "change in SBP", "SBP change from baseline", "reduction in systolic blood pressure"]
+    therapeutic_areas: [cardiovascular]
+    structure:
+      endpoint_form: change_from_baseline
+      measurement_concept: blood_pressure_systolic
+      reference_type: patient_baseline
+      direction: decrease_is_better
+      scale_type: continuous
+      default_summary_measure: difference_in_ls_means
+      default_timepoint_selection: single_timepoint
+    definitional_threshold: null
+    typical_units: [mmhg]
+    notes: >-
+      Office, home, and 24-hour ambulatory measurement give systematically different
+      values. The measurement setting is a Layer B qualifier on the assessment activity.
+    status: reviewed
+
+  - concept_id: HF_HOSPITALISATION_RECURRENT
+    label: Recurrent heart failure hospitalisations
+    definition: >-
+      All hospitalisations for heart failure per participant analysed jointly, preserving
+      repeat events rather than counting only the first.
+    synonyms: ["total heart failure hospitalisations", "recurrent heart failure hospitalizations", "total HF hospitalisations"]
+    therapeutic_areas: [cardiovascular]
+    structure:
+      endpoint_form: recurrent_event
+      measurement_concept: hospitalisation
+      reference_type: randomisation_time
+      direction: decrease_is_better
+      scale_type: count
+      default_summary_measure: rate_ratio
+      default_timepoint_selection: cumulative_over_window
+    definitional_threshold:
+      kind: event_occurrence
+      operator: gte
+      value: 1
+      applies_to: "hospitalisation with heart failure as the primary reason for admission"
+    typical_units: [count_unit]
+    status: reviewed
+
+  - concept_id: EGFR_SLOPE
+    label: Rate of change in eGFR
+    definition: >-
+      The slope of estimated glomerular filtration rate over time, estimated per
+      participant or as a treatment-group slope in a longitudinal model. Used as a
+      surrogate for progression to kidney failure over a feasible trial duration.
+    synonyms: ["eGFR slope", "rate of change in eGFR", "annual rate of decline in eGFR", "chronic eGFR slope"]
+    therapeutic_areas: [nephrology]
+    structure:
+      endpoint_form: slope_over_time
+      measurement_concept: egfr
+      reference_type: patient_baseline
+      direction: increase_is_better
+      scale_type: continuous
+      default_summary_measure: difference_in_ls_means
+      default_timepoint_selection: all_timepoints_longitudinal
+    definitional_threshold: null
+    typical_units: [ml_per_min_1_73m2]
+    notes: >-
+      Direction is increase_is_better because a less negative slope is the benefit. Total
+      and chronic slope differ by whether the acute haemodynamic dip after initiation is
+      included, which is a Layer B choice with a large effect on the estimate.
+    status: reviewed
+
+  - concept_id: UACR_PCT_CFB
+    label: Percent change from baseline in urinary albumin-to-creatinine ratio
+    definition: >-
+      Change in albuminuria expressed as a percentage of the participant's own baseline,
+      usually analysed on a log scale because the distribution is heavily skewed.
+    synonyms: ["percent change in UACR", "percentage change from baseline in urine albumin-to-creatinine ratio", "UACR change"]
+    therapeutic_areas: [nephrology]
+    structure:
+      endpoint_form: percent_change_from_baseline
+      measurement_concept: albuminuria
+      reference_type: patient_baseline
+      direction: decrease_is_better
+      scale_type: continuous
+      default_summary_measure: ratio_of_means
+      default_timepoint_selection: single_timepoint
+    definitional_threshold: null
+    typical_units: [percent]
+    status: reviewed
+
+  # ---------------- neurology / psychiatry ----------------
+  - concept_id: ANNUALISED_RELAPSE_RATE
+    label: Annualised relapse rate
+    definition: >-
+      The number of protocol-defined relapses per participant-year, the standard primary
+      endpoint in relapsing multiple sclerosis.
+    synonyms: ["annualised relapse rate", "annualized relapse rate", "ARR", "relapse rate"]
+    therapeutic_areas: [neurology]
+    structure:
+      endpoint_form: event_rate
+      measurement_concept: relapse_ms
+      reference_type: none
+      direction: decrease_is_better
+      scale_type: rate
+      default_summary_measure: rate_ratio
+      default_timepoint_selection: cumulative_over_window
+    definitional_threshold:
+      kind: event_occurrence
+      operator: gte
+      value: 1
+      applies_to: "protocol-defined and usually neurologist-confirmed relapse"
+    typical_units: [events_per_patient_year]
+    status: reviewed
+
+  - concept_id: CONFIRMED_DISABILITY_PROGRESSION
+    label: Time to confirmed disability progression
+    definition: >-
+      Time until an increase in Expanded Disability Status Scale score that meets a
+      threshold and is confirmed at a later visit. Confirmation is definitional: an
+      unconfirmed increase may reflect a transient relapse rather than accrued disability.
+    synonyms: ["confirmed disability progression", "CDP", "time to confirmed disability progression", "12-week confirmed disability progression", "confirmed disability worsening"]
+    therapeutic_areas: [neurology]
+    structure:
+      endpoint_form: time_to_event
+      measurement_concept: disability_edss
+      reference_type: patient_baseline
+      direction: longer_is_better
+      scale_type: time_to_event
+      default_summary_measure: hazard_ratio
+      default_timepoint_selection: sustained_over_window
+    definitional_threshold:
+      kind: absolute_change
+      operator: increase_by_at_least
+      value: 1.0
+      unit: score_points
+      applies_to: "EDSS score relative to baseline"
+      note: >-
+        The conventional rule is an increase of at least 1.0 point from a baseline of 5.5
+        or below, or at least 0.5 points from a baseline above 5.5, confirmed at 12 or 24
+        weeks. The baseline-dependent threshold and the confirmation interval are both
+        recorded per study.
+    typical_units: [week, month]
+    status: reviewed
+
+  - concept_id: ADAS_COG_CFB
+    label: Change from baseline in ADAS-Cog
+    definition: >-
+      Change in the Alzheimer's Disease Assessment Scale cognitive subscale from the
+      participant's own baseline.
+    synonyms: ["change from baseline in ADAS-Cog", "ADAS-Cog change from baseline", "change in ADAS-Cog score"]
+    therapeutic_areas: [neurology]
+    structure:
+      endpoint_form: change_from_baseline
+      measurement_concept: cognitive_function_adas_cog
+      reference_type: patient_baseline
+      direction: decrease_is_better
+      scale_type: continuous
+      default_summary_measure: difference_in_ls_means
+      default_timepoint_selection: all_timepoints_longitudinal
+    definitional_threshold: null
+    typical_units: [score_points]
+    notes: >-
+      Higher ADAS-Cog scores indicate worse cognition, so a decrease is the benefit. The
+      subscale variant (11, 13, or 14 items) changes the score range and is recorded per
+      study.
+    status: reviewed
+
+  - concept_id: DEPRESSION_SCALE_CFB
+    label: Change from baseline in depression severity score
+    definition: >-
+      Change in a named depression rating scale from the participant's own baseline.
+    synonyms: ["change from baseline in MADRS total score", "change from baseline in HAM-D", "change in depression score", "MADRS change from baseline"]
+    therapeutic_areas: [psychiatry]
+    structure:
+      endpoint_form: change_from_baseline
+      measurement_concept: depression_severity_scale
+      reference_type: patient_baseline
+      direction: decrease_is_better
+      scale_type: continuous
+      default_summary_measure: difference_in_ls_means
+      default_timepoint_selection: all_timepoints_longitudinal
+    definitional_threshold: null
+    typical_units: [score_points]
+    notes: >-
+      The instrument is not interchangeable across studies. MADRS, HAM-D-17 and HAM-D-24
+      have different ranges and item content, so the instrument identity is a required
+      Layer B qualifier.
+    status: reviewed
+
+  - concept_id: SEIZURE_FREQUENCY_PCT_CFB
+    label: Percent change from baseline in seizure frequency
+    definition: >-
+      Change in seizure frequency over a treatment period expressed as a percentage of the
+      participant's own pre-treatment baseline frequency.
+    synonyms: ["percent change in seizure frequency", "percentage reduction in seizure frequency", "change in seizure frequency"]
+    therapeutic_areas: [neurology]
+    structure:
+      endpoint_form: percent_change_from_baseline
+      measurement_concept: seizure_occurrence
+      reference_type: patient_baseline
+      direction: decrease_is_better
+      scale_type: continuous
+      default_summary_measure: difference_in_ls_means
+      default_timepoint_selection: cumulative_over_window
+    definitional_threshold: null
+    typical_units: [percent]
+    notes: >-
+      Baseline here is a rate observed over a prospective baseline period, not a single
+      assessment, which is an unusual baseline shape and worth capturing explicitly.
+    status: reviewed
+
+  # ---------------- infectious disease / vaccines ----------------
+  - concept_id: VIRAL_SUPPRESSION_RATE
+    label: Proportion achieving virological suppression
+    definition: >-
+      The proportion of participants whose viral load falls below a stated assay threshold
+      at a specified timepoint.
+    synonyms: ["virologic suppression", "proportion with HIV-1 RNA < 50 copies/mL", "viral suppression rate", "undetectable viral load"]
+    therapeutic_areas: [infectious_disease]
+    structure:
+      endpoint_form: responder_binary
+      measurement_concept: viral_load
+      reference_type: fixed_clinical_target
+      direction: increase_is_better
+      scale_type: proportion
+      default_summary_measure: risk_difference
+      default_timepoint_selection: single_timepoint
+    definitional_threshold:
+      kind: absolute_value
+      operator: lt
+      value: 50
+      unit: log10_copies_per_ml
+      applies_to: "plasma viral load"
+      note: >-
+        Expressed as copies per millilitre rather than log10 in most protocols; 50
+        copies/mL is the conventional HIV threshold, with 200 copies/mL also used. The
+        assay's lower limit of quantification is part of the definition.
+    typical_units: [percent]
+    notes: >-
+      Non-inferiority against an active comparator is the usual design here, so the
+      direction recorded in Layer B is frequently non_inferiority with a stated margin
+      even though the concept-level direction is increase_is_better.
+    status: reviewed
+
+  - concept_id: SEROCONVERSION_RATE
+    label: Seroconversion rate
+    definition: >-
+      The proportion of participants achieving a protocol-defined rise in antigen-specific
+      antibody following vaccination.
+    synonyms: ["seroconversion rate", "seroconversion", "proportion achieving seroconversion", "seroresponse rate"]
+    therapeutic_areas: [vaccines]
+    structure:
+      endpoint_form: responder_binary
+      measurement_concept: antibody_titre
+      reference_type: patient_baseline
+      direction: increase_is_better
+      scale_type: proportion
+      default_summary_measure: risk_difference
+      default_timepoint_selection: single_timepoint
+    definitional_threshold:
+      kind: relative_change_percent
+      operator: increase_by_at_least
+      value: 300.0
+      unit: percent
+      applies_to: "antibody titre relative to baseline"
+      note: >-
+        Most commonly defined as a four-fold rise from baseline, expressed here as a 300
+        percent increase. Assay-specific absolute thresholds are also used and are
+        recorded per study.
+    typical_units: [percent]
+    status: reviewed
+
+  # ---------------- ophthalmology and cross-cutting ----------------
+  - concept_id: BCVA_CFB
+    label: Change from baseline in best-corrected visual acuity
+    definition: >-
+      Change in the number of letters read on a standardised chart from the participant's
+      own baseline.
+    synonyms: ["change from baseline in BCVA", "change in best-corrected visual acuity", "BCVA change from baseline", "mean change in visual acuity"]
+    therapeutic_areas: [ophthalmology]
+    structure:
+      endpoint_form: change_from_baseline
+      measurement_concept: visual_acuity_bcva
+      reference_type: patient_baseline
+      direction: increase_is_better
+      scale_type: continuous
+      default_summary_measure: difference_in_ls_means
+      default_timepoint_selection: single_timepoint
+    definitional_threshold: null
+    typical_units: [letters_etdrs]
+    status: reviewed
+
+  - concept_id: BCVA_LETTER_GAIN_RESPONDER
+    label: Proportion gaining a visual acuity threshold
+    definition: >-
+      The proportion of participants gaining at least a specified number of letters from
+      their own baseline.
+    synonyms: ["proportion gaining at least 15 letters", "proportion of participants with ≥15-letter improvement", "15-letter gain"]
+    therapeutic_areas: [ophthalmology]
+    structure:
+      endpoint_form: responder_binary
+      measurement_concept: visual_acuity_bcva
+      reference_type: patient_baseline
+      direction: increase_is_better
+      scale_type: proportion
+      default_summary_measure: risk_difference
+      default_timepoint_selection: single_timepoint
+    definitional_threshold:
+      kind: absolute_change
+      operator: increase_by_at_least
+      value: 15
+      unit: letters_etdrs
+      applies_to: "BCVA relative to baseline"
+      note: "Fifteen letters corresponds to three lines on an ETDRS chart and is the conventional threshold for a clinically meaningful gain."
+    typical_units: [percent]
+    status: reviewed
+
+  - concept_id: SIX_MWD_CFB
+    label: Change from baseline in six-minute walk distance
+    definition: >-
+      Change in the distance walked in six minutes from the participant's own baseline.
+      Used across cardiopulmonary and neuromuscular disease as a measure of functional
+      capacity.
+    synonyms: ["change from baseline in 6MWD", "change in six-minute walk distance", "6-minute walk distance change", "change in 6MWT"]
+    therapeutic_areas: [cardiovascular, respiratory, rare_disease]
+    structure:
+      endpoint_form: change_from_baseline
+      measurement_concept: exercise_capacity_6mwd
+      reference_type: patient_baseline
+      direction: increase_is_better
+      scale_type: continuous
+      default_summary_measure: difference_in_ls_means
+      default_timepoint_selection: single_timepoint
+    definitional_threshold: null
+    typical_units: [metre]
+    status: reviewed
+
+  - concept_id: PAIN_INTENSITY_CFB
+    label: Change from baseline in pain intensity
+    definition: >-
+      Change in self-reported pain severity from the participant's own baseline, usually
+      on a numeric rating scale averaged over a recall window.
+    synonyms: ["change from baseline in pain intensity", "change in average pain score", "reduction in pain NRS", "change from baseline in pain NRS"]
+    therapeutic_areas: [pain]
+    structure:
+      endpoint_form: change_from_baseline
+      measurement_concept: pain_intensity
+      reference_type: patient_baseline
+      direction: decrease_is_better
+      scale_type: continuous
+      default_summary_measure: difference_in_ls_means
+      default_timepoint_selection: single_timepoint
+    definitional_threshold: null
+    typical_units: [score_points]
+    status: reviewed
+
+  - concept_id: HRQOL_CFB
+    label: Change from baseline in health-related quality of life
+    definition: >-
+      Change in a named multi-domain quality of life instrument score from the
+      participant's own baseline.
+    synonyms: ["change from baseline in quality of life", "change in HRQoL", "change from baseline in EQ-5D", "quality of life change from baseline"]
+    therapeutic_areas: [cross_cutting]
+    structure:
+      endpoint_form: change_from_baseline
+      measurement_concept: health_related_quality_of_life
+      reference_type: patient_baseline
+      direction: increase_is_better
+      scale_type: continuous
+      default_summary_measure: difference_in_ls_means
+      default_timepoint_selection: all_timepoints_longitudinal
+    definitional_threshold: null
+    typical_units: [score_points]
+    notes: >-
+      Direction depends on the instrument's scoring convention: most quality of life
+      instruments score higher as better, but symptom-burden subscales invert this. The
+      instrument identity and its direction are recorded in Layer B.
+    status: reviewed
+
+  - concept_id: AE_INCIDENCE
+    label: Incidence of adverse events
+    definition: >-
+      The proportion of participants experiencing at least one adverse event in a defined
+      class over a defined exposure period. The most common secondary endpoint in the
+      registry and almost always descriptive rather than inferential.
+    synonyms: ["incidence of adverse events", "number of participants with adverse events", "number of participants with treatment-emergent adverse events", "frequency of adverse events", "safety and tolerability"]
+    therapeutic_areas: [cross_cutting]
+    structure:
+      endpoint_form: responder_binary
+      measurement_concept: adverse_event_occurrence
+      reference_type: none
+      direction: decrease_is_better
+      scale_type: proportion
+      default_summary_measure: proportion
+      default_timepoint_selection: cumulative_over_window
+    definitional_threshold:
+      kind: event_occurrence
+      operator: gte
+      value: 1
+      applies_to: "adverse events in the specified class during the exposure period"
+    typical_units: [percent, count_unit]
+    notes: >-
+      Included because it dominates registry outcome text by volume. Classifying it
+      explicitly keeps it from contaminating efficacy statistics and gives an honest
+      denominator when reporting how much of the registry this knowledge base covers.
+    status: reviewed

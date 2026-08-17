@@ -1,0 +1,69 @@
+axis_id: direction
+label: Direction of benefit
+definition: >-
+  Which way the endpoint has to move for the intervention to look better. Recording this
+  explicitly is what allows results to be compared and aggregated without a human
+  re-reading each protocol, and it is never stated in registry outcome text.
+extensible: false
+terms:
+  - term_id: increase_is_better
+    label: Increase is better
+    definition: A higher endpoint value indicates greater benefit.
+    attributes:
+      favourable_sign: positive
+    status: reviewed
+
+  - term_id: decrease_is_better
+    label: Decrease is better
+    definition: A lower endpoint value indicates greater benefit.
+    attributes:
+      favourable_sign: negative
+    status: reviewed
+
+  - term_id: longer_is_better
+    label: Longer is better
+    definition: >-
+      A longer time to the event indicates greater benefit. Distinguished from
+      increase_is_better because the quantity is a duration, so the favourable direction
+      of the associated hazard ratio is inverted relative to the endpoint value.
+    attributes:
+      favourable_sign: positive
+      favourable_hazard_ratio: below_one
+    status: reviewed
+
+  - term_id: shorter_is_better
+    label: Shorter is better
+    definition: >-
+      A shorter time to the event indicates greater benefit, as for time to recovery or
+      time to symptom resolution. The favourable hazard ratio is above one, which is the
+      opposite of most time-to-event endpoints and a common source of sign errors.
+    attributes:
+      favourable_sign: negative
+      favourable_hazard_ratio: above_one
+    status: reviewed
+
+  - term_id: target_range
+    label: Target range
+    definition: >-
+      Benefit means being inside a bounded range rather than being high or low; movement
+      in either direction away from the range is unfavourable.
+    attributes:
+      requires_range_bounds: true
+    status: reviewed
+
+  - term_id: non_inferiority
+    label: Non-inferiority
+    definition: >-
+      Benefit is the absence of unacceptable loss relative to a comparator, assessed
+      against a pre-specified margin. Direction is a property of the comparison rather
+      than of the measurement, so this term is expected at Layer B rather than Layer A.
+    attributes:
+      requires_margin: true
+    status: reviewed
+
+  - term_id: no_directional_preference
+    label: No directional preference
+    definition: >-
+      No direction is inherently favourable, as for descriptive or pharmacokinetic
+      measurements.
+    status: reviewed

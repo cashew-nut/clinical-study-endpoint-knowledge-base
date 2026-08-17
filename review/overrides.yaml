@@ -1,0 +1,3 @@
+description: Reviewer decisions amending derived endpoint specifications. Keyed by outcome so they survive
+  re-derivation; source_hash makes them go stale when the registry text changes.
+overrides: []

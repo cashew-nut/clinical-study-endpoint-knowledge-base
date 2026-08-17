@@ -1,0 +1,67 @@
+axis_id: analysis_population
+label: Analysis population
+definition: >-
+  The set of participants contributing to the endpoint's analysis. Part of the population
+  attribute of an estimand, and a Layer B property because the same canonical endpoint is
+  routinely analysed on different populations in different protocols.
+extensible: true
+terms:
+  - term_id: itt
+    label: Intention-to-treat
+    definition: >-
+      All randomised participants analysed according to assigned treatment, regardless of
+      what they received.
+    synonyms: ["ITT", "intent-to-treat", "intention to treat"]
+    status: reviewed
+
+  - term_id: full_analysis_set
+    label: Full analysis set
+    definition: >-
+      The ITT set reduced by a small number of pre-specified and justified exclusions, as
+      described in ICH E9.
+    synonyms: ["FAS"]
+    broader: itt
+    status: reviewed
+
+  - term_id: modified_itt
+    label: Modified intention-to-treat
+    definition: >-
+      A subset of randomised participants defined by protocol-specified criteria, most
+      often receipt of at least one dose or availability of a post-baseline assessment.
+    synonyms: ["mITT", "modified ITT"]
+    broader: itt
+    attributes: { requires_explicit_definition: true }
+    status: reviewed
+
+  - term_id: per_protocol
+    label: Per-protocol
+    definition: >-
+      Participants without major protocol deviations who completed treatment as specified.
+    synonyms: ["PP", "per protocol set"]
+    status: reviewed
+
+  - term_id: safety
+    label: Safety population
+    definition: All participants who received at least one dose, analysed as treated.
+    synonyms: ["safety set", "as treated", "treated population"]
+    status: reviewed
+
+  - term_id: evaluable
+    label: Evaluable population
+    definition: >-
+      Participants with data adequate to evaluate the endpoint, such as those with
+      measurable disease at baseline and at least one post-baseline assessment.
+    synonyms: ["response evaluable", "efficacy evaluable", "evaluable for response"]
+    status: reviewed
+
+  - term_id: randomised
+    label: All randomised
+    definition: Every participant assigned a randomisation number.
+    synonyms: ["all randomized"]
+    status: reviewed
+
+  - term_id: unspecified
+    label: Unspecified
+    definition: The analysis population is not stated in the source.
+    attributes: { is_unresolved: true }
+    status: reviewed
