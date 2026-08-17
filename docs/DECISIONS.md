@@ -166,3 +166,98 @@ the UI badges on every screen.
 
 What is realistic is only the *phrasing* of outcome measures, which is what the
 classifier needs to be exercised against.
+
+---
+
+## 10. Human overrides are keyed by outcome, not by specification
+
+**Chosen over:** keying on `spec_id`, or storing corrections as edits to rules.
+
+A `spec_id` is derived from `DERIVATION_VERSION`. Keying reviewer decisions on it would
+discard every human judgement the moment a rule changed — precisely when those judgements
+are most valuable, because a rule change is exactly what might have broken something a
+person already checked. Keying on `outcome_uid` means a correction keeps applying across
+rule edits, vocabulary edits and full rebuilds.
+
+The mirror-image risk is a decision outliving its subject. Each override stores the
+outcome's `record_hash` at the time it was made; when the registry rewrites the text the
+hash moves and the override goes **stale** — it stops being applied and surfaces for
+re-review. Carrying it over silently would be worse than having no override at all,
+because it would be an unreviewed assertion wearing a reviewer's name.
+
+Overrides are also the one thing permitted to change a *defining* axis. Decision 5 locks
+those against extractors on the grounds that a regex over a title is weak evidence about
+what an endpoint fundamentally is. A person who has read the protocol is not weak
+evidence, and the asymmetry is the point.
+
+The file lives in `review/overrides.yaml`, in git, for the same reasons as decision 2:
+a correction needs to be diffable, attributable, and arguable in a pull request.
+
+**What would change this:** overrides at volume. A few hundred hand-curated decisions in
+YAML is right; a hundred thousand is a database with an export, and by then the
+interesting question is why so many are needed.
+
+---
+
+## 11. An arbitrary tie-break is recorded rather than hidden
+
+Rule selection sorts by priority, then confidence, then `rule_id`. That last term makes
+the sort total, so classification is deterministic — but when two rules naming *different*
+concepts tie on both priority and confidence, the winner is chosen alphabetically. That
+is a fine way to stay reproducible and a terrible way to be right.
+
+So `endpoint_spec.ambiguous_tie` records that it happened, the review queue ranks those
+rows above every other kind of doubt, and the trace view says so in plain words. The
+alternative — raising an error — would make an ingest run fail on a data condition that
+is not an error, and the alternative of silence would hide the one case where the engine
+had no basis for its answer.
+
+The fixture corpus produces zero of these, which is a property of the rule packs rather
+than of the code. It is tested against a constructed tie for that reason.
+
+---
+
+## 12. Accuracy is measured against annotations, and coverage is never called accuracy
+
+**Chosen over:** reporting coverage as a quality figure, which is the default failure of
+every text-classification project.
+
+Coverage says how many outcomes matched *something*. A rule mapping every outcome to
+`AE_INCIDENCE` scores 100%. Only annotation says how many matched the right thing, so
+`review/gold/` holds gold sets, `ceskb evaluate` scores against them, and every reported
+figure carries the count it was computed over.
+
+Three properties make the number trustworthy rather than decorative:
+
+- **`independence` is a required field.** A `self_annotated` set — the same party wrote
+  the rules and the answers — measures self-consistency, catches regressions, and proves
+  nothing about accuracy, because a misconception shared between the two is invisible to
+  it. The scorer prints that caveat rather than letting the figure travel alone. The set
+  shipped here is self-annotated and says so.
+- **Annotations are bound to their text by hash**, and excluded from scoring when it
+  changes. `--max-excluded` gates the denominator, because a score over a shrinking
+  scored set stops meaning anything.
+- **The gate is on per-concept precision, not the macro average.** One concept mapping
+  badly is a real defect; averaging hides it behind forty that map well. Precision rather
+  than recall because the errors are asymmetric: an unmatched outcome sits visibly in the
+  Gaps view, while a wrongly matched one silently joins a prevalence count and a USDM
+  document.
+
+Building the harness immediately found three real defects that coverage had not: SGRQ's
+inverted direction, a missing form assertion on percent-predicted FEV1, and an extractor
+that overwrote a concept's own threshold definition with a vaguer reading of the same
+number. It also found three annotation errors of the author's, which is the mechanism
+working as intended in both directions.
+
+---
+
+## 13. The API is read-only by default, and review writes are opt-in
+
+The UI is served from a read-only DuckDB handle so it cannot mutate the knowledge base
+and can be pointed at a shared copy safely. Recording a reviewer decision is the single
+exception, and it is off unless the server was started with `ceskb serve --allow-review`.
+
+Opt-in rather than always-on because that endpoint writes a git-tracked file and
+re-derives Layer B — but present at all because a review queue you cannot act on is only
+half a loop, and forcing every decision through the command line would mean the queue is
+read in one place and worked in another.

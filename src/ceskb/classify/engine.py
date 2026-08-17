@@ -9,7 +9,10 @@ always tell where a parameter came from:
   2. default axes (summary measure, timepoint selection) come from the concept, may be
      overridden by a rule, and may then be overridden by an extractor;
   3. operational axes (timepoint anchor, analysis population, thresholds) come from
-     extractors, because they are protocol choices that only the study text can supply.
+     extractors, because they are protocol choices that only the study text can supply;
+  4. a reviewer's override beats all of them, including the defining axes. The
+     asymmetry against rule 1 is deliberate: a regex over a title must never be
+     allowed to redefine an endpoint, and a human who has read the protocol must.
 
 Every resulting value carries its origin, and every rule and extractor match carries
 the span of text that produced it.
@@ -27,6 +30,7 @@ import duckdb
 
 from ceskb.classify.extractors import Extraction, TextFields, run_all
 from ceskb.config import DERIVATION_VERSION
+from ceskb.review.overrides import Override, active_overrides
 from ceskb.store.db import _json, finish_run, start_run, utcnow
 from ceskb.vocab.loader import STRUCTURE_AXES, Rule, Vocabulary, load_vocabulary
 
@@ -85,6 +89,10 @@ class EndpointSpec:
     unresolved_axes: list[str] = field(default_factory=list)
     rule_matches: list[RuleMatch] = field(default_factory=list)
     extractions: list[Extraction] = field(default_factory=list)
+    #: The winning rule tied with another on both priority and confidence, so the
+    #: choice between them was arbitrary. Surfaced rather than swallowed.
+    ambiguous_tie: bool = False
+    overridden: bool = False
 
 
 @lru_cache(maxsize=4096)
@@ -175,9 +183,18 @@ def _applicable(rule: Rule, outcome: OutcomeRecord) -> bool:
 
 
 def classify_outcome(
-    outcome: OutcomeRecord, vocab: Vocabulary
+    outcome: OutcomeRecord, vocab: Vocabulary, override: Override | None = None
 ) -> EndpointSpec | None:
-    """Classify one outcome. Returns None when no rule fires."""
+    """Classify one outcome.
+
+    Returns None when no rule fires, and also when a reviewer has ruled that no concept
+    in the vocabulary describes this outcome -- a suppressed match is genuinely
+    unclassified, and reporting it as such keeps coverage honest rather than counting a
+    match a human has rejected.
+    """
+    if override is not None and override.suppresses:
+        return None
+
     fields = TextFields(
         measure=outcome.measure or "",
         description=outcome.description or "",
@@ -191,13 +208,32 @@ def classify_outcome(
         for match in (evaluate_rule(rule, fields),)
         if match is not None
     ]
-    if not matches:
+
+    # A reviewer naming a concept is itself sufficient grounds for a specification.
+    # Without this, the single most valuable correction -- "no rule fires but this is
+    # plainly ORR" -- could not be expressed, and coverage could only ever be raised
+    # by writing another regex.
+    if not matches and (override is None or not override.changes_concept):
         return None
 
-    matches.sort(key=lambda m: (-m.rule.priority, -m.rule.confidence, m.rule.rule_id))
-    winner = matches[0]
-    winner.selected = True
-    concept = vocab.concept(winner.rule.concept_id)
+    if matches:
+        matches.sort(key=lambda m: (-m.rule.priority, -m.rule.confidence, m.rule.rule_id))
+        winner: RuleMatch | None = matches[0]
+        winner.selected = True
+        concept = vocab.concept(winner.rule.concept_id)
+        # Sorting is total, so a tie is always broken -- by rule_id, alphabetically.
+        # That is a fine way to stay deterministic and a terrible way to be right, so
+        # record when it happened and let the review queue pick it up.
+        runner_up = matches[1] if len(matches) > 1 else None
+        ambiguous_tie = runner_up is not None and (
+            runner_up.rule.priority == winner.rule.priority
+            and runner_up.rule.confidence == winner.rule.confidence
+            and runner_up.rule.concept_id != winner.rule.concept_id
+        )
+    else:
+        winner = None
+        concept = vocab.concept(override.concept_id)  # type: ignore[arg-type]
+        ambiguous_tie = False
 
     spec = EndpointSpec(
         spec_id=uuid.uuid5(
@@ -205,10 +241,11 @@ def classify_outcome(
         ).hex,
         outcome=outcome,
         concept_id=concept.concept_id,
-        match_confidence=winner.rule.confidence,
-        selected_rule_id=winner.rule.qualified_id,
-        competing_rule_count=len(matches) - 1,
+        match_confidence=winner.rule.confidence if winner else 1.0,
+        selected_rule_id=winner.rule.qualified_id if winner else None,
+        competing_rule_count=max(len(matches) - 1, 0),
         rule_matches=matches,
+        ambiguous_tie=ambiguous_tie,
     )
 
     # 1. concept structure
@@ -217,9 +254,10 @@ def classify_outcome(
         spec.axes[axis_id] = (term_id, "concept_default", f"concept {concept.concept_id}")
 
     # 2. rule assertions
-    for axis_id, term_id in winner.rule.asserts.items():
-        if isinstance(term_id, str) and axis_id in vocab.axes:
-            spec.axes[axis_id] = (term_id, "rule_assert", winner.rule.qualified_id)
+    if winner is not None:
+        for axis_id, term_id in winner.rule.asserts.items():
+            if isinstance(term_id, str) and axis_id in vocab.axes:
+                spec.axes[axis_id] = (term_id, "rule_assert", winner.rule.qualified_id)
 
     # 3. concept definitional threshold, before extraction so extraction can win where
     #    the threshold is a convention rather than part of the definition
@@ -251,6 +289,22 @@ def classify_outcome(
         and concept_threshold["kind"] in CONCEPT_AUTHORITATIVE_THRESHOLD_KINDS
     )
 
+    # An extraction that rediscovers the number the concept already declares carries no
+    # new information, and letting it write back its own reading loses detail. Read
+    # naively, "gaining at least 15 letters" is a threshold on a value; the concept
+    # knows it is a threshold on *change* from the participant's own baseline. Only a
+    # value that differs from the convention is evidence this study departed from it.
+    threshold_confirmed = bool(
+        concept_threshold
+        and spec.threshold_value is not None
+        and any(
+            e.axis_id == "threshold_kind"
+            and e.value_num is not None
+            and abs(e.value_num - spec.threshold_value) < 1e-9
+            for e in extractions
+        )
+    )
+
     # A time-to-event endpoint selects the first qualifying event by construction, so
     # a phrase in the time frame must not be allowed to restate that as something else.
     # Where a title really describes a landmark rate, a rule asserts the form instead.
@@ -262,7 +316,9 @@ def classify_outcome(
             continue  # extractors never redefine what the endpoint is
         if axis_id == "timepoint_selection" and selection_locked:
             continue
-        if axis_id in {"threshold_kind", "threshold_operator"} and threshold_locked:
+        if axis_id in {"threshold_kind", "threshold_operator"} and (
+            threshold_locked or threshold_confirmed
+        ):
             continue
         if extraction.term_id == "unspecified" and axis_id in spec.axes:
             continue  # do not overwrite a known value with "we could not tell"
@@ -283,6 +339,27 @@ def classify_outcome(
 
     for axis_id in OPERATIONAL_AXES:
         spec.axes.setdefault(axis_id, ("unspecified", "unresolved", None))
+
+    # 5. reviewer override, applied last so it wins over everything derived.
+    if override is not None:
+        spec.overridden = True
+        if override.changes_concept and override.concept_id != spec.concept_id:
+            corrected = vocab.concept(override.concept_id)
+            spec.concept_id = corrected.concept_id
+            # Re-seed the concept's own structure, otherwise the spec would keep the
+            # rejected concept's form and measurement under the corrected label.
+            for key, term_id in corrected.structure.items():
+                axis_id, _role = STRUCTURE_AXES[key]
+                spec.axes[axis_id] = (
+                    term_id,
+                    "human_override",
+                    f"reviewer {override.reviewer}: {corrected.concept_id}",
+                )
+        for axis_id, term_id in override.axes.items():
+            spec.axes[axis_id] = (term_id, "human_override", f"reviewer {override.reviewer}")
+        # A reviewed spec is asserted, not guessed at, and it is no longer contested.
+        spec.match_confidence = 1.0
+        spec.ambiguous_tie = False
 
     spec.unresolved_axes = sorted(
         axis_id
@@ -344,8 +421,8 @@ def _persist(conn: duckdb.DuckDBPyConnection, spec: EndpointSpec) -> None:
             timepoint_anchor, timepoint_selection, timepoint_value, timepoint_unit, timepoint_raw,
             threshold_kind, threshold_operator, threshold_value, threshold_unit, threshold_raw,
             analysis_population, direction, scale_type, summary_measure,
-            unresolved_axes, derivation_version, classified_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            unresolved_axes, ambiguous_tie, overridden, derivation_version, classified_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         [
             spec.spec_id,
@@ -371,6 +448,8 @@ def _persist(conn: duckdb.DuckDBPyConnection, spec: EndpointSpec) -> None:
             axis_term("scale_type"),
             axis_term("summary_measure"),
             _json(spec.unresolved_axes),
+            spec.ambiguous_tie,
+            spec.overridden,
             DERIVATION_VERSION,
             now,
         ],
@@ -436,10 +515,18 @@ def classify_all(
 ) -> dict[str, Any]:
     """Classify every stored outcome, replacing any previous derivation."""
     vocab = vocab or load_vocabulary()
+    overrides = active_overrides(conn)
     run_id = uuid.uuid4().hex[:16]
     start_run(conn, run_id, "classify")
 
-    stats = {"outcomes": 0, "classified": 0, "unclassified": 0}
+    stats = {
+        "outcomes": 0,
+        "classified": 0,
+        "unclassified": 0,
+        "overridden": 0,
+        "suppressed_by_review": 0,
+        "ambiguous_ties": 0,
+    }
     try:
         conn.execute("DELETE FROM endpoint_spec")
         conn.execute("DELETE FROM endpoint_spec_axis")
@@ -450,9 +537,12 @@ def classify_all(
         now = utcnow()
         for outcome in _load_outcomes(conn, limit):
             stats["outcomes"] += 1
-            spec = classify_outcome(outcome, vocab)
+            override = overrides.get(outcome.outcome_uid)
+            spec = classify_outcome(outcome, vocab, override)
             if spec is None:
                 stats["unclassified"] += 1
+                if override is not None and override.suppresses:
+                    stats["suppressed_by_review"] += 1
                 conn.execute(
                     "INSERT INTO unclassified_outcome VALUES (?, ?, ?, ?, ?, ?, ?)",
                     [
@@ -468,6 +558,8 @@ def classify_all(
                 continue
             _persist(conn, spec)
             stats["classified"] += 1
+            stats["overridden"] += int(spec.overridden)
+            stats["ambiguous_ties"] += int(spec.ambiguous_tie)
 
         stats["coverage_pct"] = (
             round(100.0 * stats["classified"] / stats["outcomes"], 1) if stats["outcomes"] else 0.0

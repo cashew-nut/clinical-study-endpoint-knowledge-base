@@ -1,16 +1,23 @@
-"""Read-only HTTP API behind the exploration UI.
+"""HTTP API behind the exploration UI.
 
-Everything is served from the DuckDB file opened read-only, so the UI can never mutate
-the knowledge base and can be pointed at a shared copy safely.
+Read-only by default: every endpoint here opens the DuckDB file read-only, so the UI
+cannot mutate the knowledge base and can be pointed at a shared copy safely.
+
+The single exception is recording a reviewer decision, which is off unless the server
+was started with `ceskb serve --allow-review`. It is opt-in rather than always-on
+because it writes a git-tracked file and re-derives Layer B, and because a queue you
+cannot act on is only half a review loop -- so the capability exists, but nobody gets
+it by accident.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import duckdb
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -18,6 +25,14 @@ from ceskb.config import DERIVATION_VERSION, PATHS
 from ceskb.project.usdm import USDM_VERSION
 
 app = FastAPI(title="Clinical Study Endpoint Knowledge Base", version="0.1.0")
+
+#: Read from the environment rather than passed in, because uvicorn loads this module
+#: by import string and never sees the CLI's arguments.
+ALLOW_REVIEW_ENV = "CESKB_ALLOW_REVIEW"
+
+
+def _review_writes_allowed() -> bool:
+    return os.environ.get(ALLOW_REVIEW_ENV, "").lower() in {"1", "true", "yes"}
 
 
 def _conn() -> duckdb.DuckDBPyConnection:
@@ -469,9 +484,161 @@ def axis_prevalence() -> list[dict[str, Any]]:
         )
 
 
+# --------------------------------------------------------------------------- #
+# review and evaluation
+# --------------------------------------------------------------------------- #
+@app.get("/api/review/queue")
+def review_queue(
+    reason: str | None = None, limit: int = Query(100, le=1000)
+) -> dict[str, Any]:
+    """Specifications a human should look at, most doubtful first."""
+    clause, params = "", []
+    if reason:
+        clause = "WHERE reason = ?"
+        params = [reason]
+    with _conn() as conn:
+        queue = _rows(
+            conn.execute(
+                f"SELECT * FROM review_queue {clause} "
+                f"ORDER BY review_score DESC, outcome_uid LIMIT {int(limit)}",
+                params,
+            )
+        )
+        by_reason = _rows(
+            conn.execute(
+                "SELECT reason, count(*) AS n FROM review_queue GROUP BY reason ORDER BY n DESC"
+            )
+        )
+        decided = _rows(
+            conn.execute(
+                "SELECT status, count(*) AS n FROM spec_override GROUP BY status"
+            )
+        )
+    return {"queue": queue, "by_reason": by_reason, "decisions": decided}
+
+
+@app.get("/api/review/overrides")
+def overrides() -> list[dict[str, Any]]:
+    """Every reviewer decision on record, including the stale and retired ones."""
+    with _conn() as conn:
+        rows = _rows(
+            conn.execute(
+                """
+                SELECT ov.*, o.measure, e.spec_id
+                FROM spec_override ov
+                LEFT JOIN study_outcome o USING (outcome_uid)
+                LEFT JOIN endpoint_spec e USING (outcome_uid)
+                ORDER BY ov.decided_at DESC
+                """
+            )
+        )
+    for row in rows:
+        row["axes"] = _loads(row.get("axes"), {})
+    return rows
+
+
+@app.get("/api/review/evaluations")
+def evaluations(limit: int = Query(20, le=200)) -> list[dict[str, Any]]:
+    """Scored runs, newest first, so accuracy reads as a series rather than a claim."""
+    with _conn() as conn:
+        rows = _rows(
+            conn.execute(
+                """
+                SELECT evaluation_id, gold_set_id, gold_set_version, independence,
+                       derivation_version, evaluated_at, items_total, items_scored,
+                       items_stale, concept_accuracy, macro_precision, macro_recall,
+                       macro_f1, report
+                FROM evaluation_run ORDER BY evaluated_at DESC LIMIT ?
+                """,
+                [limit],
+            )
+        )
+    for row in rows:
+        row["report"] = _loads(row.get("report"), {})
+    return rows
+
+
+@app.post("/api/review/overrides")
+def record_review_decision(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Record a reviewer decision, then re-derive so it takes effect immediately.
+
+    Disabled unless the server was started with --allow-review.
+    """
+    if not _review_writes_allowed():
+        raise HTTPException(
+            403,
+            "review writes are disabled; restart with `ceskb serve --allow-review` to "
+            "record decisions from the UI, or use `ceskb override` on the command line",
+        )
+
+    from ceskb.classify.engine import classify_all
+    from ceskb.review.overrides import (
+        KEEP_CONCEPT,
+        Override,
+        OverrideError,
+        check_overrides,
+        record_override,
+    )
+    from ceskb.store.db import connect
+    from ceskb.vocab.loader import load_vocabulary
+
+    outcome_uid = (payload.get("outcome_uid") or "").strip()
+    reason = (payload.get("reason") or "").strip()
+    reviewer = (payload.get("reviewer") or "").strip()
+    axes = payload.get("axes") or {}
+    if not outcome_uid or not reviewer:
+        raise HTTPException(400, "outcome_uid and reviewer are required")
+    if len(reason) < 8:
+        raise HTTPException(400, "a reason of at least 8 characters is required")
+    if not isinstance(axes, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in axes.items()
+    ):
+        raise HTTPException(400, "axes must be a mapping of axis_id to term_id")
+
+    # "concept_id" absent means no opinion; present and null means nothing fits.
+    concept_id = payload["concept_id"] if "concept_id" in payload else KEEP_CONCEPT
+    if concept_id is KEEP_CONCEPT and not axes:
+        raise HTTPException(400, "nothing to record: give a concept_id or at least one axis")
+
+    # Check the names resolve before anything is written. record_override commits to a
+    # git-tracked file, so a bad concept id must fail here rather than leave a decision
+    # on disk that can never apply.
+    problems = check_overrides(
+        [
+            Override(
+                outcome_uid=outcome_uid,
+                reason=reason,
+                reviewer=reviewer,
+                decided_at="",
+                concept_id=concept_id,
+                axes=axes,
+            )
+        ],
+        load_vocabulary(),
+    )
+    if problems:
+        raise HTTPException(400, "; ".join(problems))
+
+    with connect(PATHS.database) as conn:
+        try:
+            override = record_override(
+                conn,
+                outcome_uid=outcome_uid,
+                reason=reason,
+                reviewer=reviewer,
+                concept_id=concept_id,
+                axes=axes,
+                notes=payload.get("notes"),
+            )
+            stats = classify_all(conn)
+        except OverrideError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    return {"recorded": override.to_dict(), "reclassified": stats}
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "review_writes": str(_review_writes_allowed()).lower()}
 
 
 if PATHS.web.exists():

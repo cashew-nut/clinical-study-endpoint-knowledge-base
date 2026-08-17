@@ -26,6 +26,29 @@ rules:
         - '\b(?:percent|per cent|%)\s?predicted\b|\bppFEV\b'
       fields: [measure]
 
+  - rule_id: fev1.percent_predicted_change_from_baseline
+    concept_id: FEV1_PCT_PREDICTED
+    priority: 255
+    confidence: 0.92
+    match:
+      all_of:
+        - '\bFEV\s?-?\s?1\b|\bforced expiratory volume\b'
+        - '\b(?:percent|per cent|%)\s?predicted\b|\bppFEV\b'
+        - '\bchange (?:from|since) baseline\b'
+      none_of:
+        - '\b(?:percent|per cent|relative) change (?:from|since) baseline\b'
+      fields: [measure]
+    asserts:
+      endpoint_form: change_from_baseline
+      reference_type: patient_baseline
+    notes: >-
+      Two references are in play and they belong to different things. "Percent predicted"
+      references the measurement to a population norm, which is what FEV1_PCT_PREDICTED
+      carries by default. But when the endpoint is the *change* in that quantity, the
+      comparison the endpoint makes is against the participant's own earlier value, so
+      the endpoint-level reference is the patient baseline and the population norm has
+      become an attribute of how the measurement is expressed.
+
   - rule_id: exacerbation.rate
     concept_id: EXACERBATION_RATE
     priority: 240

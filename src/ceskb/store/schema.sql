@@ -214,6 +214,12 @@ CREATE TABLE IF NOT EXISTS endpoint_spec (
     scale_type              VARCHAR,
     summary_measure         VARCHAR,
     unresolved_axes         JSON,
+    -- True when the winning rule tied with another on both priority and confidence,
+    -- so the selection fell through to an arbitrary tie-break. Recorded rather than
+    -- hidden: an arbitrary choice is exactly what a human should look at.
+    ambiguous_tie           BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Set when a human decision replaced or amended the derived values.
+    overridden              BOOLEAN NOT NULL DEFAULT FALSE,
     derivation_version      VARCHAR NOT NULL,
     classified_at           TIMESTAMP NOT NULL
 );
@@ -225,7 +231,8 @@ CREATE TABLE IF NOT EXISTS endpoint_spec_axis (
     spec_id                 VARCHAR NOT NULL,
     axis_id                 VARCHAR NOT NULL,
     term_id                 VARCHAR NOT NULL,
-    origin                  VARCHAR NOT NULL,   -- concept_default | rule_assert | extracted | unresolved
+    -- concept_default | rule_assert | extracted | unresolved | human_override
+    origin                  VARCHAR NOT NULL,
     evidence                VARCHAR,
     PRIMARY KEY (spec_id, axis_id)
 );
@@ -269,6 +276,59 @@ CREATE TABLE IF NOT EXISTS unclassified_outcome (
     normalised_measure      VARCHAR,
     derivation_version      VARCHAR NOT NULL,
     evaluated_at            TIMESTAMP NOT NULL
+);
+
+-- ===========================================================================
+-- Human review
+-- ===========================================================================
+
+-- A reviewer's decision about one outcome.
+--
+-- Keyed by outcome_uid rather than spec_id on purpose. A spec_id is a function of
+-- DERIVATION_VERSION, so keying on it would silently discard every human decision the
+-- moment a rule changed -- exactly when those decisions matter most. Keying on the
+-- outcome means a correction survives re-derivation and keeps being applied until the
+-- underlying registry text itself changes.
+--
+-- The YAML under review/ is the system of record; this table is loaded from it, the
+-- same relationship the vocabulary tables have with vocabularies/.
+CREATE TABLE IF NOT EXISTS spec_override (
+    outcome_uid             VARCHAR PRIMARY KEY,
+    -- Three states, not two. A concept id names the correct concept; NULL is a real
+    -- decision meaning "no concept in the vocabulary describes this", which suppresses
+    -- a wrong match; the sentinel '__keep_concept__' means the reviewer corrected only
+    -- axes and had no opinion about the concept. Collapsing the last two would turn an
+    -- axis correction into a suppression.
+    concept_id              VARCHAR,
+    axes                    JSON,               -- axis_id -> term_id, applied over the derivation
+    reason                  VARCHAR NOT NULL,   -- required: an unexplained override is not reviewable
+    reviewer                VARCHAR NOT NULL,
+    decided_at              TIMESTAMP NOT NULL,
+    -- The outcome's record_hash when the decision was made. When the registry text
+    -- changes the hash moves, the override is marked stale and stops being applied,
+    -- because it was a judgement about text that no longer exists.
+    source_hash             VARCHAR,
+    supersedes_concept_id   VARCHAR,            -- what the classifier had said, for audit
+    status                  VARCHAR NOT NULL DEFAULT 'active'  -- active | stale | retired
+);
+
+-- Scored evaluation runs against a gold set. Kept so accuracy is a tracked series
+-- rather than a number someone once quoted in a meeting.
+CREATE TABLE IF NOT EXISTS evaluation_run (
+    evaluation_id           VARCHAR PRIMARY KEY,
+    gold_set_id             VARCHAR NOT NULL,
+    gold_set_version        VARCHAR,
+    independence            VARCHAR NOT NULL,   -- self_annotated | independent | adjudicated
+    derivation_version      VARCHAR NOT NULL,
+    evaluated_at            TIMESTAMP NOT NULL,
+    items_total             INTEGER NOT NULL,
+    items_scored            INTEGER NOT NULL,
+    items_stale             INTEGER NOT NULL,
+    concept_accuracy        DOUBLE,
+    macro_precision         DOUBLE,
+    macro_recall            DOUBLE,
+    macro_f1                DOUBLE,
+    report                  JSON NOT NULL
 );
 
 -- ===========================================================================
@@ -340,6 +400,54 @@ FROM endpoint_spec_axis a
 JOIN endpoint_spec e USING (spec_id)
 LEFT JOIN term t ON t.axis_id = a.axis_id AND t.term_id = a.term_id
 GROUP BY a.axis_id, a.term_id, t.label;
+
+-- What a reviewer should look at, most doubtful first.
+--
+-- Derived rather than stored, so it cannot drift out of step with the classification
+-- it describes: re-classify and the queue is already correct. Anything a human has
+-- already ruled on drops out via the anti-join, so working the queue shortens it.
+--
+-- The three reasons are deliberately different kinds of doubt. An arbitrary tie means
+-- the engine had no principled basis for its choice. A contested match means rules
+-- disagreed and one won on rank. Low confidence means the rule that fired is known to
+-- be a weak signal. Unresolved axes are not doubt at all -- the source was silent --
+-- so they raise the score only slightly, as a tiebreak among otherwise equal rows.
+CREATE OR REPLACE VIEW review_queue AS
+SELECT
+    e.spec_id,
+    e.outcome_uid,
+    e.study_id,
+    e.concept_id,
+    e.endpoint_level,
+    e.match_confidence,
+    e.competing_rule_count,
+    e.ambiguous_tie,
+    o.measure,
+    o.time_frame,
+    json_array_length(e.unresolved_axes)                AS unresolved_count,
+    CASE
+        WHEN e.ambiguous_tie              THEN 'arbitrary_tie_break'
+        WHEN e.competing_rule_count > 0   THEN 'contested_match'
+        WHEN e.match_confidence < 0.7     THEN 'low_confidence'
+        ELSE 'unresolved_parameters'
+    END                                                 AS reason,
+    ROUND(
+        (CASE WHEN e.ambiguous_tie THEN 100 ELSE 0 END)
+      + (CASE WHEN e.competing_rule_count > 0 THEN 40 ELSE 0 END)
+      + (1.0 - e.match_confidence) * 50
+      + json_array_length(e.unresolved_axes) * 2
+    , 1)                                                AS review_score
+FROM endpoint_spec e
+JOIN study_outcome o USING (outcome_uid)
+LEFT JOIN spec_override ov
+       ON ov.outcome_uid = e.outcome_uid AND ov.status = 'active'
+WHERE ov.outcome_uid IS NULL
+  AND (
+        e.ambiguous_tie
+     OR e.competing_rule_count > 0
+     OR e.match_confidence < 0.7
+     OR json_array_length(e.unresolved_axes) >= 3
+  );
 
 -- Classification coverage, the honest denominator for any claim about the KB's reach.
 CREATE OR REPLACE VIEW coverage_summary AS

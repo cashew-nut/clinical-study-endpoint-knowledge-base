@@ -441,9 +441,19 @@ async function viewSpec(id) {
     ${s.is_synthetic ? '<div class="notice"><strong>Synthetic fixture.</strong> This record is not registry data.</div>' : ''}
 
     <div class="card">
-      <h2>${esc(s.concept_id)} ${levelBadge(s.endpoint_level)}</h2>
+      <h2>${esc(s.concept_id)} ${levelBadge(s.endpoint_level)}
+        ${s.overridden ? '<span class="badge exploratory">reviewed</span>' : ''}
+        ${s.ambiguous_tie ? '<span class="badge warn">arbitrary tie-break</span>' : ''}</h2>
       <p class="hint">Derivation ${esc(s.derivation_version)} · rule <code>${esc(s.selected_rule_id || '—')}</code> ·
         confidence ${s.match_confidence} · ${s.competing_rule_count} competing rule${s.competing_rule_count === 1 ? '' : 's'}</p>
+      ${s.ambiguous_tie ? `<div class="notice"><strong>The winning rule tied.</strong> Another rule
+        naming a different concept matched at the same priority and the same confidence, so the
+        choice between them fell through to an alphabetical tie-break — a way to stay
+        deterministic, not a way to be right.
+        <button class="link" onclick="go('/review')">Review this</button>.</div>` : ''}
+      ${s.overridden ? `<div class="notice info"><strong>Carries a reviewer's decision.</strong> Values
+        marked <span class="origin human_override">human override</span> below were set by a person,
+        not derived. <button class="link" onclick="go('/review')">See the decision</button>.</div>` : ''}
     </div>
 
     <div class="card">
@@ -458,7 +468,8 @@ async function viewSpec(id) {
       <h2>Resolved parameters</h2>
       <p class="hint">Every axis with the origin of its value. <span class="origin concept_default">Concept default</span> is inherited from Layer A,
         <span class="origin rule_assert">rule assert</span> is a rule overriding it, <span class="origin extracted">extracted</span> comes from this study's text,
-        and <span class="origin unresolved">unresolved</span> means the source did not say.</p>
+        <span class="origin unresolved">unresolved</span> means the source did not say, and
+        <span class="origin human_override">human override</span> is a reviewer's decision, which beats all of them.</p>
       ${table(['Axis', 'Value', 'Origin', 'Evidence'], axisRows)}
       ${s.unresolved_axes.length ? `<p style="margin-top:12px;font-size:13.5px;color:var(--ink-3)">
         Unresolved: ${s.unresolved_axes.map((a) => `<code>${esc(a)}</code>`).join(', ')}</p>` : ''}
@@ -548,6 +559,189 @@ async function viewGaps() {
 }
 
 // --------------------------------------------------------------------------
+// review
+// --------------------------------------------------------------------------
+const REASON_BLURB = {
+  arbitrary_tie_break: 'Two rules for different concepts tied on both priority and confidence, so the winner was picked alphabetically. There was no principled basis for the choice.',
+  contested_match: 'More than one rule fired and the winner was chosen on rank.',
+  low_confidence: 'The rule that fired is known to be a weak signal.',
+  unresolved_parameters: 'The source text left several parameters unstated.',
+};
+
+async function viewReview() {
+  busy();
+  const [queue, overrides, evaluations, health] = await Promise.all([
+    api('/api/review/queue?limit=200'),
+    api('/api/review/overrides'),
+    api('/api/review/evaluations'),
+    api('/healthz'),
+  ]);
+  const writable = health.review_writes === 'true';
+  const latest = evaluations[0];
+
+  const accuracyCard = latest ? (() => {
+    const r = latest.report || {};
+    const selfAnnotated = latest.independence === 'self_annotated';
+    const metric = (k, v, bad) =>
+      `<div class="metric${bad ? ' bad' : ''}"><div class="v">${v}</div><div class="k">${esc(k)}</div></div>`;
+    return `
+    <div class="card">
+      <h2>Accuracy against the gold set</h2>
+      <p class="hint">Scored ${latest.items_scored} of ${latest.items_total} annotations from
+        <code>${esc(latest.gold_set_id)}</code> under derivation ${esc(latest.derivation_version)}.</p>
+      <div class="metric-row">
+        ${metric('concept accuracy', (latest.concept_accuracy * 100).toFixed(1) + '%')}
+        ${metric('macro precision', latest.macro_precision.toFixed(3))}
+        ${metric('macro recall', latest.macro_recall.toFixed(3))}
+        ${metric('excluded', latest.items_stale, latest.items_stale > 0)}
+      </div>
+      ${selfAnnotated ? `<div class="notice" style="margin-top:14px"><strong>Self-annotated.</strong>
+        ${esc(r.caveat || '')}</div>` : ''}
+      ${(r.errors || []).length ? `<h2 style="margin-top:18px">Disagreements</h2>
+        ${table(['Outcome', 'Gold', 'Predicted', 'Text'], r.errors.map((e) => [
+          `<span class="mono">${esc(e.outcome_uid)}</span>`,
+          `<code>${esc(e.gold)}</code>`,
+          `<code>${esc(e.predicted)}</code>`,
+          `<div style="max-width:420px">${esc(e.text)}</div>`,
+        ]))}` : ''}
+    </div>`;
+  })() : `
+    <div class="card">
+      <h2>Accuracy against the gold set</h2>
+      <p class="hint">No evaluation has been run. Coverage is not accuracy: until annotations
+        are scored, nothing here reports whether a classification is <em>right</em>, only that
+        one was made. Run <code>ceskb evaluate</code>.</p>
+    </div>`;
+
+  const queueRows = queue.queue.map((q) => [
+    `<span class="reason-chip ${esc(q.reason)}" title="${esc(REASON_BLURB[q.reason] || '')}">${esc(titleise(q.reason))}</span>`,
+    `<div style="max-width:400px">${esc(q.measure)}</div>
+     <div class="mono" style="color:var(--ink-3);font-size:11.5px">${esc(q.outcome_uid)}</div>`,
+    `<button class="link" onclick="go('/concept/${esc(q.concept_id)}')">${esc(q.concept_id)}</button>`,
+    { num: true, html: q.match_confidence.toFixed(2) },
+    { num: true, html: `<span class="score">${q.review_score}</span>` },
+    `<button class="link" onclick="go('/spec/${esc(q.spec_id)}')">trace</button>`,
+  ]);
+
+  const overrideRows = overrides.map((o) => [
+    o.status === 'active' ? '<span class="badge primary">active</span>'
+      : `<span class="badge warn">${esc(o.status)}</span>`,
+    `<div style="max-width:360px">${esc(o.measure || '—')}</div>
+     <div class="mono" style="color:var(--ink-3);font-size:11.5px">${esc(o.outcome_uid)}</div>`,
+    o.concept_id === null ? '<span class="badge warn">no concept fits</span>'
+      : o.concept_id === '__keep_concept__' ? '<span style="color:var(--ink-3)">axes only</span>'
+      : `<code>${esc(o.concept_id)}</code>`,
+    Object.keys(o.axes || {}).length
+      ? `<div class="mono" style="font-size:11.5px">${Object.entries(o.axes)
+          .map(([k, v]) => `${esc(k)}=${esc(v)}`).join('<br>')}</div>`
+      : '—',
+    `<div style="max-width:340px">${esc(o.reason)}</div>`,
+    esc(o.reviewer),
+  ]);
+
+  render(`
+    ${accuracyCard}
+
+    <div class="card">
+      <h2>Review queue</h2>
+      <p class="hint">Specifications with a reason to doubt them, most doubtful first. Working the
+        queue shortens it: anything decided drops out. Hover a reason to see what it means.</p>
+      <div class="tag-list" style="margin-bottom:12px">
+        ${queue.by_reason.map((r) =>
+          `<span class="reason-chip ${esc(r.reason)}">${esc(titleise(r.reason))} · ${r.n}</span>`).join('')
+          || '<span style="color:var(--ink-3);font-size:13px">Nothing queued.</span>'}
+      </div>
+      ${table(['Reason', 'Outcome', 'Concept', 'Confidence', 'Score', ''], queueRows,
+        { empty: 'Nothing is awaiting review.' })}
+    </div>
+
+    <div class="card">
+      <h2>Record a decision</h2>
+      ${writable
+        ? `<p class="hint">Written to <code>review/overrides.yaml</code> and applied immediately.
+             Decisions are keyed by outcome, so they survive a rule change; they go stale by
+             themselves if the registry rewrites the text underneath them.</p>
+           <div class="decide">
+             <div class="wide">
+               <label for="d-uid">Outcome</label>
+               <input id="d-uid" placeholder="e.g. SYNTH-0001:primary:0" list="d-uids">
+               <datalist id="d-uids">${queue.queue.map((q) =>
+                 `<option value="${esc(q.outcome_uid)}">`).join('')}</datalist>
+             </div>
+             <div>
+               <label for="d-concept">Concept</label>
+               <input id="d-concept" placeholder="ORR — or leave blank">
+             </div>
+             <div>
+               <label for="d-axis">Axis correction</label>
+               <input id="d-axis" placeholder="axis_id=term_id">
+             </div>
+             <div>
+               <label for="d-reviewer">Reviewer</label>
+               <input id="d-reviewer" placeholder="your name">
+             </div>
+             <div class="wide">
+               <label for="d-reason">Reason (required, and it is stored)</label>
+               <input id="d-reason" placeholder="What you checked, and what it says">
+             </div>
+             <div>
+               <button class="btn" id="d-save">Record decision</button>
+             </div>
+             <div>
+               <button class="btn ghost" id="d-none">Record “no concept fits”</button>
+             </div>
+           </div>
+           <div id="d-result" style="margin-top:12px"></div>`
+        : `<p class="hint">The API is read-only. Restart with <code>ceskb serve --allow-review</code>
+             to record decisions here, or use the command line:</p>
+           <pre class="code">ceskb override OUTCOME_UID --concept ORR \\
+    --reason "Checked against the protocol: best overall response of CR or PR." \\
+    --reviewer "your name"</pre>`}
+    </div>
+
+    <div class="card">
+      <h2>Decisions on record</h2>
+      <p class="hint">Every reviewer decision, including those that have gone stale because the
+        source text changed. Stale decisions stop being applied and wait for re-review, because
+        they were judgements about words that no longer exist.</p>
+      ${table(['', 'Outcome', 'Concept', 'Axes', 'Reason', 'Reviewer'], overrideRows,
+        { empty: 'No decisions recorded yet.' })}
+    </div>`);
+
+  if (!writable) return;
+
+  const val = (id) => document.getElementById(id).value.trim();
+  const submit = async (suppress) => {
+    const out = document.getElementById('d-result');
+    const body = { outcome_uid: val('d-uid'), reason: val('d-reason'), reviewer: val('d-reviewer') };
+    if (suppress) body.concept_id = null;
+    else if (val('d-concept')) body.concept_id = val('d-concept');
+    const axis = val('d-axis');
+    if (axis.includes('=')) {
+      const [k, v] = axis.split('=');
+      body.axes = { [k.trim()]: v.trim() };
+    }
+    out.innerHTML = '<span class="hint">Recording…</span>';
+    try {
+      const res = await fetch('/api/review/overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      out.innerHTML = `<div class="notice"><strong>Recorded.</strong> Re-derived
+        ${data.reclassified.classified} specification(s) from ${data.reclassified.outcomes} outcomes.</div>`;
+      setTimeout(() => viewReview(), 700);
+    } catch (err) {
+      out.innerHTML = `<div class="notice"><strong>Rejected.</strong> ${esc(err.message)}</div>`;
+    }
+  };
+  document.getElementById('d-save').onclick = () => submit(false);
+  document.getElementById('d-none').onclick = () => submit(true);
+}
+
+// --------------------------------------------------------------------------
 // routing
 // --------------------------------------------------------------------------
 const ROUTES = [
@@ -561,11 +755,12 @@ const ROUTES = [
   [/^\/spec\/(.+)$/, viewSpec],
   [/^\/usdm\/(.+)$/, viewUsdm],
   [/^\/gaps$/, viewGaps],
+  [/^\/review$/, viewReview],
 ];
 
 const NAV_FOR = { overview: 'overview', concepts: 'concepts', concept: 'concepts',
   vocabulary: 'vocabulary', axis: 'vocabulary', studies: 'studies', study: 'studies',
-  spec: 'studies', usdm: 'studies', gaps: 'gaps' };
+  spec: 'studies', usdm: 'studies', gaps: 'gaps', review: 'review' };
 
 function go(path) { window.location.hash = '#' + path; }
 window.go = go;

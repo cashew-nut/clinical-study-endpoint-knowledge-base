@@ -34,3 +34,16 @@ jobs:
           ceskb refresh --source fixtures
           ceskb stats
           ceskb export
+
+      # Coverage is not accuracy. This is the gate that measures whether a
+      # classification is right, rather than merely made. Precision is checked per
+      # concept, not on the average, so one concept mapping badly cannot hide behind
+      # forty that map well; --max-excluded guards the denominator, since a score over a
+      # shrinking scored set stops meaning anything.
+      - name: Accuracy against the gold set
+        run: ceskb evaluate --min-accuracy 0.95 --min-precision 0.95 --max-excluded 0
+
+      - name: Gold set is up to date with its generator
+        run: |
+          python scripts/make_gold_seed.py
+          git diff --exit-code review/gold/

@@ -1,0 +1,454 @@
+gold_set_id: fixtures-seed
+version: '1'
+description: Seed annotations over the synthetic fixture corpus. Judgements were made from the outcome
+  text alone. Because the same party authored the rules and these answers, the set measures self-consistency
+  and regression, not accuracy -- see independence.
+annotator: kb-author
+annotated_at: '2026-08-17'
+guideline: docs/ANNOTATION.md
+independence: self_annotated
+items:
+- outcome_uid: SYNTH-0001:exploratory:0
+  concept_id: HRQOL_CFB
+  text: Change From Baseline in Quality of Life Score at Week 12
+  source_hash: 9bcc03ed79e09ee12608e2649e2a174a
+  axes:
+    endpoint_form: change_from_baseline
+    reference_type: patient_baseline
+  difficulty: clear
+- outcome_uid: SYNTH-0001:primary:0
+  concept_id: PFS
+  text: Progression-Free Survival (PFS) as Assessed by Blinded Independent Central Review per RECIST v1.1
+  source_hash: 5b34a308f86113713514c3e661a9bef1
+  axes:
+    endpoint_form: time_to_event
+    reference_type: randomisation_time
+    timepoint_anchor: randomisation
+  difficulty: clear
+  note: Names PFS and describes time from randomisation to progression or death.
+- outcome_uid: SYNTH-0001:primary:1
+  concept_id: OS
+  text: Overall Survival (OS)
+  source_hash: 4e9766c7d94d966aca6742ecb3420988
+  axes:
+    endpoint_form: time_to_event
+    reference_type: randomisation_time
+  difficulty: clear
+- outcome_uid: SYNTH-0001:secondary:0
+  concept_id: ORR
+  text: Objective Response Rate (ORR) per RECIST v1.1
+  source_hash: df690cf61355f8ace432c841adc1899c
+  axes:
+    endpoint_form: responder_binary
+    scale_type: proportion
+  difficulty: clear
+  note: Best overall response of confirmed CR or PR is the RECIST definition of ORR.
+- outcome_uid: SYNTH-0001:secondary:1
+  concept_id: DOR
+  text: Duration of Response (DoR)
+  source_hash: df5a45fe53552012689068b6d880e2a6
+  difficulty: clear
+- outcome_uid: SYNTH-0001:secondary:2
+  concept_id: AE_INCIDENCE
+  text: Number of Participants With Treatment-Emergent Adverse Events (TEAEs)
+  source_hash: d3c14cc69fa69726c653d185623f5197
+  axes:
+    analysis_population: safety
+  difficulty: clear
+  note: Description states the safety population explicitly.
+- outcome_uid: SYNTH-0002:primary:0
+  concept_id: PCR_RATE
+  text: Pathological Complete Response (pCR) Rate
+  source_hash: 5224d47d18fd55e921a0c18f33a5d97e
+  axes:
+    endpoint_form: responder_binary
+  difficulty: clear
+- outcome_uid: SYNTH-0002:secondary:0
+  concept_id: EFS
+  text: Event-Free Survival (EFS)
+  source_hash: 929d1ecac1f62b6334cb86e4f1639f33
+  axes:
+    endpoint_form: time_to_event
+  difficulty: clear
+- outcome_uid: SYNTH-0002:secondary:1
+  concept_id: ORR
+  text: Percentage of Participants With Complete Response or Partial Response
+  source_hash: c9722c891a1a9b6b69ead709c73a85f4
+  axes:
+    endpoint_form: responder_binary
+  difficulty: judgement
+  note: Spells out CR-or-PR without naming ORR. The union of CR and PR is ORR, not CR rate -- a classifier
+    keying on 'Complete Response' alone would get this wrong.
+- outcome_uid: SYNTH-0003:primary:0
+  concept_id: PFS
+  text: Progression-Free Survival
+  source_hash: 63b68b81d8b49985eac078291bf699cb
+  axes:
+    endpoint_form: time_to_event
+  difficulty: clear
+- outcome_uid: SYNTH-0003:secondary:0
+  concept_id: MRD_NEGATIVITY_RATE
+  text: MRD-Negativity Rate
+  source_hash: c1bd83d6b0bca49c43d3ac6f359d1420
+  axes:
+    endpoint_form: responder_binary
+  difficulty: clear
+- outcome_uid: SYNTH-0003:secondary:1
+  concept_id: CR_RATE
+  text: Complete Response Rate
+  source_hash: 25c409f808cd2b949d4df76b2f6f15d5
+  axes:
+    endpoint_form: responder_binary
+  difficulty: clear
+- outcome_uid: SYNTH-0004:primary:0
+  concept_id: FEV1_CFB
+  text: Change From Baseline in Trough FEV1 at Week 24
+  source_hash: cb1784fabfe76b0116c7e8b053f3d536
+  axes:
+    endpoint_form: change_from_baseline
+    reference_type: patient_baseline
+    analysis_population: full_analysis_set
+  difficulty: clear
+- outcome_uid: SYNTH-0004:primary:1
+  concept_id: EXACERBATION_RATE
+  text: Annualized Rate of Moderate or Severe COPD Exacerbations
+  source_hash: d4a205d1273275751d86cabc2198294a
+  axes:
+    endpoint_form: event_rate
+    scale_type: rate
+  difficulty: clear
+  note: Annualised rate per participant-year.
+- outcome_uid: SYNTH-0004:secondary:0
+  concept_id: TIME_TO_FIRST_EXACERBATION
+  text: Time to First Moderate or Severe Exacerbation
+  source_hash: 0042508ff5fbaa9b683260ae6ebf565e
+  axes:
+    endpoint_form: time_to_event
+    timepoint_selection: first_occurrence
+  difficulty: clear
+- outcome_uid: SYNTH-0004:secondary:1
+  concept_id: HRQOL_CFB
+  text: Change From Baseline in St George's Respiratory Questionnaire Total Score at Week 24
+  source_hash: a7251556e49e52a5e2617ecbe45102ca
+  axes:
+    endpoint_form: change_from_baseline
+    direction: decrease_is_better
+  difficulty: judgement
+  note: SGRQ scores higher for worse health, so a fall is improvement -- the opposite of the generic quality-of-life
+    convention. Annotated deliberately to test whether instrument-specific direction survives.
+- outcome_uid: SYNTH-0005:primary:0
+  concept_id: FEV1_PCT_PREDICTED
+  text: Absolute Change From Baseline in Percent Predicted FEV1 (ppFEV1) at Week 24
+  source_hash: 470379988aa211380929056a49c3b9e0
+  axes:
+    endpoint_form: change_from_baseline
+    reference_type: patient_baseline
+  difficulty: judgement
+  note: Two references are in play. 'Percent predicted' references the measurement to a population norm;
+    the endpoint then compares that quantity to the participant's own baseline. The reference_type axis
+    describes the endpoint's comparison, so it is patient_baseline, and the population norm is a property
+    of how the measurement is expressed. Annotated population_normative on the first pass by carrying
+    over the concept's framing without separating the two.
+- outcome_uid: SYNTH-0005:secondary:0
+  concept_id: EXACERBATION_RATE
+  text: Number of Pulmonary Exacerbations
+  source_hash: ec02eb4644b6ff1f10d880137b3915de
+  axes:
+    endpoint_form: count
+  difficulty: judgement
+  note: A count over a fixed window, not an annualised rate. Same measurement, different form.
+- outcome_uid: SYNTH-0006:primary:0
+  concept_id: HBA1C_CFB
+  text: Change From Baseline in HbA1c at Week 26
+  source_hash: a36b5b32fce8295ad12d1104f3d4f78f
+  axes:
+    endpoint_form: change_from_baseline
+    direction: decrease_is_better
+    analysis_population: full_analysis_set
+  difficulty: clear
+- outcome_uid: SYNTH-0006:secondary:0
+  concept_id: HBA1C_TARGET_RESPONDER
+  text: Percentage of Participants Achieving HbA1c < 7.0%
+  source_hash: 746667491c66f4a4922a26c7728c0793
+  axes:
+    endpoint_form: responder_binary
+    reference_type: fixed_clinical_target
+  difficulty: clear
+  note: Referenced to an absolute target of 7.0%, not to the patient's own baseline.
+- outcome_uid: SYNTH-0006:secondary:1
+  concept_id: BODY_WEIGHT_CFB
+  text: Change From Baseline in Body Weight at Week 26
+  source_hash: 5db2948244e94f649ffea9837a505ba7
+  axes:
+    endpoint_form: change_from_baseline
+    scale_type: continuous
+  difficulty: clear
+  note: Absolute change, so not the percent-change concept.
+- outcome_uid: SYNTH-0007:primary:0
+  concept_id: BODY_WEIGHT_PCT_CFB
+  text: Percent Change From Baseline in Body Weight at Week 68
+  source_hash: 712a0e6eb6aca3b60b51508f71bc6c4b
+  axes:
+    endpoint_form: percent_change_from_baseline
+    direction: decrease_is_better
+  difficulty: clear
+- outcome_uid: SYNTH-0007:secondary:0
+  concept_id: WEIGHT_LOSS_RESPONDER
+  text: Percentage of Participants Achieving at Least 5% Reduction in Body Weight
+  source_hash: aedb14b9f83966aac9c9bd0a20e6aef5
+  axes:
+    endpoint_form: responder_binary
+    threshold_kind: relative_change_percent
+  difficulty: clear
+- outcome_uid: SYNTH-0007:secondary:1
+  concept_id: WEIGHT_LOSS_RESPONDER
+  text: Percentage of Participants Achieving at Least 10% Reduction in Body Weight
+  source_hash: c70ac8c74ddeb6a93183bcc8f2463a96
+  axes:
+    endpoint_form: responder_binary
+    threshold_kind: relative_change_percent
+  difficulty: clear
+  note: Same concept as the 5% item, differing only in threshold value -- which is a Layer B parameter,
+    not a second concept.
+- outcome_uid: SYNTH-0008:primary:0
+  concept_id: CGM_TIME_IN_RANGE
+  text: Percentage of Time in Target Glucose Range (70-180 mg/dL)
+  source_hash: d2fd5f20447055c1882c131bfa5ea056
+  axes:
+    direction: increase_is_better
+  difficulty: clear
+- outcome_uid: SYNTH-0008:secondary:0
+  concept_id: HBA1C_CFB
+  text: Change From Baseline in HbA1c at Week 12
+  source_hash: b56db8aaebf8075dcf4bdc53578f7f8c
+  axes:
+    endpoint_form: change_from_baseline
+  difficulty: clear
+- outcome_uid: SYNTH-0009:primary:0
+  concept_id: ACR20
+  text: Percentage of Participants Achieving an ACR20 Response at Week 12
+  source_hash: 312d83840a2d47a3ffb56d604541c578
+  axes:
+    endpoint_form: responder_binary
+    analysis_population: itt
+  difficulty: clear
+- outcome_uid: SYNTH-0009:secondary:0
+  concept_id: ACR50
+  text: Percentage of Participants Achieving an ACR50 Response at Week 24
+  source_hash: 71297ebb464878e93e64c138a2e1b128
+  axes:
+    endpoint_form: responder_binary
+  difficulty: clear
+- outcome_uid: SYNTH-0009:secondary:1
+  concept_id: ACR70
+  text: Percentage of Participants Achieving an ACR70 Response at Week 24
+  source_hash: cc8200c39b02cd4a89ac31c1f0ae9348
+  axes:
+    endpoint_form: responder_binary
+  difficulty: clear
+- outcome_uid: SYNTH-0009:secondary:2
+  concept_id: DAS28_CFB
+  text: Change From Baseline in DAS28-CRP at Week 24
+  source_hash: 46c804d81225b4ffe5ffc6cccc6b0fc4
+  axes:
+    endpoint_form: change_from_baseline
+    direction: decrease_is_better
+  difficulty: clear
+- outcome_uid: SYNTH-0010:exploratory:0
+  concept_id: AE_INCIDENCE
+  text: Number of Participants With Adverse Events of Special Interest
+  source_hash: 9263160899ce163ed08864df4181e62b
+  difficulty: clear
+- outcome_uid: SYNTH-0010:primary:0
+  concept_id: PASI90
+  text: Percentage of Participants Achieving PASI 90 Response at Week 16
+  source_hash: c37c5398a54ad9f9a11cd3748e0fc487
+  axes:
+    endpoint_form: responder_binary
+  difficulty: clear
+- outcome_uid: SYNTH-0010:secondary:0
+  concept_id: PASI75
+  text: Percentage of Participants Achieving PASI 75 Response at Week 16
+  source_hash: 76f9cd656a98dab3c5b859556be557c6
+  axes:
+    endpoint_form: responder_binary
+  difficulty: clear
+- outcome_uid: SYNTH-0011:primary:0
+  concept_id: EASI75
+  text: Percentage of Participants Achieving EASI-75 at Week 16
+  source_hash: 44f018482fd4e18820ecbfa6a3791d35
+  axes:
+    endpoint_form: responder_binary
+  difficulty: clear
+- outcome_uid: SYNTH-0011:secondary:0
+  concept_id: PAIN_INTENSITY_CFB
+  text: Change From Baseline in Pain Intensity NRS at Week 16
+  source_hash: ba1653c417a24c384f84662a22447a6d
+  axes:
+    endpoint_form: change_from_baseline
+    direction: decrease_is_better
+  difficulty: clear
+- outcome_uid: SYNTH-0012:primary:0
+  concept_id: MACE_TIME_TO_FIRST
+  text: Time to First Occurrence of Major Adverse Cardiovascular Events (MACE)
+  source_hash: 2dc9f66f0f25344b42a183adf983a72c
+  axes:
+    endpoint_form: time_to_event
+    timepoint_selection: first_occurrence
+  difficulty: clear
+- outcome_uid: SYNTH-0012:secondary:0
+  concept_id: HF_HOSPITALISATION_RECURRENT
+  text: Total Number of Heart Failure Hospitalizations
+  source_hash: 600a238d63ee903fd84a9a83b80b669c
+  axes:
+    direction: decrease_is_better
+  difficulty: clear
+  note: Recurrent-event analysis of all hospitalisations, not time to the first.
+- outcome_uid: SYNTH-0012:secondary:1
+  concept_id: SBP_CFB
+  text: Change From Baseline in Systolic Blood Pressure at Week 12
+  source_hash: 4acbef30dfc36130a7240b8fd00f15d6
+  axes:
+    endpoint_form: change_from_baseline
+  difficulty: clear
+- outcome_uid: SYNTH-0012:secondary:2
+  concept_id: SIX_MWD_CFB
+  text: Change From Baseline in 6-Minute Walk Distance at Week 24
+  source_hash: 09079bb0217fe1ed9e859ae5463405a6
+  axes:
+    endpoint_form: change_from_baseline
+    direction: increase_is_better
+  difficulty: clear
+- outcome_uid: SYNTH-0013:primary:0
+  concept_id: EGFR_SLOPE
+  text: Chronic eGFR Slope From Week 12 to End of Treatment
+  source_hash: 19d0ba9cbd3693a49478fb97069690f9
+  axes:
+    endpoint_form: slope_over_time
+    direction: increase_is_better
+  difficulty: judgement
+  note: 'Slope of eGFR over time. Direction: a less negative slope is better, which the vocabulary expresses
+    as increase_is_better on the slope itself.'
+- outcome_uid: SYNTH-0013:secondary:0
+  concept_id: UACR_PCT_CFB
+  text: Percent Change From Baseline in Urine Albumin-to-Creatinine Ratio (UACR) at Week 24
+  source_hash: 3e7eaeebfc67db5ff2d7ad21208a1aa4
+  axes:
+    endpoint_form: percent_change_from_baseline
+    direction: decrease_is_better
+  difficulty: clear
+- outcome_uid: SYNTH-0014:primary:0
+  concept_id: ANNUALISED_RELAPSE_RATE
+  text: Annualized Relapse Rate (ARR) at Week 96
+  source_hash: 0a758a03590d8943bf98f6b475051f06
+  axes:
+    endpoint_form: event_rate
+    scale_type: rate
+  difficulty: clear
+- outcome_uid: SYNTH-0014:secondary:0
+  concept_id: CONFIRMED_DISABILITY_PROGRESSION
+  text: Time to 12-Week Confirmed Disability Progression
+  source_hash: 8a2cc7d233cad1bff7ce7e480aafe15f
+  axes:
+    endpoint_form: time_to_event
+  difficulty: clear
+- outcome_uid: SYNTH-0015:primary:0
+  concept_id: ADAS_COG_CFB
+  text: Change From Baseline in ADAS-Cog 13 at Week 78
+  source_hash: 85b4544bbfb824fa66a8115c62c14219
+  axes:
+    endpoint_form: change_from_baseline
+  difficulty: clear
+- outcome_uid: SYNTH-0015:secondary:0
+  concept_id: HRQOL_CFB
+  text: Change From Baseline in Quality of Life Score at Week 78
+  source_hash: 328094c69b9196a202c47248de789c9e
+  axes:
+    endpoint_form: change_from_baseline
+  difficulty: clear
+- outcome_uid: SYNTH-0016:primary:0
+  concept_id: DEPRESSION_SCALE_CFB
+  text: Change From Baseline in MADRS Total Score at Week 6
+  source_hash: 9053bdeed9e7271f36c5dc633181409c
+  axes:
+    endpoint_form: change_from_baseline
+    direction: decrease_is_better
+  difficulty: clear
+- outcome_uid: SYNTH-0016:secondary:0
+  concept_id: AE_INCIDENCE
+  text: Percentage of Participants With Adverse Events
+  source_hash: a152928ea0a99853928cda1c3ebf5420
+  difficulty: clear
+- outcome_uid: SYNTH-0017:primary:0
+  concept_id: SEIZURE_FREQUENCY_PCT_CFB
+  text: Percent Change From Baseline in Seizure Frequency During the Maintenance Period
+  source_hash: 60484c2b5e6fdc652508df7b09751ea8
+  axes:
+    endpoint_form: percent_change_from_baseline
+    direction: decrease_is_better
+  difficulty: clear
+- outcome_uid: SYNTH-0018:primary:0
+  concept_id: VIRAL_SUPPRESSION_RATE
+  text: Percentage of Participants With HIV-1 RNA < 50 Copies/mL at Week 48
+  source_hash: 2d819504313fd3a07e93cc08f86107bb
+  axes:
+    endpoint_form: responder_binary
+    reference_type: fixed_clinical_target
+  difficulty: clear
+- outcome_uid: SYNTH-0018:secondary:0
+  concept_id: AE_INCIDENCE
+  text: Number of Participants With Treatment-Emergent Adverse Events
+  source_hash: a0ca8ce4035204ddf999488050df7299
+  difficulty: clear
+- outcome_uid: SYNTH-0019:primary:0
+  concept_id: SEROCONVERSION_RATE
+  text: Seroconversion Rate at Day 28
+  source_hash: f9b1f66ef9e74f5bb7306d09bc898461
+  axes:
+    endpoint_form: responder_binary
+    reference_type: patient_baseline
+  difficulty: clear
+  note: Four-fold rise is referenced to the participant's own pre-vaccination titre.
+- outcome_uid: SYNTH-0020:primary:0
+  concept_id: BCVA_CFB
+  text: Change From Baseline in Best-Corrected Visual Acuity (BCVA) at Week 48
+  source_hash: 799dd678943e70409aa587b255a2cd9f
+  axes:
+    endpoint_form: change_from_baseline
+    direction: increase_is_better
+  difficulty: clear
+- outcome_uid: SYNTH-0020:secondary:0
+  concept_id: BCVA_LETTER_GAIN_RESPONDER
+  text: Percentage of Participants Gaining at Least 15 Letters in BCVA at Week 48
+  source_hash: 78ec42b90f2535f3d0b77e44a236d219
+  axes:
+    endpoint_form: responder_binary
+    threshold_kind: absolute_change
+  difficulty: clear
+- outcome_uid: SYNTH-0021:primary:0
+  concept_id: PFS
+  text: Progression-Free Survival Rate at 12 Months
+  source_hash: c502b3aba5c8573f7f5aef0c0dbda3f2
+  axes:
+    endpoint_form: responder_binary
+    scale_type: proportion
+  difficulty: judgement
+  note: 'A landmark rate, not a time-to-event analysis: the derived variable is the proportion progression-free
+    at a fixed 12 months. Same measurement concept as PFS, different form -- which is exactly what the
+    form axis is for.'
+- outcome_uid: SYNTH-0021:secondary:0
+  concept_id: OS
+  text: Overall Survival Rate at 24 Months
+  source_hash: 352a1b15349b16a7c591878874fa837f
+  axes:
+    endpoint_form: responder_binary
+    scale_type: proportion
+  difficulty: judgement
+  note: Landmark survival rate, as above.
+- outcome_uid: SYNTH-0021:secondary:1
+  concept_id: null
+  text: Investigator-Assessed Clinical Benefit
+  source_hash: b40027ea010f3595d8d2a906ebb59299
+  difficulty: ambiguous
+  note: '''Investigator-Assessed Clinical Benefit'', explicitly not otherwise specified. No concept can
+    be assigned from this text, and inventing one would be worse than leaving it unmatched.'

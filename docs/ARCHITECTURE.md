@@ -61,11 +61,14 @@
 | `ceskb.ingest.normalise` | `FIELD_PATHS` declares every source field path in one place. `probe_schema` reports which resolved, so upstream drift surfaces as a number. |
 | `ceskb.ingest.pipeline` | Bronze snapshots, content-hash upserts, watermarks, run recording. |
 | `ceskb.classify.extractors` | Timepoint anchor/offset/selection, threshold, analysis population. Each returns a value **and** the span that justified it. |
-| `ceskb.classify.engine` | Applies rules, resolves competition, layers structure by precedence, writes evidence. |
+| `ceskb.classify.engine` | Applies rules, resolves competition, layers structure by precedence, applies reviewer overrides, writes evidence. |
+| `ceskb.review.overrides` | Reviewer decisions: YAML in git as the system of record, keyed by outcome so they survive re-derivation, hash-bound so they go stale when the source text changes. |
+| `ceskb.evaluate.gold` | Gold-set loading and validation, and Cohen's kappa between two annotators. |
+| `ceskb.evaluate.score` | Per-concept precision/recall, axis accuracy, difficulty bands, CI gates. |
 | `ceskb.project.usdm` | Builds USDM v4 objects with real NCI C-codes. |
 | `ceskb.store.db` | Schema, connection, Layer A rebuild, watermarks, run tracking. |
 | `ceskb.store.export` | Parquet, USDM JSON, graph edge list. |
-| `ceskb.api.app` | Read-only FastAPI over the DuckDB file. |
+| `ceskb.api.app` | FastAPI over the DuckDB file, read-only except for the opt-in review write endpoint. |
 
 ## Incremental refresh
 

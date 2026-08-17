@@ -45,10 +45,19 @@ schema already enforces that a `verified: true` claim names what it was checked 
 long tail — pharmacokinetics, immunogenicity, device performance, health economics — is
 untouched. Drive this from the Gaps view rather than by guessing.
 
-**A review workflow.** Concepts carry `status: draft | reviewed | deprecated` but nothing
-enforces it. Low-confidence classifications and new concepts should route to a named
-reviewer, and the UI should let a reviewer accept or reject a specification with the
-decision recorded alongside the rule evidence.
+**An independent gold set.** *Done: the harness. Not done: the thing that makes it
+evidence.* `review/gold/fixtures-seed.yaml` is marked `self_annotated` because the same
+party wrote the rules and the answers, so it detects regressions and proves nothing about
+accuracy. What is needed is a stratified sample of real outcomes annotated by two people
+who did not write the rules, with `ceskb agreement` run **before** `ceskb evaluate` — if
+annotators disagree, the vocabulary is underspecified and no classifier work will fix it.
+Until that exists, every accuracy figure this project reports should be read as
+self-consistency.
+
+**Concept review status is still unenforced.** Concepts carry
+`status: draft | reviewed | deprecated` and nothing routes on it. Specification-level
+review now exists (`ceskb review`, `ceskb override`), but the vocabulary itself has no
+equivalent: a draft concept classifies studies exactly as a reviewed one does.
 
 ---
 

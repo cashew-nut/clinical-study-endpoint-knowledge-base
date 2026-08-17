@@ -189,6 +189,25 @@ rules:
       are all the same endpoint structure; the instrument identity is a Layer B
       qualifier, not a separate concept.
 
+  - rule_id: hrqol.symptom_burden_instrument
+    concept_id: HRQOL_CFB
+    priority: 210
+    confidence: 0.85
+    match:
+      all_of:
+        - '\bSGRQ\b|\bSt\.? George''s Respiratory Questionnaire\b|\bCOPD Assessment Test\b|\bCAT (?:total )?score\b|\bSGRQ[- ]C\b'
+        - '\bchange (?:from|since) baseline\b'
+      fields: [measure]
+    asserts:
+      direction: decrease_is_better
+    notes: >-
+      Symptom-burden instruments score higher for worse health, so a fall is improvement
+      -- the reverse of the convention HRQOL_CFB carries. Without this the sign of the
+      treatment effect is reported backwards, which is the kind of error that survives
+      review precisely because the concept and the number both look right on their own.
+      KCCQ, FACT and EORTC QLQ functional scales are deliberately not matched: they score
+      higher as better and the default direction is correct for them.
+
   - rule_id: ae.incidence
     concept_id: AE_INCIDENCE
     priority: 210

@@ -26,6 +26,9 @@ class Paths:
     concepts: Path = ROOT / "vocabularies" / "concepts"
     rules: Path = ROOT / "rules"
     schemas: Path = ROOT / "schemas"
+    review: Path = ROOT / "review"
+    overrides: Path = ROOT / "review" / "overrides.yaml"
+    gold: Path = ROOT / "review" / "gold"
     data: Path = ROOT / "data"
     bronze: Path = ROOT / "data" / "bronze"
     fixtures: Path = ROOT / "data" / "fixtures"
@@ -75,4 +78,4 @@ CTGOV = CtgovConfig()
 #: Bump when a change to rules, extractors, or vocabularies should invalidate derived
 #: rows. Stored on every classification so a row can always be traced to the logic
 #: that produced it.
-DERIVATION_VERSION = "2026.08.14.1"
+DERIVATION_VERSION = "2026.08.17.1"
