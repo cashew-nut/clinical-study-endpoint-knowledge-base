@@ -11,7 +11,12 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from clinical_endpoints.db import MissingAactCredentialsError, attach_aact, connect
+from clinical_endpoints.db import (
+    AactConnectionError,
+    MissingAactCredentialsError,
+    attach_aact,
+    connect,
+)
 from clinical_endpoints.ingest.pull import PullFilters, run_pull
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -74,7 +79,7 @@ def pull(
     con = connect(warehouse)
     try:
         attach_aact(con)
-    except MissingAactCredentialsError as exc:
+    except (MissingAactCredentialsError, AactConnectionError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
 

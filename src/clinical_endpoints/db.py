@@ -22,6 +22,10 @@ class MissingAactCredentialsError(RuntimeError):
     """Raised when AACT Postgres credentials are not available in the environment."""
 
 
+class AactConnectionError(RuntimeError):
+    """Raised when the ATTACH to AACT's Postgres instance fails (network/auth)."""
+
+
 def connect(warehouse_path: Path | str = DEFAULT_WAREHOUSE_PATH) -> duckdb.DuckDBPyConnection:
     """Open (creating if needed) the warehouse and ensure its schemas exist."""
     con = duckdb.connect(str(warehouse_path))
@@ -56,4 +60,24 @@ def attach_aact(con: duckdb.DuckDBPyConnection, *, alias: str = "aact") -> None:
     }
     if alias in already_attached:
         return
-    con.execute(f"ATTACH '' AS {alias} (TYPE postgres, READ_ONLY)")
+
+    try:
+        con.execute(f"ATTACH '' AS {alias} (TYPE postgres, READ_ONLY)")
+    except duckdb.Error as exc:
+        host = os.environ.get("PGHOST")
+        port = os.environ.get("PGPORT")
+        raise AactConnectionError(
+            f"Could not connect to AACT Postgres at {host}:{port}: {exc}\n\n"
+            "Credentials loaded correctly (host/port resolved above), so this is "
+            "almost always a network reachability issue rather than a bug in this "
+            "tool -- e.g. a corporate firewall/VPN blocking outbound TCP 5432 "
+            "(many networks only allow 80/443 out). To narrow it down:\n"
+            f"  1. `nc -vz {host} {port}` (or `telnet {host} {port}`) -- if that "
+            "also hangs/fails, it's network-level, not this tool.\n"
+            f"  2. Try `psql -h {host} -p {port} -U $PGUSER -d $PGDATABASE` directly, "
+            "if you have psql installed.\n"
+            "  3. Try a different network (e.g. a phone hotspot) to rule out a "
+            "local firewall/VPN blocking port 5432 outbound.\n"
+            "  4. Confirm your AACT registration is fully approved -- check for a "
+            "confirmation email, not just the signup form."
+        ) from exc
