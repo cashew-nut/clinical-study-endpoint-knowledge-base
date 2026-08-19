@@ -13,6 +13,10 @@ from datetime import datetime, timezone
 
 import duckdb
 
+# Kept for reference/backwards compatibility -- callers now pass the tables
+# they actually landed via `source_tables`, since that differs by backend
+# (e.g. AACT lands mesh_terms, the CT.gov API backend lands
+# browse_condition_branches instead; see ingest/aact.py and ingest/ctgov_api.py).
 SOURCE_TABLES = ("studies", "design_outcomes")
 
 
@@ -32,7 +36,12 @@ def ensure_pull_log(con: duckdb.DuckDBPyConnection) -> None:
 
 
 def write_pull_log(
-    con: duckdb.DuckDBPyConnection, *, source: str, filters: dict, row_counts: dict
+    con: duckdb.DuckDBPyConnection,
+    *,
+    source: str,
+    filters: dict,
+    row_counts: dict,
+    source_tables: tuple[str, ...] = SOURCE_TABLES,
 ) -> dict:
     ensure_pull_log(con)
     pull_id = str(uuid.uuid4())
@@ -42,6 +51,6 @@ def write_pull_log(
         INSERT INTO raw._pull_log (pull_id, pulled_at, source, filters_json, source_tables, row_counts)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        [pull_id, pulled_at, source, json.dumps(filters), list(SOURCE_TABLES), json.dumps(row_counts)],
+        [pull_id, pulled_at, source, json.dumps(filters), list(source_tables), json.dumps(row_counts)],
     )
     return {"pull_id": pull_id, "pulled_at": pulled_at}

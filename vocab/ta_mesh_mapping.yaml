@@ -329,17 +329,70 @@ defaults:
 # Anything a reviewer should know before relying on this file.
 caveats:
   - >-
-    The tree_prefixes table is written from the MeSH C/F branch structure and has
-    NOT been validated against a live `mesh_terms` join -- this environment cannot
-    reach AACT (egress-blocked) and no warehouse has been pulled yet. Layers 1 and
-    3 are written to stand alone, so the mapping degrades to descriptor matching
-    rather than breaking if a prefix is wrong; the first real pull should
-    nonetheless diff tree-derived areas against pattern-derived ones and reconcile.
+    UPDATED (session that closed the step-2 gaps, see docs/NEXT_SESSION.md):
+    `raw.browse_conditions`, `raw.browse_interventions`, `raw.conditions`, and
+    `raw.mesh_terms` (AACT) / `raw.browse_condition_branches` (CT.gov API) are now
+    pulled by both backends, `pull --ta` works, and `conformed.study_therapeutic_area`
+    is populated by `src/clinical_endpoints/ta/resolver.py`. This item and the two
+    below are the pre-existing caveats that motivated that work; kept for history.
   - >-
-    Neither backend's condition table is pulled today -- `pull` writes only
-    raw.studies and raw.design_outcomes. Adding raw.browse_conditions (and
-    raw.browse_interventions, needed for the vaccines rule) is a prerequisite for
-    running this mapping, and is what `endpoints pull --ta` is currently blocked on.
+    CONFIRMED, not just suspected: per the AACT data dictionary checked for this
+    project (2026-08-19), `ctgov.mesh_terms` and `ctgov.mesh_headings` both carry
+    ZERO ROWS in the live AACT database today -- this is independent of whatever
+    columns those tables have, so no tree-number join is available from AACT right
+    now regardless of column names. `ingest/aact.py`'s `_pull_mesh_terms` still
+    introspects `ctgov.mesh_terms`'s real columns at pull time (via
+    information_schema, not a hardcoded column guess) and lands an empty-but-
+    correctly-shaped `raw.mesh_terms` today, so it will pick up tree numbers
+    automatically the day AACT populates that table, with no code change needed.
+    Until then the `tree_prefixes` layer only fires from CT.gov API pulls, via the
+    coarse `browseBranches` abbreviation (one top-level tree letter+digits per
+    study, not per condition) -- see `resolver.py`'s `_branch_abbrev_to_tree_prefix`.
+    Layers 1 (`term_overrides`) and 3 (`term_patterns`) still stand alone, so the
+    mapping degrades to descriptor matching rather than breaking.
+  - >-
+    `browse_conditions`'s real AACT schema (per the data dictionary provided for
+    this project): `nct_id`, `mesh_term` -- no `mesh_type` column, and no
+    `downcase_mesh_term` column was confirmed either (unverifiable from the sandbox,
+    which cannot reach AACT). `ingest/aact.py` computes `mesh_term_normalised`
+    itself (`lower(trim(mesh_term))`) rather than trusting a column name that
+    couldn't be verified, and sets `mesh_type` to the literal `'condition'` /
+    `'intervention'` per source table rather than reading it from AACT (both tables
+    -- `browse_conditions` and `browse_interventions` -- otherwise carry the same
+    shape). The AACT data dictionary confirms both tables are "many" rows per
+    study (633,066 / 255,332 total), i.e. NLM's per-study MeSH assignment list, one
+    row per assigned term -- matching this file's assumption throughout.
+  - >-
+    `tree_prefixes`'s longest-prefix-wins matching, and the diff tool
+    (`ta/resolver.py`'s `diff_tree_vs_pattern`, `endpoints ta diff-tree`) that
+    compares this layer against `term_patterns` per docs/NEXT_SESSION.md task 3,
+    are implemented and unit-tested, but have only been exercised against synthetic
+    data -- this sandbox cannot reach either ingestion backend (confirmed: both
+    return HTTP 403 on the outbound proxy), so no live pull has been run. Two
+    illustrative disagreements surfaced by a synthetic run against this file's real
+    tree_prefixes/term_patterns (not fabricated mappings) are worth a human look
+    once a live pull is possible:
+      * a descriptor containing "pneumonia" (e.g. "Interstitial Pneumonia") that is
+        not in `term_overrides` matches `term_patterns`' infectious_disease rule
+        (which lists `pneumonia`) before respiratory's, even when the condition is
+        a non-infectious interstitial lung disease that a C08 tree prefix would
+        correctly place under respiratory. Proposed fix: add explicit
+        `term_overrides` entries for the specific idiopathic-interstitial-pneumonia
+        MeSH headings (e.g. "Idiopathic Interstitial Pneumonias", "Cryptogenic
+        Organizing Pneumonia", "Usual Interstitial Pneumonia"), the same way
+        "Lung Diseases, Interstitial" is already overridden to `respiratory` --
+        not a `term_patterns` reorder, which would risk misrouting genuinely
+        infectious pneumonias.
+      * "Dementia, Vascular" is not in `term_overrides`; MeSH places it under
+        Nervous System Diseases (C10 -> `neurology`), but `term_patterns`'
+        cardiovascular rule (which lists `vascular`) is ordered before neurology's
+        and matches first, on the same word. Proposed fix: add a `term_overrides`
+        entry `"Dementia, Vascular": neurology` -- narrower and safer than touching
+        the shared `vascular` token in the cardiovascular pattern, which is needed
+        there for genuine vascular-disease descriptors.
+    Neither edit has been applied -- new term_overrides entries are a judgment call
+    for a human reviewer with the real diff output in hand, not something to apply
+    from a synthetic run.
   - >-
     NLM's condition coding is algorithmic and imperfect at the study level. Treat a
     derived TA as a grouping convenience, not as a study attribute of record.

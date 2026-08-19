@@ -184,29 +184,42 @@ Measured against the 500-study `vocab_review.csv` sample:
 | `measure` matched to a measurement | 92% of rows |
 | `measure` matched to an explicit form | 69% of rows (the rest are `not_stated`) |
 
-Three caveats on those numbers:
+Three caveats on those numbers (the first two were closed by the session that
+resolved `docs/NEXT_SESSION.md`'s gaps -- see below):
 
-1. **The sample itself is truncated.** `vocab sample` keeps the 500 most
-   frequent distinct values per field. For `measure` that covers every value
-   occurring twice or more, but only 153 of the singletons — alphabetically, and
-   it stops at "Ac…". So the singleton tail is not represented at all, and the
-   500 kept values account for only about a quarter of actual outcome rows.
+1. **The sample itself was truncated.** `vocab sample` used to keep the 500 most
+   frequent distinct values per field, alphabetically-truncated below that. It
+   now keeps every value occurring `--min-frequency` times or more uncapped, plus
+   a seeded random sample of the tail (`--singleton-sample`), and reports
+   per-field coverage (`_coverage.csv`) instead of leaving it invisible. A
+   `--format rows` export also makes measure/time_frame/description jointly
+   reviewable. This sandbox cannot reach either ingestion backend to re-run the
+   500-study sample for real updated numbers (see below); `endpoints vocab
+   sample` should be re-run against a real pull before the next vocabulary
+   review round, and this section's numbers updated from its `_coverage.csv`.
 2. **Exact-match coverage of `measure` will never approach 100%,** because the
    strings are close to unique per trial. That is the designed shape: syntactic
    match, then semantic fallback, then review queue.
-3. **The MeSH tree numbers are unvalidated.** This environment cannot reach AACT
-   (egress-blocked), so `tree_prefixes` is written from the MeSH C/F branch
-   structure and has not been checked against a live `mesh_terms` join. Layers 1
-   and 3 stand alone, so the mapping degrades rather than breaking — but the
-   first real pull should diff tree-derived areas against pattern-derived ones.
+3. **The MeSH tree numbers are still effectively unvalidated against AACT.**
+   Per the AACT data dictionary checked for this project, `ctgov.mesh_terms` has
+   zero rows in the live database today, independent of its column names -- so
+   there is no tree-number join available from AACT regardless. `tree_prefixes`
+   now also fires from the CT.gov API backend's coarse `browseBranches`
+   abbreviation (one tree letter per study, not per condition), and
+   `endpoints ta diff-tree` (task 3's diff tool) is implemented and tested, but
+   has only run against synthetic data in this sandbox -- see
+   `ta_mesh_mapping.yaml`'s `caveats` block for two illustrative disagreements
+   it already surfaced against the real tree_prefixes/term_patterns tables, and
+   run it for real once a live pull is possible.
 
 ## Known gaps
 
-* **`raw.browse_conditions` is not pulled yet.** `endpoints pull` writes only
-  `raw.studies` and `raw.design_outcomes`, so `ta_mesh_mapping.yaml` cannot run
-  and `pull --ta` stays blocked. Adding the conditions table (and
-  `browse_interventions`, for the vaccines rule) to both backends is a
-  prerequisite for step 3.
+* **Live AACT/CT.gov access is still unavailable from this build sandbox** --
+  confirmed this session (both hosts return HTTP 403 on the outbound proxy), not
+  just suspected. Everything below the vocabulary layer (`pull --ta`, the TA
+  resolver, `endpoints ta diff-tree`) is implemented and unit-tested against
+  fakes/synthetic data, but has never run against a real pull. That's the next
+  session's first task once network access is available.
 * **Rheumatology and respiratory are thin in this sample.** ACR20 and FEV1 are
   in the vocabulary because the plan's reference table names them, not because
   the 500 studies exercised them. A rheumatology-weighted pull would be the way
