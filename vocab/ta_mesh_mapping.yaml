@@ -122,6 +122,48 @@ term_overrides:
   "Hypertension, Pulmonary": respiratory
   "Cystic Fibrosis": respiratory
 
+  # ROUND TWO. The interstitial pneumonias. `term_patterns` lists infectious_disease
+  # ahead of respiratory and both claim the word "pneumonia", so every idiopathic
+  # interstitial pneumonia was routing to infectious_disease -- a non-infectious
+  # fibrosing lung disease filed under infection. Overriding the specific headings
+  # is the safe fix; reordering the two patterns, or removing "pneumonia" from the
+  # infectious rule, would misroute genuine community-acquired and ventilator-
+  # associated pneumonias, which are far more common in the corpus.
+  "Idiopathic Interstitial Pneumonias": respiratory
+  "Cryptogenic Organizing Pneumonia": respiratory
+  "Usual Interstitial Pneumonia": respiratory
+  "Pneumonia, Interstitial": respiratory
+  "Idiopathic Pulmonary Fibrosis, Familial": respiratory
+  "Alveolitis, Extrinsic Allergic": respiratory
+  # ...and the genuinely infectious ones, stated explicitly so the fix above can
+  # never be widened into a blanket "pneumonia -> respiratory" rule.
+  "Pneumonia, Ventilator-Associated": infectious_disease
+  "Pneumonia, Bacterial": infectious_disease
+  "Pneumonia, Pneumocystis": infectious_disease
+  "Healthcare-Associated Pneumonia": infectious_disease
+  "Community-Acquired Infections": infectious_disease
+
+  # ROUND TWO. MeSH places vascular dementia under Nervous System Diseases (C10),
+  # but `term_patterns` puts cardiovascular ahead of neurology and both claim the
+  # token "vascular". Narrower than touching that shared token, which genuine
+  # vascular-disease descriptors need.
+  "Dementia, Vascular": neurology
+  "Cerebral Small Vessel Diseases": neurology
+  "Cerebral Amyloid Angiopathy": neurology
+
+  # ROUND TWO. Dual-coded in MeSH (C12 urogenital AND C19 endocrine) and genuinely
+  # both. Resolved to nephrology because that is who runs the trials and what the
+  # endpoints measure -- eGFR slope, albuminuria, time to kidney failure.
+  "Diabetic Nephropathies": nephrology_urology
+  "Diabetes Insipidus": metabolic_endocrine
+
+  # ROUND TWO. `thromb\w+` in the cardiovascular pattern was claiming every
+  # thrombocytopenia. The pattern is now narrowed to genuine thrombosis words;
+  # these are stated as well so the intent survives a future pattern edit.
+  "Thrombocytopenia": haematology
+  "Purpura, Thrombocytopenic, Idiopathic": haematology
+  "Thrombotic Thrombocytopenic Purpura": haematology
+
   # Metabolic vs endocrine vs cardiovascular boundary cases.
   "Diabetes Mellitus, Type 2": metabolic_endocrine
   "Diabetes Mellitus, Type 1": metabolic_endocrine
@@ -285,7 +327,7 @@ term_patterns:
     patterns:
       - '\b(infect\w+|sepsis|septic|hiv|hepatitis|tuberculosis|malaria|covid|influenza|pneumonia|bacter\w+|vir(al|us)|fungal|candid\w+|meningitis)\b'
   - ta: ophthalmology
-    patterns: ['\b(retina\w*|macula\w*|ocular|ophthalm\w+|uveitis|glaucoma|conjunctivitis|keratitis|cornea\w*|vision|blindness)\b']
+    patterns: ['\b(retina\w*|macula\w*|ocular|ophthalm\w+|uveitis|glaucoma|conjunctivitis|keratitis|cornea\w*|vision|blindness|dry eye|eye disease|xerophthalmia|blepharitis|strabismus|cataract)\b']
   - ta: dermatology
     patterns: ['\b(psoriasis|dermatitis|eczema|vitiligo|alopecia|acne|urticaria|hidradenitis|pruritus|skin disease|cutaneous)\b']
   - ta: rheumatology
@@ -293,7 +335,7 @@ term_patterns:
   - ta: respiratory
     patterns: ['\b(asthma|copd|pulmonary|respiratory|lung|bronch\w+|cystic fibrosis|emphysema|rhinosinusitis)\b']
   - ta: cardiovascular
-    patterns: ['\b(cardi\w+|heart|coronary|myocardial|atrial|arrhythmi\w+|hypertension|atheroscler\w+|thromb\w+|stroke volume|vascular)\b']
+    patterns: ['\b(cardi\w+|heart|coronary|myocardial|atrial|arrhythmi\w+|hypertension|atheroscler\w+|thromb(osis|oses|otic|us|i|oembol\w+|ophl\w+)|stroke volume|vascular)\b']
   - ta: neurology
     patterns: ['\b(stroke|epilep\w+|seizure|multiple sclerosis|parkinson|alzheimer|dementia|migraine|neuropath\w+|neurolog\w+|myasthenia|amyotrophic)\b']
   - ta: psychiatry
@@ -301,7 +343,7 @@ term_patterns:
   - ta: substance_use
     patterns: ['\b(opioid[- ]related|substance[- ]related|addiction|alcoholism|alcohol use|tobacco use|smoking|nicotine)\b']
   - ta: metabolic_endocrine
-    patterns: ['\b(diabet\w+|obesity|overweight|dyslipid\w+|cholesterol|thyroid|metabolic syndrome|endocrin\w+|hypoglyc\w+|hyperglyc\w+)\b']
+    patterns: ['\b(diabet\w+|obesity|overweight|dyslipid\w+|cholesterol|\w*thyroid\w*|metabolic syndrome|endocrin\w+|hypoglyc\w+|hyperglyc\w+|adrenal insufficiency|acromegaly|cushing)\b']
   - ta: gastroenterology_hepatology
     patterns: ['\b(hepat\w+(?!itis [bc])|liver|cirrhosis|steatot\w+|colitis|crohn|bowel|gastro\w+|coeliac|celiac|pancreatitis|esophag\w+)\b']
   - ta: nephrology_urology
@@ -328,6 +370,31 @@ defaults:
 
 # Anything a reviewer should know before relying on this file.
 caveats:
+  - >-
+    ROUND TWO (vocabulary review round two): the tree-vs-pattern comparison the
+    previous session could only run synthetically was re-run against 80 real MeSH
+    descriptors whose tree placement is known, and it found 12 disagreements, not
+    2. Nine were defects and are fixed: the three interstitial pneumonias and
+    "Dementia, Vascular" flagged previously, plus `thromb\w+` in the cardiovascular
+    pattern claiming every "Thrombocytopenia" for cardiovascular, `\bthyroid\b`
+    failing to match "Hypothyroidism"/"Hyperthyroidism" at all, "Dry Eye Syndromes"
+    and "Cataract" matching no ophthalmology pattern, and "Diabetic Nephropathies"
+    (dual-coded C12/C19 in MeSH) resolving to metabolic_endocrine rather than to
+    the nephrology trials it actually describes. All 80 descriptors now route to
+    their tree-implied area, with the two deliberate exceptions below. The fixes
+    are `term_overrides` entries plus three narrowed `term_patterns` regexes; no
+    pattern was REORDERED, because reordering trades one misroute for another.
+  - >-
+    TWO DELIBERATE DIVERGENCES FROM MeSH, both pre-existing and both kept after
+    review. (1) "Hypertension, Pulmonary" and pulmonary arterial hypertension are
+    C14 (cardiovascular) in MeSH but map here to `respiratory`: PAH trials sit in
+    pulmonary vascular programmes and their endpoints -- 6-minute walk distance,
+    WHO functional class, time to clinical worsening -- are the respiratory set.
+    (2) "Sepsis" is C01 (infections) in MeSH but maps to
+    `anaesthesia_critical_care`: sepsis trials are ICU trials, and grouping them
+    with antimicrobial trials would put two unrelated endpoint families in one
+    bucket. Both are judgment calls against the tree, recorded here so a future
+    reader does not "fix" them back.
   - >-
     UPDATED (session that closed the step-2 gaps, see docs/NEXT_SESSION.md):
     `raw.browse_conditions`, `raw.browse_interventions`, `raw.conditions`, and

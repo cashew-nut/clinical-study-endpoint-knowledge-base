@@ -20,6 +20,12 @@ dimension: scale
 terms:
 
   # --- time ----------------------------------------------------------------
+  - id: minutes
+    label: "Minutes"
+    kind: time
+    si_equivalent: hours
+    factor_to_si: 0.016666667
+    synonyms: ["minute", "minutes", "min", "mins"]
   - id: seconds
     label: "Seconds"
     kind: time
@@ -74,6 +80,13 @@ terms:
       - "percent of participants"
       - "responder rate"
     notes: "The fixed scale for responder_proportion, incidence_proportion, and event_free_rate_at_timepoint."
+  - id: correlation_coefficient
+    label: "Correlation coefficient (-1 to 1)"
+    kind: proportion
+    si_equivalent: correlation_coefficient
+    factor_to_si: 1
+    synonyms: ["correlation coefficient", "r", "rho", "Spearman's rho", "Pearson's r", "kappa",
+               "intraclass correlation coefficient", "ICC"]
   - id: proportion
     label: "Proportion (0-1)"
     kind: proportion

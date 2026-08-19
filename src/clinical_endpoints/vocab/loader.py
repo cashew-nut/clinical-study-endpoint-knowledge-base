@@ -34,6 +34,9 @@ from clinical_endpoints.vocab.schema import (
     DIRECTION_RULES,
     EVENT_POLARITIES,
     MAPPING_FILENAME,
+    MATCHING_FILENAME,
+    MATCH_METHODS,
+    CASCADE_FIELDS,
     MEASUREMENT_DOMAINS,
     REFERENCE_KINDS,
     VOCAB_DIRNAME,
@@ -85,6 +88,7 @@ def load_vocab(vocab_dir: Path | str) -> dict[str, Any]:
     for spec in DIMENSIONS:
         docs[spec.dimension] = _read_yaml(vocab_dir / spec.filename)
     docs["ta_mesh_mapping"] = _read_yaml(vocab_dir / MAPPING_FILENAME)
+    docs["matching"] = _read_yaml(vocab_dir / MATCHING_FILENAME)
     return docs
 
 
@@ -123,6 +127,7 @@ def validate_vocab(docs: dict[str, Any]) -> ValidationResult:
     _validate_therapeutic_areas(docs["therapeutic_area"], result)
     _validate_timepoints(docs["timepoint_pattern"], ids, result)
     _validate_ta_mesh_mapping(docs["ta_mesh_mapping"], ids, result)
+    _validate_matching(docs["matching"], ids, result)
     return result
 
 
@@ -361,6 +366,60 @@ def _validate_timepoints(doc: dict, ids: dict[str, set[str]], result: Validation
     for token, scale_id in (doc.get("unit_tokens") or {}).items():
         if scale_id not in ids["scale"]:
             result.error(where, f"unit_tokens[{token!r}] = {scale_id!r} is not a scale id")
+
+
+def _validate_matching(doc: dict, ids: dict[str, set[str]], result: ValidationResult) -> None:
+    """matching.yaml states rules the pipeline must implement; check they are
+    internally consistent and that every id it names actually exists."""
+    where = MATCHING_FILENAME
+    for key in ("normalisation", "synonyms", "patterns", "precedence", "cascade", "provenance"):
+        if key not in doc:
+            result.errors.append(f"{where}: missing required section `{key}`")
+
+    synonyms = doc.get("synonyms") or {}
+    if synonyms.get("match") != "whole_token":
+        result.errors.append(
+            f"{where}: synonyms.match must be `whole_token`. Substring matching is what "
+            f"assigned 9.8% of the corpus to `epistaxis_severity_score` via `ess` inside "
+            f"'assessment'; the rule exists to stop that recurring."
+        )
+    minimum = (synonyms.get("case_sensitivity") or {}).get("min_synonym_length")
+    if not isinstance(minimum, int) or minimum < 2:
+        result.errors.append(
+            f"{where}: synonyms.case_sensitivity.min_synonym_length must be an integer >= 2"
+        )
+
+    for dimension, steps in (doc.get("cascade") or {}).items():
+        if dimension not in ids and dimension not in {"form", "measurement", "timepoint", "reference"}:
+            result.errors.append(f"{where}: cascade names unknown dimension `{dimension}`")
+        for step in steps:
+            field = step.get("field")
+            if field is not None and field not in CASCADE_FIELDS:
+                result.errors.append(
+                    f"{where}: cascade[{dimension}] reads unknown field `{field}`"
+                )
+            method = step.get("match_method")
+            if method is not None and method not in MATCH_METHODS:
+                result.errors.append(
+                    f"{where}: cascade[{dimension}] uses unknown match_method `{method}`"
+                )
+        if steps and "fallback" not in steps[-1]:
+            result.errors.append(
+                f"{where}: cascade[{dimension}] must end in a `fallback` step, so an "
+                f"unmatched string has a defined destination rather than a null"
+            )
+
+    floors = (doc.get("provenance") or {}).get("confidence_floor") or {}
+    for method in doc.get("provenance", {}).get("match_method") or []:
+        if method not in MATCH_METHODS:
+            result.errors.append(f"{where}: provenance names unknown match_method `{method}`")
+        elif method not in floors:
+            result.errors.append(f"{where}: provenance.confidence_floor has no entry for `{method}`")
+    if floors and floors.get("exact", 0) <= floors.get("syntactic_rule", 1):
+        result.errors.append(
+            f"{where}: provenance.confidence_floor must rank exact above syntactic_rule -- "
+            f"a cascade hit from `description` is weaker evidence than the title saying it"
+        )
 
 
 def _validate_ta_mesh_mapping(doc: dict, ids: dict[str, set[str]], result: ValidationResult) -> None:

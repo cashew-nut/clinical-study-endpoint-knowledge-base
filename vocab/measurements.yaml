@@ -1026,9 +1026,14 @@ terms:
     default_direction: increase_is_better
     default_scale: z_score
     typical_ta: [neurology, psychiatry]
-    synonyms: ["Test My Brain", "Digit Symbol Coding", "Matrix Reasoning", "Verbal Paired Associates Memory",
+    synonyms: ["Test My Brain", "Matrix Reasoning", "Verbal Paired Associates Memory",
                "Multiracial Emotion Identification", "cognitive composite", "MCCB", "FACT-Cog",
                "Dot Pattern Expectancy", "TOPX", "Translational Bandit Task", "TBT"]
+    notes: >-
+      "Digit Symbol Coding" was listed here in round one and again on
+      `digit_symbol_coding` when that term was added; `vocab validate` caught the
+      collision. It belongs to the specific subtest -- a composite is scored across
+      a battery, and an endpoint naming one subtest is measuring that subtest.
 
   - id: migraine_days
     label: "Monthly migraine days"
@@ -1806,6 +1811,166 @@ terms:
 
 # The `concept` values used above, listed so `vocab validate` can check for typos
 # and so promoting concept to its own dimension later is a mechanical change.
+  # --- added in vocabulary round two ----------------------------------------
+  # Every entry below is here because it appeared repeatedly in the unbiased
+  # sample and matched nothing. Frequencies are sample occurrences (`measure`
+  # field, vocab_review_v2.csv).
+
+  # The standard neurocognitive battery. These five travel together in
+  # schizophrenia, MS and oncology-survivorship trials and were the single
+  # largest coherent cluster in the miss list (~25 sample occurrences between
+  # them), all falling to no measurement at all.
+  - id: hopkins_verbal_learning_test
+    label: "Hopkins Verbal Learning Test - Revised (HVLT-R)"
+    concept: cognitive_function
+    method: performance_test
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: score_points
+    synonyms: ["HVLT-R", "HVLT", "Hopkins Verbal Learning Test", "Hopkins Verbal Learning Test-Revised"]
+
+  - id: brief_visuospatial_memory_test
+    label: "Brief Visuospatial Memory Test - Revised (BVMT-R)"
+    concept: cognitive_function
+    method: performance_test
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: score_points
+    synonyms: ["BVMT-R", "BVMT", "Brief Visuospatial Memory Test", "Brief Visuospatial Memory Test-Revised"]
+
+  - id: trail_making_test
+    label: "Trail Making Test (TMT)"
+    concept: cognitive_function
+    method: performance_test
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: seconds
+    synonyms: ["Trail Making Test", "TMT", "Trail Making Test A", "Trail Making Test B", "TMT-A", "TMT-B"]
+    notes: >-
+      Scored in seconds to completion, so decrease_is_better -- the opposite of
+      every other instrument in this battery. Worth its own entry rather than
+      folding into cognitive_composite for exactly that reason.
+
+  - id: controlled_oral_word_association_test
+    label: "Controlled Oral Word Association Test (COWAT)"
+    concept: cognitive_function
+    method: performance_test
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: count
+    synonyms: ["COWAT", "Controlled Oral Word Association Test", "verbal fluency test"]
+
+  - id: digit_symbol_coding
+    label: "Digit Symbol Coding / Symbol Digit Modalities Test"
+    concept: cognitive_function
+    method: performance_test
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: score_points
+    synonyms: ["Digit Symbol Coding", "Digit Symbol Substitution Test", "DSST", "Symbol Digit Modalities Test", "SDMT"]
+
+  - id: clinician_administered_ptsd_scale
+    label: "Clinician-Administered PTSD Scale for DSM-5 (CAPS-5)"
+    concept: ptsd_symptom_severity
+    method: clinician_reported_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    synonyms: ["CAPS-5", "CAPS-5-R", "Clinician-Administered PTSD Scale", "Clinician Administered PTSD Scale for DSM-5"]
+
+  # Oncology surgical/pathological outcomes. "R0 resection rate" alone was 19
+  # sample occurrences and matched no measurement; the FORM matched (a responder
+  # proportion) but the thing being measured did not, which is precisely the case
+  # that belongs in the review queue rather than being silently dropped.
+  - id: surgical_margin_status
+    label: "Surgical margin status (R0 / R1 / R2 resection)"
+    concept: surgical_completeness
+    method: pathology
+    domain: efficacy
+    default_direction: increase_is_better
+    event_polarity: benefit
+    synonyms: ["R0 resection", "R0 resection rate", "margin-negative resection", "complete resection",
+               "resection margin status", "negative surgical margin", "R0"]
+    notes: >-
+      R0 (no residual tumour microscopically) is the good outcome, so direction is
+      stated for the R0 form; an R1/R2 endpoint inverts and should carry
+      event_polarity harm at conform time.
+
+  - id: pathological_response
+    label: "Pathological response to neoadjuvant therapy (pCR / MPR)"
+    concept: tumour_response
+    method: pathology
+    domain: efficacy
+    default_direction: increase_is_better
+    event_polarity: benefit
+    synonyms: ["pathological complete response", "pathologic complete response", "pCR",
+               "major pathological response", "major pathologic response", "MPR",
+               "pathological response", "tumour regression grade", "tumor regression grade", "TRG",
+               "pathological downstaging"]
+    notes: >-
+      Deliberately separate from tumour_burden_recist: RECIST is a radiological
+      assessment of a lesion, this is a histological assessment of a resected
+      specimen, and the two are different measurements of the same concept. The
+      neoadjuvant literature treats them as non-interchangeable.
+
+  - id: biochemical_marker_normalisation
+    label: "Normalisation of a disease biochemical marker"
+    concept: biochemical_disease_marker
+    method: laboratory
+    domain: efficacy
+    default_direction: increase_is_better
+    event_polarity: benefit
+    synonyms: ["normalization of biochemical markers", "normalisation of biochemical markers",
+               "biochemical normalization", "biochemical normalisation",
+               "normalization of biochemical markers of disease"]
+    notes: >-
+      The standard efficacy endpoint shape in inherited metabolic disease, where
+      the analyte differs per disorder (plasma acylcarnitine, urine acylglycine,
+      GAG excretion) but the endpoint is always "did the marker reach the normal
+      range". Kept at construct level for that reason -- enumerating every analyte
+      would be a vocabulary of one entry per trial.
+
+  - id: treatment_adherence
+    label: "Treatment adherence / compliance"
+    concept: treatment_adherence
+    method: derived
+    domain: healthcare_utilisation
+    default_direction: increase_is_better
+    default_scale: percentage
+    synonyms: ["adherence", "treatment adherence", "medication adherence", "compliance",
+               "protocol adherence", "adherence to treatment", "treatment compliance"]
+
+  - id: brain_volume_mri
+    label: "Brain volume on MRI"
+    concept: neurodegeneration
+    method: imaging
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: millilitres
+    synonyms: ["brain volume", "whole brain volume", "brain atrophy", "hippocampal volume",
+               "grey matter volume", "gray matter volume", "percent brain volume change"]
+    notes: >-
+      increase_is_better because the endpoint is nearly always volume LOSS being
+      slowed; an endpoint written as "brain atrophy" inverts, and the conforming
+      pipeline should take the direction from the form (change vs rate of decline)
+      rather than assuming.
+
+  - id: disease_progression_event
+    label: "Disease progression (event)"
+    concept: disease_progression
+    method: clinical_assessment
+    domain: efficacy
+    default_direction: decrease_is_better
+    event_polarity: harm
+    synonyms: ["disease progression", "progression of disease", "radiographic progression",
+               "clinical progression", "progressive disease"]
+    notes: >-
+      Bare "Disease progression" was 12 sample occurrences and matched nothing:
+      tumour_burden_recist covers the RECIST assessment, but progression is also an
+      endpoint in non-oncology settings (IPF, CKD, MS) where RECIST is meaningless.
+      This entry is the disease-agnostic event; where the text names RECIST,
+      longest-match hands it to tumour_burden_recist instead.
+
 concepts:
   - adhd_symptom_severity
   - adverse_event
@@ -1819,6 +1984,7 @@ concepts:
   - axial_spondyloarthritis_activity
   - behavioural_symptom_severity
   - beta_cell_function
+  - biochemical_disease_marker
   - bleeding_event
   - bleeding_severity
   - blood_pressure
@@ -1834,6 +2000,7 @@ concepts:
   - coronary_physiology
   - depression_severity
   - disease_exacerbation
+  - disease_progression
   - disease_recurrence
   - drug_disposition
   - drug_exposure
@@ -1869,6 +2036,7 @@ concepts:
   - lung_fibrosis_extent
   - lung_volume
   - ms_disability
+  - neurodegeneration
   - not_stated
   - nutritional_status
   - ocular_allergy_symptoms
@@ -1888,6 +2056,7 @@ concepts:
   - pruritus_severity
   - psoriasis_severity
   - psychosocial_functioning
+  - ptsd_symptom_severity
   - rescue_medication
   - residual_disease
   - respiratory_quality_of_life
@@ -1908,15 +2077,18 @@ concepts:
   - stroke_severity
   - substance_abstinence
   - suicidality
+  - surgical_completeness
   - survival
   - systemic_inflammation
   - transfusion_dependence
+  - treatment_adherence
   - treatment_burden
   - treatment_discontinuation
   - treatment_failure
   - treatment_retention
   - tumour_burden
   - tumour_marker
+  - tumour_response
   - viral_load
   - vision_related_quality_of_life
   - visual_acuity
@@ -1930,3 +2102,24 @@ concepts:
 # decision via `review resolve`.
 default_when_unmatched: null
 on_unmatched: review_queue
+
+coverage_on_sample:
+  corpus_rows: 13542
+  matched_from_measure_pct: 56.7
+  matched_from_measure_or_description_pct: 64.5
+  # The round-one figure was 77.8%, and the gap is NOT recall. It was synonyms
+  # matched as substrings: `ess` inside "assessment" and "progression" put 9.8%
+  # of all outcome rows under `epistaxis_severity_score`, `alt`/`ast` inside
+  # "Health"/"Past" under `liver_enzymes`, `fa` inside "Fatigue"/"Factor" under
+  # `fluorescein_angiography_findings`, `ree` inside "preeclampsia"/"-free"
+  # under `resting_metabolic_rate`. matching.yaml now specifies whole-token
+  # matching, and tests/test_vocab_loader.py pins each of those strings.
+  round_one_reported_pct: 77.8
+  round_one_figure_was_inflated_by: substring_synonym_matching
+  most_frequent_terms_pct:
+    adverse_event: 7.9
+    tumour_burden_recist: 7.9
+    vital_status: 6.7
+    health_related_quality_of_life_unspecified: 3.1
+    anti_drug_antibody: 2.0
+

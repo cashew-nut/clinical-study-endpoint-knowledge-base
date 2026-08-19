@@ -84,7 +84,22 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
 # ta_mesh_mapping.yaml is not a term list, so it is loaded separately.
 MAPPING_FILENAME = "ta_mesh_mapping.yaml"
 
-ALL_FILENAMES: tuple[str, ...] = tuple(d.filename for d in DIMENSIONS) + (MAPPING_FILENAME,)
+# matching.yaml is not a term list either: it is the contract for HOW the term
+# files are matched (whole-token synonyms, case-sensitive short acronyms,
+# longest-match where a file declares no precedence, and which field to read when
+# the first one is silent). It is loaded and validated rather than left as
+# documentation, because the rules it states are load-bearing -- matching
+# synonyms as substrings instead of whole tokens assigned 9.8% of the corpus to
+# one wrong measurement while making coverage look 23 points better.
+MATCHING_FILENAME = "matching.yaml"
+
+ALL_FILENAMES: tuple[str, ...] = (
+    tuple(d.filename for d in DIMENSIONS) + (MAPPING_FILENAME, MATCHING_FILENAME)
+)
+
+# Closed value sets for matching.yaml.
+MATCH_METHODS = frozenset({"exact", "syntactic_rule", "semantic"})
+CASCADE_FIELDS = frozenset({"measure", "description", "time_frame"})
 
 # Closed value sets checked during validation.
 DIRECTION_RULES = frozenset(

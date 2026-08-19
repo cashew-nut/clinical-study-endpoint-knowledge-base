@@ -142,6 +142,74 @@ def test_ta_mesh_mapping_to_unknown_area_is_an_error(docs):
     assert any("unknown therapeutic area" in e for e in validate_vocab(broken).errors)
 
 
+# ------------------------------------------------------- the matching contract
+
+
+def test_matching_contract_validates_clean(docs):
+    assert "matching" in docs
+    assert validate_vocab(docs).errors == []
+
+
+def test_substring_synonym_matching_is_rejected(docs):
+    broken = copy.deepcopy(docs)
+    broken["matching"]["synonyms"]["match"] = "substring"
+    assert any("whole_token" in e for e in validate_vocab(broken).errors)
+
+
+def test_cascade_must_end_in_a_fallback(docs):
+    broken = copy.deepcopy(docs)
+    broken["matching"]["cascade"]["form"] = [{"field": "measure", "match_method": "exact"}]
+    assert any("must end in a `fallback`" in e for e in validate_vocab(broken).errors)
+
+
+def test_cascade_field_must_exist_on_the_outcome_row(docs):
+    broken = copy.deepcopy(docs)
+    broken["matching"]["cascade"]["form"][0]["field"] = "sponsor"
+    assert any("unknown field" in e for e in validate_vocab(broken).errors)
+
+
+def test_inferred_matches_rank_below_exact_ones(docs):
+    broken = copy.deepcopy(docs)
+    broken["matching"]["provenance"]["confidence_floor"]["syntactic_rule"] = 1.0
+    assert any("rank exact above syntactic_rule" in e for e in validate_vocab(broken).errors)
+
+
+# The defect this contract exists to prevent. Each string below contains a short
+# acronym synonym as a SUBSTRING of an unrelated word; matching synonyms without
+# token boundaries assigned 9.8% of all outcome rows to `epistaxis_severity_score`
+# via `ess` inside "assessment" and "progression", and similar for the rest.
+SUBSTRING_TRAPS = [
+    ("Quality of life assessment", "ess", "epistaxis_severity_score"),
+    ("Disease progression", "ess", "epistaxis_severity_score"),
+    ("Health-Related Quality of Life", "alt", "liver_enzymes"),
+    ("Fatigue", "fa", "fluorescein_angiography_findings"),
+    ("Number of participants with preeclampsia", "ree", "resting_metabolic_rate"),
+]
+
+
+@pytest.mark.parametrize("text,acronym,must_not_match", SUBSTRING_TRAPS)
+def test_short_acronyms_do_not_match_inside_longer_words(docs, text, acronym, must_not_match):
+    term = next(t for t in docs["measurement"]["terms"] if t["id"] == must_not_match)
+    assert acronym.upper() in [s.upper() for s in term["synonyms"]], (
+        f"fixture assumes {must_not_match} lists {acronym!r}; update the fixture if that changed"
+    )
+    matcher = _matcher(docs["measurement"], order_key="_none")
+    assert _match(matcher, normalise(text)) != must_not_match
+
+
+def test_longest_match_prefers_the_specific_term(docs):
+    """measurements.yaml declares no precedence, so specificity comes from span."""
+    matcher = _matcher(docs["measurement"], order_key="_none")
+    cases = [
+        ("Number of Participants With AEs Leading to Discontinuation of Study Intervention",
+         "adverse_event_leading_to_discontinuation"),
+        ("Change from Baseline in the Impact of Weight on Quality of Life-Lite (IWQOL-Lite-CT)",
+         "iwqol_lite"),
+    ]
+    for text, expected in cases:
+        assert _match_longest(matcher, normalise(text)) == expected
+
+
 # -------------------------------------------------------------- persistence
 
 
@@ -205,6 +273,18 @@ def _match(compiled, text):
         if any(p.search(text) for p in patterns) or any(s.search(text) for s in synonyms):
             return term_id
     return None
+
+
+def _match_longest(compiled, text):
+    """matching.yaml's `strategy_when_unordered: longest_match_wins`. The span is
+    taken across ALL of a term's synonyms and patterns, not the first that hits."""
+    best_span, best_id = 0, None
+    for term_id, patterns, synonyms in compiled:
+        for expression in (*patterns, *synonyms):
+            found = expression.search(text)
+            if found and found.end() - found.start() > best_span:
+                best_span, best_id = found.end() - found.start(), term_id
+    return best_id
 
 
 def _derive_direction(docs, form_id, measurement_id, text):
@@ -277,7 +357,16 @@ def test_reference_table_fixtures_conform(docs, text, form_id, measurement_id, d
 TIMEPOINT_FIXTURES = [
     ("Event-driven, trial is estimated to be up to 4.5 years", "event_driven"),
     ("Baseline, Week 24", "baseline_to_timepoint"),
-    ("Baseline through Week 52", "cumulative_window"),
+    # Round two reversed this one. It read cumulative_window on the argument that
+    # "through" describes a window; the joined export says otherwise -- of 21 rows
+    # whose time_frame is "baseline ... through ... <horizon>", 9 pair with a
+    # change-family form and 8 with a cumulative one, and for "up to" it is 19 to
+    # 5. See timepoint_patterns.yaml's connective_evidence. The connective does not
+    # carry the distinction; the form does, which is what the `disambiguation`
+    # block at the foot of that file now says.
+    ("Baseline through Week 52", "baseline_to_timepoint"),
+    ("Baseline up to Week 24", "baseline_to_timepoint"),
+    ("Through Week 24", "cumulative_window"),
     ("Week 24", "single_fixed"),
     ("7 months", "bare_duration"),
     ("Weeks 28, 36, and 48", "multi_timepoint"),
@@ -285,12 +374,47 @@ TIMEPOINT_FIXTURES = [
     ("90 ± 7 days", "visit_window"),
     ("Periprocedural", "event_relative"),
     ("Baseline", "baseline_only"),
+    # Round two additions, one per preprocessing step or pattern the wider sample
+    # forced. Each of these classified as `unspecified` before round two.
+    ("Week 0 (Visit 1) to Week 52 (Visit 9)", "baseline_to_timepoint"),
+    ("Week-0, week-12, and week-24", "multi_timepoint"),
+    ("12th week", "single_fixed"),
+    ("60 minutes", "bare_duration"),
+    ("36 months from enrollment", "anchored_offset"),
+    ("6 months after diagnosis of TA-TMA", "anchored_offset"),
+    ("week 24 to week 48", "cumulative_window"),
+    ("Day of Surgery", "event_relative"),
 ]
+
+
+_UNITS = r"(?:minute|hour|day|week|month|year|visit|cycle)"
+
+
+def _drop_uninformative_parentheticals(text):
+    """timepoint_patterns.yaml preprocessing: drop a "(...)" group only when a
+    digit+unit still survives outside it, so "Week 0 (Visit 1) to Week 52 (Visit
+    9)" collapses but "Baseline (Week 0) to (Week 76)" is left intact."""
+    while True:
+        match = re.search(r"\s*\([^()]*\)", text)
+        if not match:
+            return text
+        without = f"{text[:match.start()]} {text[match.end():]}"
+        if not re.search(rf"\d+\s*{_UNITS}|{_UNITS}\s*\d+", without, re.I):
+            return text
+        text = re.sub(r"\s+", " ", without).strip()
 
 
 def _classify_timepoint(docs, text):
     doc = docs["timepoint_pattern"]
-    prepared = normalise(text).replace("+/-", "±").rstrip(".;")
+    prepared = normalise(text)
+    prepared = _drop_uninformative_parentheticals(prepared)
+    prepared = re.sub(rf"\b({_UNITS})-\s*(\d)", r"\1 \2", prepared, flags=re.I)
+    prepared = re.sub(rf"(\d)\s*-\s*({_UNITS}s?)\b", r"\1 \2", prepared, flags=re.I)
+    prepared = re.sub(
+        rf"(\d+)(?:st|nd|rd|th)\s+({_UNITS})\b", r"\2 \1", prepared, flags=re.I
+    )
+    prepared = re.sub(r"(\d)(?:st|nd|rd|th)\b", r"\1", prepared, flags=re.I)
+    prepared = prepared.replace("+/-", "±").rstrip(".;")
     for word, value in doc["numeral_words"].items():
         prepared = re.sub(rf"\b{re.escape(word)}\b", str(value), prepared)
     for abbreviation, full in doc["abbreviations"].items():

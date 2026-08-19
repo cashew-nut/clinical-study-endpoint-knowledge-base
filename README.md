@@ -146,18 +146,20 @@ fix the one wrong field/param name (see `src/clinical_endpoints/ingest/ctgov_api
 
 ## Vocabulary
 
-Eight versioned YAML files in [`vocab/`](vocab/), one per dimension:
+Versioned YAML files in [`vocab/`](vocab/), one per dimension, revised in
+vocabulary review round two against an unbiased sample of 13,542 outcome rows:
 
 | file | terms | dimension |
 |---|---|---|
-| `forms.yaml` | 16 | what kind of number the endpoint is |
-| `measurements.yaml` | 153 | what quantity or event it is about |
+| `forms.yaml` | 18 | what kind of number the endpoint is |
+| `measurements.yaml` | 165 | what quantity or event it is about |
 | `references.yaml` | 16 | what it is measured against |
 | `directions.yaml` | 7 | which way is better (derived, not matched) |
-| `scales.yaml` | 57 | the unit |
+| `scales.yaml` | 59 | the unit |
 | `therapeutic_areas.yaml` | 24 | therapeutic area |
 | `timepoint_patterns.yaml` | 11 | `time_frame` categories + extraction regexes |
 | `ta_mesh_mapping.yaml` | -- | MeSH condition/intervention -> TA |
+| `matching.yaml` | -- | how all of the above are matched |
 
 ```bash
 uv run endpoints vocab validate               # check, then write vocab.* tables
@@ -173,7 +175,17 @@ terms, tied precedence/priority values, and closed value sets. Errors fail the
 command and write nothing; warnings are reported and do not.
 
 `vocab/README.md` documents the schema, the decisions worth reviewing, and
-measured coverage against the 500-study sample.
+measured coverage. Round-two headline figures, population-weighted over the
+corpus rather than over the sample: **form 76.0%**, **measurement 64.5%** (both
+reading `description` where `measure` is silent), **timepoint 90.8%**. Those are
+lower than round one's and answer a harder question -- round one measured
+against the 500 most frequent strings per field, which is almost pure head.
+
+`matching.yaml` is the one file that is not a term list. It states how a synonym
+is compared to a registry string, and it exists because leaving that implicit
+was not free: matching synonyms as substrings rather than whole tokens put 9.8%
+of all outcome rows under one wrong measurement (`ess`, inside "assessment")
+while making coverage look 23 points better than it was.
 
 ### Sampling `design_outcomes` for vocabulary review
 

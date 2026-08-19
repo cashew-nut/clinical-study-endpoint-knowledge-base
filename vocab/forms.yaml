@@ -57,8 +57,15 @@ terms:
       - 'time (to|from|until)\b'
       - '\b[\w-]*[- ]free survival\b'
       - '\bsurvival\b'
-      - '\bduration of (response|remission|benefit)\b'
+      # Round two: "Duration of PSA50 response", "Duration of Complete Response",
+      # "Longest duration of complete hematologic response" all failed the old
+      # adjacent-token form of this pattern.
+      - '\bduration of (?:[\w\-]+ ){0,3}(response|remission|benefit)\b'
       - '\bfreedom from\b'
+      # Bare acronyms. ~9% of `measure` strings in the wider sample are an acronym
+      # and nothing else ("OS", "PFS", "EFS by treatment arm within ethnicity
+      # subgroups"). Matched case-sensitively as whole tokens per matching.yaml.
+      - '(?-i:(?<![\w])(OS|PFS|PFS2|EFS|RFS|DFS|iDFS|MFS|DMFS|TTP|TTF|TTNT|DOR|DoR|DFI|BCR|LFS|GFS|FFS|CDP)(?![\w]))'
     notes: >-
       Distinct from event_free_rate_at_timepoint: this form is the whole
       distribution, that one is a single landmark proportion. Registries often use
@@ -129,6 +136,23 @@ terms:
       - '\bachieved\b'
       - '\b(disease|symptom|seizure) control rate\b'
       - '\b(PASI|EASI|ACR|ASAS|SALT|VASI|IGA)\s?\d{2}\b'
+      - '(?-i:(?<![\w])(ORR|DCR|CBR|pCR|MPR|CRR|OCR|MMR|CHR|MRD)(?![\w]))'
+      # A "<good outcome> rate" is a responder proportion whatever the outcome noun.
+      # Round two: the wider sample is full of these ("R0 Resection Rate", "Sputum
+      # Culture Conversion Rate", "MRD Negativity Rate", "Clinical Benefit Rate",
+      # "Major Pathological Response Rate") and the closed prefix list above caught
+      # none of them. `not_if_matches` keeps physiological rates and harm rates out.
+      - '\b(response|remission|resection|conversion|negativity|eradication|cure|success|benefit|completion|attainment|normali[sz]ation|seroconversion|seroprotection|seroresponse|engraftment|closure|healing|continuation|adherence|compliance|retention|abstinence|reversal|survival)\s+rates?\b'
+      - '\brates? of\s+(?:complete|partial|overall|objective|major|pathologic\w*|clinical|successful|technical|sustained|durable)\b'
+      # "Number of participants who achieve/attain ..." -- `number` was missing from
+      # the "who/that" pattern above, so only the participle form was caught.
+      - '\b(proportion|percentage|percent|number) of (participants|patients|subjects) (who|that) (achiev|attain|reach|gain|respond|maintain|convert|experienc\w+ improvement)'
+    not_if_matches:
+      # Physiological rates are quantities, not proportions of responders. Without
+      # this guard the generic rate pattern above claims "Resting Metabolic Rate",
+      # "heart rate" and "glomerular filtration rate" for this form.
+      - '\b(heart|pulse|respirat\w+|breathing|metabolic|flow|filtration|infusion|growth|ventilation|perfusion|secretion|excretion|clearance|sedimentation|conduction|firing|dose|dosing|accrual|enrol?ment|recruitment)\s+rates?\b'
+      - '\brates? of (change|decline|decrease|increase|rise|fall|progression)\b'
     notes: >-
       Direction is fixed at increase_is_better regardless of the measurement's own
       polarity: PASI falls when psoriasis improves, but more PASI75 responders is
@@ -158,7 +182,12 @@ terms:
     patterns:
       - '\bincidence (of|and)\b'
       - '\boccurrence of\b'
-      - '\bnumber of (participants|patients|subjects) (with|who experience|reporting|experiencing)\b'
+      # Round two: "who" + any verb, not a closed verb list -- the sample has
+      # "Number of Participants Who Discontinue Study Intervention Due to an AE",
+      # "...Who Died", "...Who Required Rescue Medication". responder_proportion
+      # sits ahead of this term in match_precedence and claims the achievement
+      # verbs first, so the generic form here cannot swallow responder endpoints.
+      - '\bnumber of (participants|patients|subjects) (with|who|that|reporting|experiencing|requiring|developing|discontinuing)\b'
       - '\bproportion (of )?(participants|patients|subjects) (with|experiencing)\b'
       - '^\d+[- ]?(day|week|month|year)s?\b[^.;]{0,30}\b(mortality|death|recurrence|relapse)\b'
       - '\b(all-cause |in-hospital )?mortality\b'
@@ -404,6 +433,62 @@ terms:
       repeated-measures model is a different estimand from a two-timepoint
       difference, and the distinction is central in IPF, nephrology, and neurology.
 
+  # --- added in vocabulary round two, from the unbiased sample ---------------
+  - id: event_free_days
+    label: "Event-free days"
+    definition: >-
+      A count of days spent free of a defined harm, or alive and free of it, over a
+      fixed window -- "ventilator-free days to day 28", "days alive and out of
+      hospital", "seizure-free days". A count, not a proportion and not a duration
+      to a single event: participants who die are conventionally assigned zero.
+    direction_rule: higher_count_better
+    typical_reference: [randomisation, treatment_start]
+    typical_scale: [days]
+    synonyms:
+      - "ventilator-free days"
+      - "days alive and out of hospital"
+      - "hospital-free days"
+      - "seizure-free days"
+      - "event-free days"
+      - "days alive and free of"
+    patterns:
+      - '\b[\w-]+[- ]free days\b'
+      - '\bdays (alive and )?(free (of|from)|out of hospital|at home)\b'
+      - '\bdays alive\b'
+    notes: >-
+      Round two: this form was missing and its endpoints were falling to
+      `not_stated`, or worse to `event_count` via "number of days". It is
+      `higher_count_better` rather than `inherit_event_polarity` because the thing
+      being counted is freedom from the harm, so more is better however the
+      underlying measurement's polarity reads. Standard in critical care, epilepsy
+      and heart failure, where it is often the primary endpoint.
+
+  - id: correlation
+    label: "Correlation / agreement"
+    definition: >-
+      The statistical association between two quantities rather than the value of
+      either -- "correlation between FTT-PET imaging and variant allele frequency",
+      "agreement between central and local read", "concordance of X with Y".
+    direction_rule: neutral
+    typical_scale: [correlation_coefficient, proportion]
+    synonyms:
+      - "correlation between"
+      - "association between"
+      - "concordance"
+      - "agreement between"
+      - "predictive value of"
+    patterns:
+      - '\b(correlation|association|concordance|agreement)\s+(between|of|with)\b'
+      - '\b(spearman|pearson|kappa|bland-altman|intraclass correlation)\b'
+      - '\b(sensitivity and specificity|positive predictive value|negative predictive value|AUROC|C-statistic)\b'
+    notes: >-
+      Small (well under 1% of rows) but worth its own term rather than `not_stated`,
+      because these strings otherwise match a substantive form on their operands --
+      "Correlation between X and change from baseline in Y" reads as
+      `change_from_baseline` and would be pooled with real change endpoints. Placed
+      immediately after `descriptive` in match_precedence so it claims the string
+      before any operand pattern can. Never comparative: `neutral` direction.
+
   # --- unresolved ----------------------------------------------------------
   - id: not_stated
     label: "Form not stated"
@@ -450,6 +535,7 @@ terms:
 # both response-rate and event-rate phrasings.
 match_precedence:
   - descriptive
+  - correlation
   - percent_change_from_baseline
   - ratio_to_baseline
   - shift_from_baseline
@@ -461,6 +547,7 @@ match_precedence:
   - responder_proportion
   - incidence_proportion
   - event_rate
+  - event_free_days
   - event_count
   - change_from_baseline
   - value_at_timepoint
@@ -501,3 +588,28 @@ disambiguation:
     why: >-
       Both describe the same clinical event. A named horizon means a landmark
       proportion was reported; its absence means the distribution was.
+
+# Measured in vocabulary review round two, on the unbiased sample (every value
+# with frequency >= 2, plus a seeded random 300 of the singleton tail) weighted
+# back up to the whole corpus: 13,542 outcome rows, 11,230 distinct `measure`
+# strings, 77% of rows carrying a string that occurs exactly once.
+coverage_on_sample:
+  corpus_rows: 13542
+  matched_from_measure_pct: 63.9
+  matched_from_measure_pct_before_round_two: 58.6
+  # Reading `description` where `measure` names no form, per matching.yaml's
+  # cascade. Measured on endpoint_rows.csv, 1,000 joined outcome rows.
+  matched_from_measure_or_description_pct: 76.0
+  # The residual is `not_stated`, which is a legitimate conformed state, not a
+  # miss: a bare instrument name ("PASI", "HbA1c", "6MWT") genuinely states no
+  # form, and the measurement, therapeutic area and timepoint still conform.
+  distribution_pct:
+    change_from_baseline: 18.2
+    time_to_event: 10.4
+    incidence_proportion: 9.4
+    responder_proportion: 8.5
+    descriptive: 4.9
+    percent_change_from_baseline: 2.7
+    value_at_timepoint: 2.1
+    event_count: 1.4
+
