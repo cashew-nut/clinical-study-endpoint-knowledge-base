@@ -53,4 +53,41 @@ def fake_aact_con() -> duckdb.DuckDBPyConnection:
             ('NCT003', 'primary', 'Change from Baseline in FEV1', 'Week 12', 'Spirometry', 'ITT')
         """
     )
+
+    con.execute("CREATE TABLE aact.ctgov.conditions (nct_id VARCHAR, name VARCHAR)")
+    con.execute(
+        """
+        INSERT INTO aact.ctgov.conditions VALUES
+            ('NCT001', 'Non-Small Cell Lung Cancer'),
+            ('NCT002', 'Breast Cancer'),
+            ('NCT003', 'COPD')
+        """
+    )
+
+    con.execute("CREATE TABLE aact.ctgov.browse_conditions (nct_id VARCHAR, mesh_term VARCHAR)")
+    con.execute(
+        """
+        INSERT INTO aact.ctgov.browse_conditions VALUES
+            ('NCT001', 'Carcinoma, Non-Small-Cell Lung'),
+            ('NCT001', 'Lung Neoplasms'),
+            ('NCT002', 'Breast Neoplasms'),
+            ('NCT003', 'Pulmonary Disease, Chronic Obstructive')
+        """
+    )
+
+    con.execute("CREATE TABLE aact.ctgov.browse_interventions (nct_id VARCHAR, mesh_term VARCHAR)")
+    con.execute(
+        """
+        INSERT INTO aact.ctgov.browse_interventions VALUES
+            ('NCT001', 'Pembrolizumab'),
+            ('NCT002', 'Trastuzumab'),
+            ('NCT003', 'Tiotropium')
+        """
+    )
+
+    # AACT's mesh_terms table (present in the schema, but -- per the AACT data
+    # dictionary checked for this project -- empty in the live database). The
+    # fake here has zero rows too, to match `_pull_mesh_terms`'s degrade path.
+    con.execute("CREATE TABLE aact.ctgov.mesh_terms (mesh_term VARCHAR, tree_number VARCHAR)")
+
     return con

@@ -17,20 +17,36 @@ covers setup, refresh, and ad hoc querying.
 
 ## Status
 
-Build-order steps 1 and 2 are implemented.
+Build-order steps 1 and 2 are implemented, including the two step-2 gaps
+`docs/NEXT_SESSION.md` tracked (an unbiased/coverage-reported vocab sample, and
+`pull --ta` backed by a real therapeutic-area resolver).
 
-**Step 1 (scaffold + ingestion):** `endpoints pull`.
+**Step 1 (scaffold + ingestion):** `endpoints pull`, including conditions and
+MeSH-coded browse tables (`raw.conditions`, `raw.browse_conditions`,
+`raw.browse_interventions`, plus a backend-specific `raw.mesh_terms` or
+`raw.browse_condition_branches`).
 
 **Step 2 (vocabulary):** `endpoints vocab sample` exports the distinct
-measure/description/time_frame strings with frequency counts for human review,
-and the eight controlled vocabularies in [`vocab/`](vocab/) are written and
-validated. `endpoints vocab validate` loads them into `vocab.*` tables, checking
-id uniqueness, orphan/ambiguous synonyms, regex compilability, and cross-file
-referential integrity. See [`vocab/README.md`](vocab/README.md) for the schema,
-the judgment calls behind the category boundaries, and measured coverage.
+measure/description/time_frame strings for human review -- either a per-field
+frequency table (every value at or above `--min-frequency` kept uncapped, plus
+a seeded random sample of the tail, with a coverage sidecar) or a joinable
+row-level sample (`--format rows`) -- and the eight controlled vocabularies in
+[`vocab/`](vocab/) are written and validated. `endpoints vocab validate` loads
+them into `vocab.*` tables, checking id uniqueness, orphan/ambiguous synonyms,
+regex compilability, and cross-file referential integrity. `endpoints pull --ta`
+resolves each pulled study's therapeutic area(s) from its MeSH conditions/
+interventions (`src/clinical_endpoints/ta/resolver.py`) into
+`conformed.study_therapeutic_area`, keeping every matched area and filtering the
+pull down to the requested one(s). `endpoints ta diff-tree` diffs the
+tree-prefix layer against the regex layer per condition, to find wrong tree
+prefixes or wrong regexes in `vocab/ta_mesh_mapping.yaml`. See
+[`vocab/README.md`](vocab/README.md) for the schema, the judgment calls behind
+the category boundaries, and measured coverage.
 
 `conform`, `review`, `graph build`, `query`, and `export` are stubbed pending
-steps 3 and 4.
+steps 3 and 4 -- deliberately not started yet: conforming against a vocabulary
+built from a biased sample would bake the bias in, so a fresh vocabulary review
+(using the now-unbiased sampler) comes first. See `docs/NEXT_SESSION.md`.
 
 ## Setup
 
@@ -87,19 +103,37 @@ uv run endpoints pull --phase 3 --limit 500 --source aact
 ```
 
 Each `pull` is filtered and logged to `raw._pull_log` (pull_id, pulled_at,
-source, filters_json, source_tables, row_counts). `raw.studies` /
-`raw.design_outcomes` are replaced wholesale on each run, so re-running `pull`
-with the same (or different) filters, or a different `--source`, is a
-refresh, not a one-off script -- the pull history in `raw._pull_log`
-accumulates across runs.
+source, filters_json, source_tables, row_counts) -- `source_tables` differs by
+backend (AACT lands `mesh_terms`, the CT.gov API backend lands
+`browse_condition_branches` instead; see "Ingestion backends" below). Every
+`raw.*` table is replaced wholesale on each run, so re-running `pull` with the
+same (or different) filters, or a different `--source`, is a refresh, not a
+one-off script -- the pull history in `raw._pull_log` accumulates across runs.
 
-`--ta` (therapeutic area filter) is accepted by the CLI but not implemented
-yet. The MeSH -> therapeutic area mapping it needs now exists
-(`vocab/ta_mesh_mapping.yaml`), but the conditions it maps are not pulled: both
-backends currently write only `raw.studies` and `raw.design_outcomes`. Adding
-`raw.browse_conditions` (and `raw.browse_interventions`, which the vaccines rule
-needs) is the remaining prerequisite -- see "Known gaps" in
-[`vocab/README.md`](vocab/README.md).
+```bash
+# Once vocab validate has loaded the TA mapping, pull can filter by it
+uv run endpoints vocab validate
+uv run endpoints pull --phase 3 --limit 500 --ta oncology
+
+# Multiple areas
+uv run endpoints pull --phase 3 --limit 500 --ta oncology,cardiovascular
+```
+
+`--ta` (comma-separated therapeutic-area ids from `therapeutic_areas.yaml`)
+requires `endpoints vocab validate` to have already loaded the MeSH -> TA
+mapping into the warehouse. `pull` always resolves therapeutic areas for every
+pulled study into `conformed.study_therapeutic_area` (all matched areas kept,
+one marked `is_primary`) once the vocab is loaded, whether or not `--ta` is
+given; `--ta` additionally filters `raw.*` down to studies matching one of the
+requested areas. See [`vocab/README.md`](vocab/README.md) for the layered
+MeSH -> TA mapping this resolves against, and its "Known gaps" for what's still
+unverified against a live pull (this sandbox cannot reach either backend).
+
+`endpoints ta diff-tree` runs the MeSH tree-prefix layer alone and the regex
+layer alone over every pulled study's conditions and reports every
+disagreement, most frequent first -- each one is either a wrong tree prefix or
+a wrong regex in `ta_mesh_mapping.yaml`, and this diff is the only way to find
+them without a MeSH expert.
 
 ### A note on the `ctgov_api` backend
 
@@ -141,6 +175,28 @@ command and write nothing; warnings are reported and do not.
 `vocab/README.md` documents the schema, the decisions worth reviewing, and
 measured coverage against the 500-study sample.
 
+### Sampling `design_outcomes` for vocabulary review
+
+```bash
+# Per-field frequency table + coverage sidecar (default)
+uv run endpoints vocab sample
+uv run endpoints vocab sample --min-frequency 3 --singleton-sample 500 --seed 7
+
+# Joinable row-level sample -- what measure had this time_frame/description?
+uv run endpoints vocab sample --format rows --limit 1000
+
+# Just primary outcomes, where efficacy endpoints concentrate
+uv run endpoints vocab sample --outcome-type primary
+```
+
+Every value occurring `--min-frequency` (default 2) times or more is kept
+uncapped; the tail below that is a seeded random sample (`--singleton-sample`,
+default 300), not an alphabetical head, so the long tail of one-off endpoint
+wordings is fairly represented rather than silently truncated at "starts with
+A". `vocab_review_coverage.csv` (or `<out>_coverage.csv`) reports, per field,
+what fraction of rows the kept values actually account for -- machine-readable,
+so the next vocabulary round can diff it against this one.
+
 ## Querying the warehouse directly
 
 The warehouse (`warehouse.duckdb`, gitignored, created on first `pull`) is a
@@ -173,6 +229,10 @@ FROM vocab.measurements GROUP BY 1 HAVING count(*) > 1 ORDER BY 2 DESC;
 -- Every synonym that resolves to a given measurement
 SELECT synonym FROM vocab.synonyms
 WHERE dimension = 'measurement' AND term_id = 'hba1c';
+
+-- Therapeutic areas resolved for the studies pulled so far
+SELECT ta_id, count(*) FROM conformed.study_therapeutic_area
+WHERE is_primary GROUP BY 1 ORDER BY 2 DESC;
 ```
 
 `endpoints query "<sql>"` and `endpoints export --query "<sql>" --format ...`
@@ -194,6 +254,8 @@ src/clinical_endpoints/
     sample.py     `vocab sample` CSV export (step 2)
     schema.py     declarative description of the vocab/*.yaml files
     loader.py     `vocab validate`: parse, validate, write vocab.* tables
+  ta/
+    resolver.py   MeSH condition/intervention -> therapeutic area (pull --ta, ta diff-tree)
   conform/        normalize / syntactic rules / semantic fallback / threshold+timepoint parsers (step 3)
   graph/          node/edge materialization (step 4)
   cli/            `endpoints` CLI
