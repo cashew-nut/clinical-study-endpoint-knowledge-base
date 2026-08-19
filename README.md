@@ -17,9 +17,9 @@ covers setup, refresh, and ad hoc querying.
 
 ## Status
 
-Build-order steps 1 and 2 are implemented, including the two step-2 gaps
-`docs/NEXT_SESSION.md` tracked (an unbiased/coverage-reported vocab sample, and
-`pull --ta` backed by a real therapeutic-area resolver).
+Build-order steps 1 through 3 are implemented: ingestion, the controlled
+vocabularies, and the conforming pipeline. `graph build`, `query`, and
+`export` remain stubbed pending step 4.
 
 **Step 1 (scaffold + ingestion):** `endpoints pull`, including conditions and
 MeSH-coded browse tables (`raw.conditions`, `raw.browse_conditions`,
@@ -43,10 +43,38 @@ prefixes or wrong regexes in `vocab/ta_mesh_mapping.yaml`. See
 [`vocab/README.md`](vocab/README.md) for the schema, the judgment calls behind
 the category boundaries, and measured coverage.
 
-`conform`, `review`, `graph build`, `query`, and `export` are stubbed pending
-steps 3 and 4 -- deliberately not started yet: conforming against a vocabulary
-built from a biased sample would bake the bias in, so a fresh vocabulary review
-(using the now-unbiased sampler) comes first. See `docs/NEXT_SESSION.md`.
+**Step 3 (conforming pipeline):** `endpoints conform` reads `raw.design_outcomes`
+and the `vocab.*` tables `vocab validate` writes -- never the YAML directly --
+and, for every outcome row, runs matching.yaml's cascade (`measure` ->
+`description` -> `time_frame`, `exact` -> `syntactic_rule`) for form,
+measurement, and reference, a token-overlap semantic fallback for measurement
+only (the one dimension whose cascade ends in `review_queue` rather than a
+default term), the timepoint classifier (preprocessing -> `not_if_matches`
+guards -> patterns in priority order -> named-group extraction), and the
+threshold comparator/value/unit parser. Direction is derived, never matched,
+from the resolved form's `direction_rule` and the resolved measurement's
+`default_direction`/`event_polarity`. Two vocabulary-driven disambiguation
+overrides apply after the plain cascade: forms.yaml's `disambiguation` (a
+generically-ambiguous form pair, resolved on the measurement's event_polarity/
+domain rather than wording) and timepoint_patterns.yaml's (a baseline
+"through"/"up to" call, resolved by the resolved form). A row whose measurement
+does not resolve -- not even semantically -- is written to
+`conformed.review_queue`, never conformed at any confidence; everything else
+lands in `conformed.endpoints`, with `form_match_method` /
+`measurement_match_method` / `reference_match_method` recording whether each
+dimension was an `exact` hit, an inferred `syntactic_rule`, or a `semantic`
+fallback. See [`src/clinical_endpoints/conform/`](src/clinical_endpoints/conform/)
+and [`docs/QUERY_CHEATSHEET.md`](docs/QUERY_CHEATSHEET.md) for how to query the
+result.
+
+```bash
+uv run endpoints vocab validate
+uv run endpoints pull --phase 3 --limit 500
+uv run endpoints conform
+uv run endpoints review list          # what landed in the review queue, and why
+```
+
+`graph build`, `query`, and `export` are stubbed pending step 4.
 
 ## Setup
 

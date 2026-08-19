@@ -454,6 +454,13 @@ _LONG_TABLES = (
     ("synonyms", "dimension VARCHAR, term_id VARCHAR, synonym VARCHAR, synonym_normalised VARCHAR"),
     ("patterns", "dimension VARCHAR, term_id VARCHAR, pattern VARCHAR, pattern_role VARCHAR, ordinal INTEGER"),
     ("term_precedence", "dimension VARCHAR, term_id VARCHAR, rank INTEGER"),
+    # Literal YAML file order, per term, per dimension -- matching.yaml's
+    # longest-match tie-break is "the earlier term in file order", which is NOT
+    # generally alphabetical by id (measurements.yaml is grouped by domain
+    # section, e.g. tumour_burden_recist appears well before disease_recurrence
+    # even though 'd' < 't'). This is the only reliable source for that order,
+    # since SQL row order is otherwise not guaranteed.
+    ("term_order", "dimension VARCHAR, term_id VARCHAR, ordinal INTEGER"),
     ("form_typical_reference", "form_id VARCHAR, reference_id VARCHAR"),
     ("form_typical_scale", "form_id VARCHAR, scale_id VARCHAR"),
     ("reference_implies_form", "reference_id VARCHAR, form_id VARCHAR"),
@@ -466,7 +473,19 @@ _LONG_TABLES = (
     ("ta_mesh_term_patterns", "ta_id VARCHAR, pattern VARCHAR, applies_to VARCHAR, ordinal INTEGER"),
     ("timepoint_unit_tokens", "token VARCHAR, scale_id VARCHAR"),
     ("timepoint_numeral_words", "word VARCHAR, value INTEGER"),
+    ("timepoint_preprocessing", "ordinal INTEGER, step VARCHAR"),
+    ("timepoint_abbreviations", "abbreviation VARCHAR, expansion VARCHAR"),
+    ("timepoint_common_typos", "typo VARCHAR, correction VARCHAR"),
+    ("timepoint_disambiguation", "ordinal INTEGER, between_forms VARCHAR[], prefer VARCHAR, otherwise VARCHAR, if_form_in VARCHAR[]"),
+    ("form_disambiguation", "ordinal INTEGER, between_forms VARCHAR[], prefer VARCHAR, otherwise VARCHAR"),
     ("vocab_settings", "dimension VARCHAR, setting VARCHAR, value VARCHAR"),
+    # matching.yaml -- the matching CONTRACT, persisted so the conforming pipeline
+    # (build-order step 3) can read it from vocab.* like every other vocabulary
+    # file, rather than re-parsing matching.yaml directly.
+    ("matching_normalisation", "ordinal INTEGER, step VARCHAR"),
+    ("matching_settings", "key VARCHAR, value VARCHAR"),
+    ("matching_cascade", "dimension VARCHAR, ordinal INTEGER, field VARCHAR, match_method VARCHAR, fallback_value VARCHAR"),
+    ("matching_confidence_floor", "match_method VARCHAR, confidence DOUBLE"),
 )
 
 
@@ -536,9 +555,12 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
     patterns: list[tuple] = []
     precedence: list[tuple] = []
     settings: list[tuple] = []
+    term_order: list[tuple] = []
 
     for spec in DIMENSIONS:
         doc = docs[spec.dimension]
+        for i, term in enumerate(doc["terms"]):
+            term_order.append((spec.dimension, term["id"], i))
         for term in doc["terms"]:
             term_id = term["id"]
             for synonym in term.get("synonyms") or []:
@@ -564,8 +586,9 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
     _insert(con, "vocab.patterns", 5, patterns)
     _insert(con, "vocab.term_precedence", 3, precedence)
     _insert(con, "vocab.vocab_settings", 3, settings)
+    _insert(con, "vocab.term_order", 3, term_order)
     counts.update(synonyms=len(synonyms), patterns=len(patterns), term_precedence=len(precedence),
-                  vocab_settings=len(settings))
+                  vocab_settings=len(settings), term_order=len(term_order))
 
     forms, measurements, references = docs["form"], docs["measurement"], docs["reference"]
 
@@ -618,7 +641,82 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
     _insert(con, "vocab.ta_mesh_term_patterns", 4, ta_patterns)
     counts.update(ta_mesh_term_overrides=len(overrides), ta_mesh_tree_prefixes=len(prefixes),
                   ta_mesh_term_patterns=len(ta_patterns))
+
+    # timepoint_patterns.yaml fields with no scalar column of their own: the
+    # preprocessing order, the abbreviation/typo expansion tables, and the
+    # disambiguation block (build-order step 3 must honour all three).
+    tp_preprocessing = [(i, step) for i, step in enumerate(tp.get("preprocessing") or [])]
+    tp_abbreviations = [(k, v) for k, v in (tp.get("abbreviations") or {}).items()]
+    tp_typos = [(k, v) for k, v in (tp.get("common_typos") or {}).items()]
+    tp_disambiguation = [
+        (i, list(rule.get("between") or []), rule.get("prefer"), rule.get("otherwise"),
+         list(rule.get("if_form_in") or []))
+        for i, rule in enumerate(tp.get("disambiguation") or [])
+    ]
+    _insert(con, "vocab.timepoint_preprocessing", 2, tp_preprocessing)
+    _insert(con, "vocab.timepoint_abbreviations", 2, tp_abbreviations)
+    _insert(con, "vocab.timepoint_common_typos", 2, tp_typos)
+    _insert(con, "vocab.timepoint_disambiguation", 5, tp_disambiguation)
+    counts.update(timepoint_preprocessing=len(tp_preprocessing), timepoint_abbreviations=len(tp_abbreviations),
+                  timepoint_common_typos=len(tp_typos), timepoint_disambiguation=len(tp_disambiguation))
+
+    # forms.yaml's disambiguation block -- e.g. responder_proportion vs
+    # incidence_proportion, decided by the matched measurement's event_polarity
+    # rather than by wording (see vocab/README.md decision #4).
+    form_disambiguation = [
+        (i, list(rule.get("between") or []), rule.get("prefer"), rule.get("otherwise"))
+        for i, rule in enumerate(forms.get("disambiguation") or [])
+    ]
+    _insert(con, "vocab.form_disambiguation", 4, form_disambiguation)
+    counts["form_disambiguation"] = len(form_disambiguation)
+
+    counts.update(_write_matching_tables(con, docs["matching"]))
     return counts
+
+
+def _write_matching_tables(con: duckdb.DuckDBPyConnection, matching: dict[str, Any]) -> dict[str, int]:
+    """Persist matching.yaml -- the contract for HOW every other vocab file is
+    matched -- into vocab.* tables, so the conforming pipeline reads it the same
+    way it reads every term file: from the warehouse, never by re-parsing YAML.
+    """
+    normalisation = [(i, step) for i, step in enumerate(matching.get("normalisation") or [])]
+
+    synonyms = matching.get("synonyms") or {}
+    case_sensitivity = synonyms.get("case_sensitivity") or {}
+    patterns = matching.get("patterns") or {}
+    precedence = matching.get("precedence") or {}
+    settings = [
+        ("synonyms.match", synonyms.get("match")),
+        ("synonyms.internal_space_matches", synonyms.get("internal_space_matches")),
+        ("synonyms.case_sensitivity.rule", case_sensitivity.get("rule")),
+        ("synonyms.case_sensitivity.min_synonym_length", case_sensitivity.get("min_synonym_length")),
+        ("patterns.default_flags", ",".join(patterns.get("default_flags") or [])),
+        ("patterns.inline_case_sensitive_syntax", patterns.get("inline_case_sensitive_syntax")),
+        ("precedence.strategy", precedence.get("strategy")),
+        ("precedence.strategy_when_unordered", precedence.get("strategy_when_unordered")),
+        ("precedence.synonyms_before_patterns", precedence.get("synonyms_before_patterns")),
+        ("precedence.veto_field", precedence.get("veto_field")),
+    ]
+    settings = [(k, str(_scalar(v))) for k, v in settings if v is not None]
+
+    cascade: list[tuple] = []
+    for dimension, steps in (matching.get("cascade") or {}).items():
+        for i, step in enumerate(steps):
+            cascade.append((dimension, i, step.get("field"), step.get("match_method"), step.get("fallback")))
+
+    floors = ((matching.get("provenance") or {}).get("confidence_floor")) or {}
+    confidence_floor = [(method, float(value)) for method, value in floors.items()]
+
+    _insert(con, "vocab.matching_normalisation", 2, normalisation)
+    _insert(con, "vocab.matching_settings", 2, settings)
+    _insert(con, "vocab.matching_cascade", 5, cascade)
+    _insert(con, "vocab.matching_confidence_floor", 2, confidence_floor)
+    return {
+        "matching_normalisation": len(normalisation),
+        "matching_settings": len(settings),
+        "matching_cascade": len(cascade),
+        "matching_confidence_floor": len(confidence_floor),
+    }
 
 
 def _write_load_log(con: duckdb.DuckDBPyConnection, docs: dict[str, Any], vocab_dir: Path) -> int:

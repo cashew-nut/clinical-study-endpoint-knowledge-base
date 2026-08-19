@@ -9,13 +9,15 @@ from clinical_endpoints.ingest import ctgov_api
 runner = CliRunner()
 
 
-def _make_study(nct_id, start_date, *, condition_meshes=None, intervention_meshes=None, browse_branches=None):
+def _make_study(
+    nct_id, start_date, *, condition_meshes=None, intervention_meshes=None, browse_branches=None, outcomes=None
+):
     return {
         "protocolSection": {
             "identificationModule": {"nctId": nct_id, "briefTitle": nct_id, "officialTitle": nct_id},
             "statusModule": {"overallStatus": "RECRUITING", "startDateStruct": {"date": start_date}},
             "designModule": {"phases": ["PHASE3"], "studyType": "INTERVENTIONAL"},
-            "outcomesModule": {},
+            "outcomesModule": outcomes or {},
             "conditionsModule": {"conditions": []},
         },
         "derivedSection": {
@@ -249,3 +251,51 @@ def test_vocab_validate_reports_a_missing_directory():
     result = runner.invoke(app, ["vocab", "validate", "--vocab-dir", "/nonexistent/vocab"])
     assert result.exit_code == 1
     assert "Missing vocab file" in result.output
+
+
+def test_conform_requires_pull_first(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse = tmp_path / "wh.duckdb"
+    runner.invoke(app, ["vocab", "validate", "--warehouse", str(warehouse)])
+
+    result = runner.invoke(app, ["conform", "--warehouse", str(warehouse)])
+    assert result.exit_code == 1
+    assert "pull" in result.output
+
+
+def test_conform_writes_conformed_tables_and_review_list_shows_the_queue(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse = tmp_path / "wh.duckdb"
+    assert runner.invoke(app, ["vocab", "validate", "--warehouse", str(warehouse)]).exit_code == 0
+
+    studies = [
+        _make_study(
+            "NCT001", "2024-01-01",
+            outcomes={
+                "primaryOutcomes": [
+                    {"measure": "Progression-Free Survival (PFS)", "timeFrame": "Event-driven"},
+                    {"measure": "Zzqxv Wibble Frotz Blorpington"},
+                ]
+            },
+        ),
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: _FakeResponse(studies))
+    assert runner.invoke(app, ["pull", "--phase", "3", "--warehouse", str(warehouse)]).exit_code == 0
+
+    result = runner.invoke(app, ["conform", "--warehouse", str(warehouse)])
+    assert result.exit_code == 0, result.output
+    assert "Conformed 1 of 2 row(s)" in result.output
+
+    con = duckdb.connect(str(warehouse))
+    try:
+        assert con.execute(
+            "SELECT form_id, measurement_id FROM conformed.endpoints WHERE nct_id = 'NCT001'"
+        ).fetchall() == [("time_to_event", "tumour_burden_recist")]
+        assert con.execute("SELECT count(*) FROM conformed.review_queue").fetchone()[0] == 1
+    finally:
+        con.close()
+
+    review = runner.invoke(app, ["review", "list", "--warehouse", str(warehouse)])
+    assert review.exit_code == 0, review.output
+    assert "NCT001" in review.output
+    assert "Showing 1 row(s) with status='pending'" in review.output
