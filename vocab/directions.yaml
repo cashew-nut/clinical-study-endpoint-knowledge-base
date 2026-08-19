@@ -1,0 +1,163 @@
+# Dimension: DIRECTION -- which way is a better result.
+#
+# Direction is almost never stated in a registry `measure` string. It is derived,
+# not matched: forms.yaml carries a `direction_rule` and measurements.yaml carries a
+# `default_direction` (for continuous quantities) or an `event_polarity` (for event
+# counts and incidences); the conforming pipeline combines the two.
+#
+#   direction = apply(form.direction_rule, measurement)
+#
+# This file is therefore the *closed set of legal outcomes* of that derivation,
+# plus the free-text cues that let the pipeline override the derivation when the
+# `description` field states polarity outright ("higher scores indicate worse
+# disease" is common and worth honouring over the default).
+#
+# `sign` is the machine-usable form: +1 = larger values are better, -1 = smaller
+# values are better, 0 = no ordering.
+
+version: 1
+dimension: direction
+terms:
+
+  - id: increase_is_better
+    label: "Increase = better"
+    definition: >-
+      A larger value indicates a better outcome. Applies to capacity and function
+      measures (FEV1, 6-minute walk distance, BCVA letters), to well-being scales
+      scored so that higher is better, and to every responder or event-free
+      proportion.
+    sign: 1
+    cues:
+      - "higher scores indicate better"
+      - "higher score indicates greater function"
+      - "increase from baseline"
+      - "improvement is an increase"
+      - "greater scores indicating more"
+    patterns:
+      - '\bhigher (scores?|values?) (indicat|denot|represent|mean)\w* (better|greater function|improvement|higher quality)'
+      - '\bincreased? (is|=) better\b'
+
+  - id: decrease_is_better
+    label: "Decrease = better"
+    definition: >-
+      A smaller value indicates a better outcome. Applies to disease-severity and
+      symptom scales (PASI, EASI, HbA1c, NIHSS, MADRS, pain NRS), to biomarkers
+      being lowered, and to counts or rates of harm.
+    sign: -1
+    cues:
+      - "higher scores indicate worse"
+      - "higher scores mean worse outcome"
+      - "lower scores denote healthier"
+      - "reduction in"
+      - "0 is no pain"
+    patterns:
+      - '\bhigher (scores?|values?) (indicat|denot|represent|mean)\w* (worse|greater severity|more severe|more severity)'
+      - '\blower (scores?|values?) (indicat|denot|represent|mean)\w* (better|healthier|less)'
+      - '\bdecreased? (is|=) better\b'
+
+  - id: longer_is_better
+    label: "Longer = better"
+    definition: >-
+      For a time-to-event endpoint whose event is undesirable (death, progression,
+      relapse, treatment failure, need for rescue medication): later is better.
+    sign: 1
+    applies_to_forms: [time_to_event]
+    cues:
+      - "longer survival"
+      - "delayed progression"
+      - "time to death"
+
+  - id: shorter_is_better
+    label: "Shorter = better"
+    definition: >-
+      For a time-to-event endpoint whose event is desirable (response, recovery,
+      extubation, discharge, healing): sooner is better.
+    sign: -1
+    applies_to_forms: [time_to_event]
+    cues:
+      - "time to response"
+      - "time to recovery"
+      - "time to resolution"
+      - "time to extubation"
+      - "time to discharge"
+    notes: >-
+      Easy to get wrong and easy to spot once wrong. "Time to first subsequent
+      therapy" is longer_is_better; "Time to Response (TTR)" is shorter_is_better.
+      Both are time_to_event, so form alone cannot decide -- only the event's
+      polarity can, which is why measurements.yaml carries event_polarity.
+
+  - id: target_range
+    label: "Toward a target range"
+    definition: >-
+      Neither direction is uniformly better; the goal is to sit inside a clinically
+      defined range. Blood pressure and potassium in a safety context, glucose time
+      in range, INR, body weight in an undernutrition setting.
+    sign: 0
+    cues:
+      - "time in range"
+      - "within normal limits"
+      - "within the target range"
+      - "normalisation of"
+    notes: >-
+      Distinguish from neutral: a target_range endpoint has a preferred outcome,
+      it just is not monotone in the measured value. Reporting a target_range
+      endpoint as increase_is_better is a real analytic error, so the term exists
+      to make the pipeline say "not monotone" rather than guess.
+
+  - id: neutral
+    label: "No preferred direction"
+    definition: >-
+      The endpoint is descriptive or characterising, with no better or worse
+      result -- PK exposure parameters, drug concentrations, ADA titres reported
+      for characterisation, exploratory biomarkers.
+    sign: 0
+    cues:
+      - "pharmacokinetic parameter"
+      - "characterise the"
+      - "descriptive"
+
+  - id: not_stated
+    label: "Direction not determinable"
+    definition: >-
+      Neither the derivation nor the free text determines a direction. Kept as an
+      explicit value so an underived direction is visible in the warehouse instead
+      of being silently null.
+    sign: null
+
+# Event polarity is not always a property of the measurement.
+#
+# `measurements.yaml` carries `event_polarity` per measurement, which is right for
+# most of the corpus -- an adverse event is a harm wherever it appears. But some
+# measurements host events of BOTH polarities: RECIST tumour assessment gives
+# "time to progression" (harm, longer is better) and "time to response" (benefit,
+# sooner is better) from one measurement id. The measurement cannot decide between
+# them; the endpoint text names the event, so the text has to.
+#
+# Resolution order for event polarity, most specific first:
+#   1. an event cue below, matched against the normalised measure string
+#   2. the matched measurement's `event_polarity`
+#   3. not_stated
+#
+# This matters most for time_to_event, where polarity flips the answer between
+# longer_is_better and shorter_is_better, and for incidence_proportion, where it
+# flips between decrease_is_better and increase_is_better.
+event_polarity_cues:
+  benefit:
+    - 'time to (clinical |first |confirmed )?(response|remission|improvement|recovery|resolution|healing|clearance|conversion|engraftment|extubation|weaning|discharge|ambulation|return to)'
+    - 'time to (sustained |confirmed )?(virologic|microbiologic|haematologic|hematologic) (response|suppression|clearance)'
+    - 'time to (achieve|attain|reach)\b'
+    - '\b(abstinence|retention in (care|treatment)|pregnancy achieved|live birth)\b'
+  harm:
+    - 'time to (disease |radiographic |confirmed )?(progression|death|relapse|recurrence|deterioration|worsening|failure|discontinuation|withdrawal|amputation|dialysis|transplant)'
+    - 'time to first (adverse event|exacerbation|hospitali[sz]ation|bleed|seizure|fracture|event)'
+    - 'time to (initiation of )?(rescue|subsequent|next) (medication|therapy|treatment)'
+    - '\b(mortality|death|progression|relapse|recurrence|exacerbation|hospitali[sz]ation)\b'
+  notes: >-
+    "Time to initiation of rescue medication" is deliberately in the harm list:
+    needing rescue is the bad outcome, so later is better. That reading is easy to
+    get backwards, which is why it is written down rather than inferred.
+
+# Direction is derived, never matched, so the fallback is on derivation: when
+# neither an event cue, the measurement's default_direction, nor its event_polarity
+# resolves it, the result is `not_stated`.
+default_when_underivable: not_stated

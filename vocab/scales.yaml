@@ -1,0 +1,364 @@
+# Dimension: SCALE -- the unit the endpoint's value is expressed in.
+#
+# Scale is a property of the (measurement, form) pair, not of either alone:
+# body weight in kg becomes % under percent_change_from_baseline, and becomes
+# "percentage of participants" under responder_proportion. So the pipeline should
+# resolve scale in this order:
+#   1. an explicit unit in the raw text (mmHg, L, mL, %, letters, points)
+#   2. the form's typical_scale, where the form fixes the unit
+#      (responder_proportion -> percentage_of_participants, always)
+#   3. the measurement's default_scale
+#   4. not_stated
+#
+# `kind` groups units for aggregate queries ("all time-scaled endpoints") and
+# `si_equivalent` / `factor_to_si` allow safe conversion within a kind, which is
+# what makes "the same measurement reported in different units" a findable case
+# rather than a silent mismatch (FEV1 in L vs mL; HbA1c in % vs mmol/mol).
+
+version: 1
+dimension: scale
+terms:
+
+  # --- time ----------------------------------------------------------------
+  - id: minutes
+    label: "Minutes"
+    kind: time
+    si_equivalent: hours
+    factor_to_si: 0.016666667
+    synonyms: ["minute", "minutes", "min", "mins"]
+  - id: seconds
+    label: "Seconds"
+    kind: time
+    si_equivalent: hours
+    factor_to_si: 0.00027777778
+    synonyms: ["second", "seconds", "sec", "s"]
+  - id: hours
+    label: "Hours"
+    kind: time
+    si_equivalent: hours
+    factor_to_si: 1
+    synonyms: ["hour", "hours", "hr", "hrs", "h"]
+  - id: days
+    label: "Days"
+    kind: time
+    si_equivalent: hours
+    factor_to_si: 24
+    synonyms: ["day", "days", "d"]
+  - id: weeks
+    label: "Weeks"
+    kind: time
+    si_equivalent: hours
+    factor_to_si: 168
+    synonyms: ["week", "weeks", "wk", "wks"]
+  - id: months
+    label: "Months"
+    kind: time
+    si_equivalent: hours
+    factor_to_si: 730.5
+    synonyms: ["month", "months", "mo", "mth"]
+    notes: >-
+      The default scale for time-to-event oncology endpoints, which the reference
+      table records as "Months (KM)" -- the KM qualifier is an analysis method, not
+      a unit, and belongs in the form's notes rather than here.
+  - id: years
+    label: "Years"
+    kind: time
+    si_equivalent: hours
+    factor_to_si: 8766
+    synonyms: ["year", "years", "yr", "yrs"]
+
+  # --- proportions and percentages -----------------------------------------
+  - id: percentage_of_participants
+    label: "Percentage of participants (%)"
+    kind: proportion
+    si_equivalent: proportion
+    factor_to_si: 0.01
+    synonyms:
+      - "percentage of participants"
+      - "percentage of subjects"
+      - "percentage of patients"
+      - "percent of participants"
+      - "responder rate"
+    notes: "The fixed scale for responder_proportion, incidence_proportion, and event_free_rate_at_timepoint."
+  - id: correlation_coefficient
+    label: "Correlation coefficient (-1 to 1)"
+    kind: proportion
+    si_equivalent: correlation_coefficient
+    factor_to_si: 1
+    synonyms: ["correlation coefficient", "r", "rho", "Spearman's rho", "Pearson's r", "kappa",
+               "intraclass correlation coefficient", "ICC"]
+  - id: proportion
+    label: "Proportion (0-1)"
+    kind: proportion
+    si_equivalent: proportion
+    factor_to_si: 1
+    synonyms: ["proportion", "fraction", "rate (0-1)"]
+  - id: percentage
+    label: "Percentage of a quantity (%)"
+    kind: proportion
+    si_equivalent: proportion
+    factor_to_si: 0.01
+    synonyms: ["percent", "percentage", "%"]
+    notes: >-
+      A percentage of a measured quantity (oxygen saturation, ejection fraction,
+      lung extent), NOT a percentage of participants -- keep those on
+      percentage_of_participants, since only one of the two is a proportion of a
+      denominator of people.
+  - id: percent_predicted
+    label: "Percent predicted (%)"
+    kind: proportion
+    si_equivalent: proportion
+    factor_to_si: 0.01
+    synonyms: ["% predicted", "percent predicted", "percentage predicted", "% pred"]
+    notes: "Pairs with the predicted_normal reference: the denominator is a population-normative value, not the participant's own."
+  - id: percent_of_time
+    label: "Percent of time (%)"
+    kind: proportion
+    si_equivalent: proportion
+    factor_to_si: 0.01
+    synonyms: ["percentage of time", "percent of time", "time in range (%)", "percentage of days"]
+  - id: percent_change
+    label: "Percent change (%)"
+    kind: relative_change
+    synonyms: ["percent change", "percentage change", "% change", "relative change (%)"]
+  - id: ratio
+    label: "Ratio (dimensionless)"
+    kind: relative_change
+    synonyms: ["ratio", "fold change", "geometric mean ratio", "measured as ratio"]
+
+  # --- scores --------------------------------------------------------------
+  - id: score_points
+    label: "Score points"
+    kind: score
+    synonyms: ["points", "score", "total score", "score units", "rated from"]
+    notes: >-
+      The most common scale in the corpus by a wide margin -- instrument scores
+      (PASI, EASI, DLQI, MADRS, NIHSS, WOMAC, CGI, ...). The instrument's range and
+      polarity live on the measurement, not here, so that "points" stays a unit
+      rather than becoming a per-instrument vocabulary.
+  - id: z_score
+    label: "Z-score (SD units)"
+    kind: score
+    synonyms: ["z-score", "z score", "standard deviation score", "SD score"]
+  - id: t_score
+    label: "T-score (mean 50, SD 10)"
+    kind: score
+    synonyms: ["t-score", "t score", "PROMIS t-score"]
+  - id: letters_etdrs
+    label: "ETDRS letters"
+    kind: score
+    synonyms: ["ETDRS letters", "letters", "letter score", "BCVA letters"]
+    notes: "Ophthalmology visual acuity; 5 letters = 1 line on the ETDRS chart."
+  - id: logmar
+    label: "logMAR"
+    kind: score
+    synonyms: ["logMAR", "log MAR"]
+    notes: "Inverse polarity to letters_etdrs -- lower logMAR is better vision."
+  - id: steps_drss
+    label: "DRSS steps"
+    kind: score
+    synonyms: ["steps", "DRSS steps", "step improvement"]
+  - id: grade_ctcae
+    label: "CTCAE grade"
+    kind: score
+    synonyms: ["CTCAE grade", "grade", "toxicity grade", "NCI-CTCAE"]
+
+  # --- volume, flow, distance ----------------------------------------------
+  - id: litres
+    label: "Litres (L)"
+    kind: volume
+    si_equivalent: litres
+    factor_to_si: 1
+    synonyms: ["L", "litre", "liter", "litres", "liters"]
+    notes: "The reference table's scale for FEV1 change-from-baseline."
+  - id: millilitres
+    label: "Millilitres (mL)"
+    kind: volume
+    si_equivalent: litres
+    factor_to_si: 0.001
+    synonyms: ["mL", "ml", "millilitre", "milliliter"]
+  - id: litres_per_second
+    label: "Litres per second (L/s)"
+    kind: flow
+    synonyms: ["L/s", "L/sec", "litres per second"]
+  - id: metres
+    label: "Metres (m)"
+    kind: length
+    si_equivalent: metres
+    factor_to_si: 1
+    synonyms: ["m", "metre", "meter", "metres", "meters"]
+    notes: "6-minute walk distance."
+  - id: centimetres
+    label: "Centimetres (cm)"
+    kind: length
+    si_equivalent: metres
+    factor_to_si: 0.01
+    synonyms: ["cm", "centimetre", "centimeter"]
+  - id: millimetres
+    label: "Millimetres (mm)"
+    kind: length
+    si_equivalent: metres
+    factor_to_si: 0.001
+    synonyms: ["mm", "millimetre", "millimeter"]
+    notes: "Proptosis (exophthalmometry), lesion diameters, retinal thickness is µm."
+  - id: micrometres
+    label: "Micrometres (µm)"
+    kind: length
+    si_equivalent: metres
+    factor_to_si: 0.000001
+    synonyms: ["µm", "um", "micron", "micrometre", "micrometer"]
+    notes: "OCT central subfield thickness."
+
+  # --- mass and body composition -------------------------------------------
+  - id: kilograms
+    label: "Kilograms (kg)"
+    kind: mass
+    si_equivalent: kilograms
+    factor_to_si: 1
+    synonyms: ["kg", "kilogram", "kilograms"]
+  - id: kg_per_m2
+    label: "kg/m² (BMI)"
+    kind: composite_unit
+    synonyms: ["kg/m2", "kg/m^2", "kg/m²", "BMI units"]
+  - id: percent_body_surface_area
+    label: "% body surface area"
+    kind: proportion
+    synonyms: ["% BSA", "percent BSA", "body surface area (%)"]
+
+  # --- pressure, rate, electrical ------------------------------------------
+  - id: mmhg
+    label: "Millimetres of mercury (mmHg)"
+    kind: pressure
+    synonyms: ["mmHg", "mm Hg", "millimetres of mercury"]
+  - id: beats_per_minute
+    label: "Beats per minute (bpm)"
+    kind: rate_per_minute
+    synonyms: ["bpm", "beats per minute", "heart rate"]
+  - id: breaths_per_minute
+    label: "Breaths per minute"
+    kind: rate_per_minute
+    synonyms: ["breaths per minute", "respiratory rate"]
+  - id: milliseconds
+    label: "Milliseconds (ms)"
+    kind: time
+    si_equivalent: hours
+    factor_to_si: 0.00000027777778
+    synonyms: ["ms", "msec", "milliseconds"]
+    notes: "QT/QTcF intervals. Shares kind `time` with the survival units by unit algebra only -- filter on measurement.domain, not on kind, to separate ECG from survival."
+
+  # --- concentrations and laboratory ---------------------------------------
+  - id: percent_hba1c
+    label: "% (HbA1c, NGSP)"
+    kind: concentration
+    si_equivalent: mmol_per_mol
+    synonyms: ["percent HbA1c", "NGSP %", "% (mmol/mol)", "NGSP"]
+    notes: >-
+      The reference table records HbA1c's scale as "% (mmol/mol)" -- two coexisting
+      conventions for one quantity (NGSP % and IFCC mmol/mol). They are kept as
+      separate terms with an si_equivalent link so both report into one comparison;
+      conversion is IFCC = (NGSP - 2.15) * 10.929, which is affine, not a single
+      factor, hence no factor_to_si here.
+  - id: mmol_per_mol
+    label: "mmol/mol (HbA1c, IFCC)"
+    kind: concentration
+    si_equivalent: mmol_per_mol
+    synonyms: ["mmol/mol", "IFCC"]
+  - id: mg_per_dl
+    label: "mg/dL"
+    kind: concentration
+    synonyms: ["mg/dL", "mg/dl", "milligrams per decilitre"]
+  - id: mmol_per_l
+    label: "mmol/L"
+    kind: concentration
+    synonyms: ["mmol/L", "mmol/l", "millimoles per litre"]
+  - id: g_per_dl
+    label: "g/dL"
+    kind: concentration
+    synonyms: ["g/dL", "g/dl", "grams per decilitre"]
+  - id: ng_per_ml
+    label: "ng/mL"
+    kind: concentration
+    synonyms: ["ng/mL", "ng/ml", "nanograms per millilitre"]
+  - id: ug_per_ml
+    label: "µg/mL"
+    kind: concentration
+    synonyms: ["µg/mL", "ug/mL", "mcg/mL", "micrograms per millilitre"]
+  - id: pg_per_ml
+    label: "pg/mL"
+    kind: concentration
+    synonyms: ["pg/mL", "pg/ml", "picograms per millilitre"]
+  - id: units_per_l
+    label: "U/L"
+    kind: concentration
+    synonyms: ["U/L", "IU/L", "units per litre"]
+  - id: copies_per_ml
+    label: "copies/mL"
+    kind: concentration
+    synonyms: ["copies/mL", "copies/ml", "viral load units"]
+  - id: cells_per_ul
+    label: "cells/µL"
+    kind: concentration
+    synonyms: ["cells/µL", "cells/uL", "cells per microlitre", "/mm3"]
+
+  # --- pharmacokinetics ----------------------------------------------------
+  - id: ng_h_per_ml
+    label: "ng·h/mL (AUC)"
+    kind: pk_exposure
+    synonyms: ["ng*h/mL", "ng.h/mL", "ng·h/mL", "ng*hr/mL"]
+  - id: litres_per_hour
+    label: "L/h (clearance)"
+    kind: pk_clearance
+    synonyms: ["L/h", "L/hr", "litres per hour", "clearance units"]
+
+  # --- immunogenicity ------------------------------------------------------
+  - id: titre
+    label: "Titre (reciprocal dilution)"
+    kind: immunogenicity
+    synonyms: ["titer", "titre", "reciprocal dilution", "1:8", "rSBA titre"]
+  - id: geometric_mean_titre
+    label: "Geometric mean titre (GMT)"
+    kind: immunogenicity
+    synonyms: ["GMT", "geometric mean titer", "geometric mean titre"]
+  - id: geometric_mean_concentration
+    label: "Geometric mean concentration (GMC)"
+    kind: immunogenicity
+    synonyms: ["GMC", "geometric mean concentration"]
+
+  # --- counts and rates ----------------------------------------------------
+  - id: count
+    label: "Count (events or participants)"
+    kind: count
+    synonyms: ["count", "number", "number of events", "n"]
+  - id: events_per_year
+    label: "Events per person-year"
+    kind: rate
+    synonyms: ["per year", "annualized rate", "annualised rate", "events per patient-year", "per person-year"]
+  - id: count_per_period
+    label: "Count per stated period"
+    kind: rate
+    synonyms: ["per month", "per week", "per day", "per 28 days", "episodes per month"]
+    notes: "Use when a denominator period is stated but is not a person-year, e.g. monthly migraine days."
+
+  # --- other ---------------------------------------------------------------
+  - id: mme
+    label: "Morphine milligram equivalents (MME)"
+    kind: dose_equivalent
+    synonyms: ["MME", "morphine milligram equivalents", "morphine equivalent dose"]
+  - id: kcal_per_day
+    label: "kcal/day"
+    kind: energy
+    synonyms: ["kcal/day", "kilocalories per day", "resting metabolic rate units"]
+  - id: dimensionless
+    label: "Dimensionless"
+    kind: other
+    synonyms: ["unitless", "dimensionless", "index", "arbitrary units", "AU"]
+  - id: not_stated
+    label: "Scale not determinable"
+    kind: other
+    definition: >-
+      No unit is stated in the text and neither the form nor the measurement fixes
+      one. Explicit rather than null so unresolved scales are countable.
+
+# Declared fallback: a raw string matching no term above conforms to `not_stated`
+# rather than to NULL, so unresolved values stay countable.
+default_when_unmatched: not_stated

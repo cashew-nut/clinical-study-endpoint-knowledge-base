@@ -20,11 +20,15 @@ def _make_study(
     study_type: str = "INTERVENTIONAL",
     primary_completion_date: str | None = None,
     outcomes: dict | None = None,
+    conditions: list[str] | None = None,
+    condition_meshes: list[dict] | None = None,
+    intervention_meshes: list[dict] | None = None,
+    browse_branches: list[dict] | None = None,
 ) -> dict:
     status_module = {"overallStatus": status, "startDateStruct": {"date": start_date}}
     if primary_completion_date:
         status_module["primaryCompletionDateStruct"] = {"date": primary_completion_date}
-    return {
+    study = {
         "protocolSection": {
             "identificationModule": {
                 "nctId": nct_id,
@@ -34,8 +38,19 @@ def _make_study(
             "statusModule": status_module,
             "designModule": {"phases": phases, "studyType": study_type},
             "outcomesModule": outcomes or {},
+            "conditionsModule": {"conditions": conditions or []},
         }
     }
+    if condition_meshes is not None or browse_branches is not None:
+        study["derivedSection"] = study.get("derivedSection", {})
+        study["derivedSection"]["conditionBrowseModule"] = {
+            "meshes": condition_meshes or [],
+            "browseBranches": browse_branches or [],
+        }
+    if intervention_meshes is not None:
+        study["derivedSection"] = study.get("derivedSection", {})
+        study["derivedSection"]["interventionBrowseModule"] = {"meshes": intervention_meshes or []}
+    return study
 
 
 class FakeResponse:
@@ -102,6 +117,100 @@ def test_extract_outcome_rows_covers_all_outcome_types():
     assert all(r["population"] is None for r in rows)
 
 
+def test_extract_condition_rows_gets_sponsor_free_text():
+    study = _make_study("NCT001", ["PHASE3"], "2024-01-01", conditions=["Lung Cancer", "NSCLC"])
+    rows = ctgov_api._extract_condition_rows(study)
+    assert rows == [
+        {"nct_id": "NCT001", "name": "Lung Cancer"},
+        {"nct_id": "NCT001", "name": "NSCLC"},
+    ]
+
+
+def test_extract_mesh_rows_normalises_and_tags_type():
+    study = _make_study(
+        "NCT001",
+        ["PHASE3"],
+        "2024-01-01",
+        condition_meshes=[{"id": "D000077192", "term": "Carcinoma, Non-Small-Cell Lung"}],
+        intervention_meshes=[{"id": "D000069286", "term": "Pembrolizumab"}],
+    )
+    condition_rows = ctgov_api._extract_mesh_rows(
+        study, module="conditionBrowseModule", mesh_type="condition"
+    )
+    assert condition_rows == [
+        {
+            "nct_id": "NCT001",
+            "mesh_term": "Carcinoma, Non-Small-Cell Lung",
+            "mesh_term_normalised": "carcinoma, non-small-cell lung",
+            "mesh_type": "condition",
+        }
+    ]
+    intervention_rows = ctgov_api._extract_mesh_rows(
+        study, module="interventionBrowseModule", mesh_type="intervention"
+    )
+    assert intervention_rows == [
+        {
+            "nct_id": "NCT001",
+            "mesh_term": "Pembrolizumab",
+            "mesh_term_normalised": "pembrolizumab",
+            "mesh_type": "intervention",
+        }
+    ]
+
+
+def test_extract_condition_branch_rows():
+    study = _make_study(
+        "NCT001",
+        ["PHASE3"],
+        "2024-01-01",
+        browse_branches=[{"abbrev": "BC04", "name": "Neoplasms"}],
+    )
+    assert ctgov_api._extract_condition_branch_rows(study) == [
+        {"nct_id": "NCT001", "branch_abbrev": "BC04", "branch_name": "Neoplasms"}
+    ]
+
+
+def test_run_pull_lands_conditions_and_mesh_tables(tmp_path, monkeypatch):
+    studies = [
+        _make_study(
+            "NCT001",
+            ["PHASE3"],
+            "2024-01-01",
+            conditions=["Non-Small Cell Lung Cancer"],
+            condition_meshes=[{"id": "D1", "term": "Lung Neoplasms"}],
+            intervention_meshes=[{"id": "D2", "term": "Pembrolizumab"}],
+            browse_branches=[{"abbrev": "BC04", "name": "Neoplasms"}],
+        )
+    ]
+    responses = [FakeResponse(200, {"studies": studies})]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    result = run_pull(con, PullFilters(phases=("3",), limit=500))
+
+    assert con.execute("SELECT nct_id, name FROM raw.conditions").fetchall() == [
+        ("NCT001", "Non-Small Cell Lung Cancer")
+    ]
+    assert con.execute(
+        "SELECT nct_id, mesh_term, mesh_term_normalised, mesh_type FROM raw.browse_conditions"
+    ).fetchall() == [("NCT001", "Lung Neoplasms", "lung neoplasms", "condition")]
+    assert con.execute(
+        "SELECT nct_id, mesh_term, mesh_term_normalised, mesh_type FROM raw.browse_interventions"
+    ).fetchall() == [("NCT001", "Pembrolizumab", "pembrolizumab", "intervention")]
+    assert con.execute(
+        "SELECT nct_id, branch_abbrev, branch_name FROM raw.browse_condition_branches"
+    ).fetchall() == [("NCT001", "BC04", "Neoplasms")]
+    assert result["row_counts"] == {
+        "studies": 1,
+        "design_outcomes": 0,
+        "conditions": 1,
+        "browse_conditions": 1,
+        "browse_interventions": 1,
+        "browse_condition_branches": 1,
+    }
+    con.close()
+
+
 def test_run_pull_lands_studies_sorted_desc_and_logs(tmp_path, monkeypatch):
     studies = [
         _make_study(
@@ -137,8 +246,16 @@ def test_run_pull_lands_studies_sorted_desc_and_logs(tmp_path, monkeypatch):
         "SELECT source, row_counts FROM raw._pull_log"
     ).fetchone()
     assert log_row[0] == "ctgov_api"
-    assert json.loads(log_row[1]) == {"studies": 2, "design_outcomes": 1}
-    assert result["row_counts"] == {"studies": 2, "design_outcomes": 1}
+    expected_row_counts = {
+        "studies": 2,
+        "design_outcomes": 1,
+        "conditions": 0,
+        "browse_conditions": 0,
+        "browse_interventions": 0,
+        "browse_condition_branches": 0,
+    }
+    assert json.loads(log_row[1]) == expected_row_counts
+    assert result["row_counts"] == expected_row_counts
     con.close()
 
 

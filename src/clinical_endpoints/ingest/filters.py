@@ -35,10 +35,14 @@ class PullFilters:
     phases: tuple[str, ...]
     limit: int
     since: date | None = None
+    ta: tuple[str, ...] | None = None
 
     def as_dict(self) -> dict:
-        return {
+        d = {
             "phases": list(self.phases),
             "limit": self.limit,
             "since": self.since.isoformat() if self.since else None,
         }
+        if self.ta:
+            d["ta"] = list(self.ta)
+        return d

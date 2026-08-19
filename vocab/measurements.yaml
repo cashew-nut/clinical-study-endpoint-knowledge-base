@@ -1,0 +1,2125 @@
+# Dimension: MEASUREMENT -- what quantity or event the endpoint is about.
+#
+# The dimension that answers "which studies measured the same thing with a
+# different form", so it is the one worth getting right.
+#
+# GRAIN. Entries are at INSTRUMENT/ANALYTE level (PASI, EASI, HbA1c, FEV1), and
+# each also carries a `concept` -- the underlying construct (psoriasis_severity,
+# glycaemic_control, airflow_obstruction). Two levels because the interesting
+# question is asked at both:
+#   same measurement, different form  -> PASI change-from-baseline vs PASI75
+#                                        responder            (id match)
+#   same concept, different instrument -> PASI vs sPGA vs BSA  (concept match)
+# The graph layer can build SAME_MEASUREMENT edges from `id` and SAME_CONCEPT edges
+# from `concept` with no extra vocabulary. If concept later needs synonyms and
+# definitions of its own, promote it to concepts.yaml -- the field name is already
+# the join key, so that is additive.
+#
+# DIRECTION. `default_direction` is the polarity of the UNDERLYING QUANTITY, not of
+# the endpoint. PASI is decrease_is_better because lower PASI is less psoriasis --
+# a PASI75 responder endpoint is still increase_is_better, because forms.yaml's
+# `higher_count_better` rule overrides. Never bake the endpoint's direction in here.
+# `event_polarity` (harm | benefit) does the same job for measurements that are
+# events rather than quantities, and drives longer_is_better vs shorter_is_better
+# on time-to-event forms. A measurement can carry both: tumour burden is a
+# continuous quantity (lower better) whose event -- progression -- is a harm.
+# `direction_by_ta` overrides `default_direction` where polarity genuinely depends
+# on the indication (weight falls in obesity, rises in cachexia).
+#
+# DOMAIN. `domain` separates efficacy from safety, PK, immunogenicity, and the
+# rest. Roughly a third of registry outcomes are not efficacy; naming them lets a
+# query say `WHERE domain = 'efficacy'` in one predicate instead of drowning the
+# review queue in adverse-event rows that were never going to be efficacy
+# endpoints. Values: efficacy, safety, pharmacokinetic, pharmacodynamic,
+# immunogenicity, patient_reported, healthcare_utilisation, exploratory.
+#
+# COVERAGE. This file will never cover the corpus by exact match, and is not meant
+# to. In the 500-study sample the `measure` field is close to unique per trial: the
+# 500 most frequent distinct strings account for only about a quarter of outcome
+# rows. So entries are written to be matched via `synonyms` and `patterns` against a
+# normalised string, with the semantic fallback and the review queue as the
+# designed escape valves. Adding a term is a file edit plus `vocab validate`, never
+# an automatic write.
+
+version: 1
+dimension: measurement
+terms:
+
+  # =========================================================================
+  # ONCOLOGY
+  # =========================================================================
+  - id: tumour_burden_recist
+    label: "Tumour burden (RECIST)"
+    concept: tumour_burden
+    method: imaging_recist
+    domain: efficacy
+    default_direction: decrease_is_better
+    event_polarity: harm
+    typical_ta: [oncology]
+    synonyms: ["RECIST", "objective response", "objective response rate", "ORR", "overall response rate",
+               "tumour response", "tumor response", "disease control rate", "DCR", "target lesion",
+               "sum of diameters", "progression-free survival", "PFS", "radiographic progression-free survival",
+               "rPFS", "duration of response", "DOR", "complete response", "partial response",
+               "best overall response", "time to progression", "TTP", "time to response", "TTR"]
+    patterns:
+      - '\b(objective|overall|complete|partial|best overall) response\b'
+      - '\b(r)?PFS\b'
+      - '\bprogression[- ]free survival\b'
+      - '\bdisease control (rate)?\b'
+      - '\bRECIST\b'
+      - '\bduration of response\b'
+    notes: >-
+      The plan's reference table names this as the measurement shared by PFS and
+      ORR; that shared id is what makes them a SAME_MEASUREMENT_DIFFERENT_FORM pair.
+      The >=30% decrease in the sum of diameters that defines a RECIST partial
+      response is a Threshold on this measurement, parsed separately -- it is a
+      convention of the criteria, not part of the term.
+
+  - id: vital_status
+    label: "Vital status (death from any cause)"
+    concept: survival
+    method: clinical_event
+    domain: efficacy
+    event_polarity: harm
+    synonyms: ["overall survival", "OS", "death", "mortality", "all-cause mortality", "death rate",
+               "time to death", "survival", "in-hospital mortality", "28-day mortality", "transplant-related mortality"]
+    patterns:
+      - '\boverall survival\b'
+      - '\b(all[- ]cause |in[- ]hospital )?mortality\b'
+      - '\btime to (all[- ]cause )?death\b'
+      - '^OS$'
+    notes: >-
+      Under time_to_event this yields longer_is_better (OS); under
+      incidence_proportion, decrease_is_better (30-day mortality); under
+      event_free_rate_at_timepoint, increase_is_better (2-year OS rate). One
+      measurement, three directions, all derived -- which is the point of keeping
+      direction out of this file.
+
+  - id: disease_recurrence
+    label: "Disease recurrence or relapse"
+    concept: disease_recurrence
+    method: clinical_event
+    domain: efficacy
+    event_polarity: harm
+    typical_ta: [oncology, haematology]
+    synonyms: ["disease-free survival", "DFS", "relapse-free survival", "RFS", "recurrence-free survival",
+               "event-free survival", "EFS", "leukemia-free survival", "LFS", "recurrence rate",
+               "locoregional recurrence", "invasive breast cancer-free survival", "iBCFS",
+               "graft-versus-host disease-free/failure-free survival", "GFFS"]
+    patterns:
+      - '\b(disease|relapse|recurrence|event|leukemia|leukaemia|progression)[- ]free survival\b'
+      - '\b(locoregional |axillary |distant )?recurrence\b'
+      - '\brelapse\b'
+
+  - id: treatment_failure
+    label: "Treatment failure / need for subsequent therapy"
+    concept: treatment_failure
+    method: clinical_event
+    domain: efficacy
+    event_polarity: harm
+    typical_ta: [oncology]
+    synonyms: ["failure-free survival", "FFS", "time to first subsequent therapy", "TFST",
+               "time to second subsequent therapy", "TSST", "time to next treatment", "treatment failure"]
+    patterns:
+      - '\bfailure[- ]free survival\b'
+      - '\btime to (first |second )?subsequent (therapy|treatment)\b'
+
+  - id: minimal_residual_disease
+    label: "Minimal residual disease"
+    concept: residual_disease
+    method: flow_cytometry_or_molecular
+    domain: efficacy
+    default_direction: decrease_is_better
+    typical_ta: [oncology, haematology]
+    synonyms: ["MRD", "minimal residual disease", "measurable residual disease", "MRD negativity"]
+
+  - id: haematologic_response
+    label: "Haematologic response"
+    concept: haematologic_response
+    method: laboratory_composite
+    domain: efficacy
+    default_direction: increase_is_better
+    typical_ta: [oncology, haematology]
+    synonyms: ["clinicohematologic response", "durable clinicohematologic response", "DCR (haematologic)",
+               "durable partial clinicohematologic response", "DPR", "haematologic response", "hematologic response"]
+
+  - id: prostate_specific_antigen
+    label: "Prostate-specific antigen (PSA)"
+    concept: tumour_marker
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: ng_per_ml
+    typical_ta: [oncology]
+    synonyms: ["PSA", "prostate-specific antigen", "PSA response", "PSA50"]
+
+  # =========================================================================
+  # RESPIRATORY
+  # =========================================================================
+  - id: fev1
+    label: "Forced expiratory volume in 1 second (FEV1)"
+    concept: airflow_obstruction
+    method: spirometry
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: litres
+    typical_ta: [respiratory]
+    synonyms: ["FEV1", "FEV₁", "forced expiratory volume in 1 second", "forced expiratory volume in one second",
+               "pre-bronchodilator FEV1", "post-bronchodilator FEV1", "trough FEV1", "percent predicted FEV1",
+               "ppFEV1", "FEV1%"]
+    patterns:
+      - '\bFEV\s?[1₁]\b'
+      - '\bforced expiratory volume\b'
+    notes: >-
+      The plan's reference-table fixture for change-from-baseline. Percent-predicted
+      variants share this measurement and differ only in Reference
+      (predicted_normal) and Scale -- do not create a second term for them.
+
+  - id: fvc
+    label: "Forced vital capacity (FVC)"
+    concept: lung_volume
+    method: spirometry
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: millilitres
+    typical_ta: [respiratory]
+    synonyms: ["FVC", "forced vital capacity", "percent predicted FVC", "FVC% pred", "pFVC", "%pFVC"]
+    patterns: ['\bFVC\b', '\bforced vital capacity\b']
+
+  - id: dlco
+    label: "Diffusing capacity for carbon monoxide (DLCO)"
+    concept: gas_transfer
+    method: spirometry
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: percent_predicted
+    typical_ta: [respiratory]
+    synonyms: ["DLCO", "DLco", "diffusing capacity", "%pDLco", "transfer factor", "TLCO"]
+
+  - id: six_minute_walk_distance
+    label: "6-minute walk distance (6MWD)"
+    concept: exercise_capacity
+    method: field_exercise_test
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: metres
+    typical_ta: [respiratory, cardiovascular, rare_genetic]
+    synonyms: ["6MWD", "6MWT", "6 minute walk test", "six minute walk", "6-minute walk distance",
+               "six-minute walk distance", "6-min walk distance"]
+    patterns: ['\b6[- ]?min(ute)?[- ]walk\b', '\b6MW[DT]\b']
+
+  - id: asthma_control_questionnaire
+    label: "Asthma Control Questionnaire (ACQ)"
+    concept: asthma_control
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 6]
+    mcid: 0.5
+    typical_ta: [respiratory]
+    synonyms: ["ACQ", "ACQ-5", "ACQ-7", "Asthma Control Questionnaire"]
+
+  - id: asthma_quality_of_life_questionnaire
+    label: "Asthma Quality of Life Questionnaire (AQLQ)"
+    concept: respiratory_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    mcid: 0.5
+    typical_ta: [respiratory]
+    synonyms: ["AQLQ", "AQLQ(S)-12-SA", "Asthma Quality of Life Questionnaire"]
+
+  - id: st_georges_respiratory_questionnaire
+    label: "St George's Respiratory Questionnaire (SGRQ)"
+    concept: respiratory_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 100]
+    mcid: 4
+    typical_ta: [respiratory]
+    synonyms: ["SGRQ", "St George's Respiratory Questionnaire", "SGRQ-C"]
+
+  - id: living_with_pulmonary_fibrosis_questionnaire
+    label: "Living with Pulmonary Fibrosis (L-PF) questionnaire"
+    concept: respiratory_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [respiratory]
+    synonyms: ["L-PF", "Living with Pulmonary Fibrosis", "L-PF Symptoms", "L-PF Impacts", "R-Scale-PF"]
+
+  - id: disease_exacerbation
+    label: "Disease exacerbation"
+    concept: disease_exacerbation
+    method: clinical_event
+    domain: efficacy
+    event_polarity: harm
+    typical_ta: [respiratory, gastroenterology_hepatology, neurology]
+    synonyms: ["exacerbation", "flare", "attack", "annualized exacerbation rate", "AER",
+               "severe exacerbation", "moderate-to-severe exacerbation"]
+    patterns: ['\bexacerbations?\b', '\bflares?\b']
+
+  - id: oxygen_saturation
+    label: "Oxygen saturation (SpO2)"
+    concept: oxygenation
+    method: pulse_oximetry
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: percentage
+    typical_ta: [respiratory, anaesthesia_critical_care]
+    synonyms: ["SpO2", "oxygen saturation", "SaO2", "pulse oximetry"]
+
+  - id: lung_hrct_extent
+    label: "Quantitative lung HRCT extent"
+    concept: lung_fibrosis_extent
+    method: imaging_hrct
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: percentage
+    typical_ta: [respiratory]
+    synonyms: ["total disease extent", "TDE", "reticulovascular score", "RVS", "e-Lung", "quantitative HRCT"]
+
+  - id: epistaxis_severity_score
+    label: "Epistaxis Severity Score (ESS)"
+    concept: bleeding_severity
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [rare_genetic]
+    synonyms: ["ESS", "Epistaxis Severity Score", "NOSE HHT", "Nasal Outcome Score for Epistaxis in HHT"]
+
+  - id: organ_support_free_days
+    label: "Organ-support-free days"
+    concept: organ_support_free_days
+    method: clinical_event_count
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: days
+    typical_ta: [anaesthesia_critical_care]
+    synonyms: ["ventilator-free days", "vasopressor-free days", "ICU-free days", "organ support free days",
+               "days alive and free of"]
+
+  # =========================================================================
+  # METABOLIC AND ENDOCRINE
+  # =========================================================================
+  - id: hba1c
+    label: "Glycated haemoglobin (HbA1c)"
+    concept: glycaemic_control
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: percent_hba1c
+    typical_ta: [metabolic_endocrine]
+    synonyms: ["HbA1c", "HbA1C", "A1C", "glycated haemoglobin", "glycated hemoglobin",
+               "glycosylated haemoglobin", "haemoglobin A1c", "hemoglobin A1c", "glycohemoglobin"]
+    patterns: ['\bH?bA1c\b', '\bglyc(at|osylat)ed h(a)?emoglobin\b']
+    notes: >-
+      Reference-table fixture. Reported as NGSP % or IFCC mmol/mol; scales.yaml
+      links the two so both report into one comparison. "Achieved HbA1c < 7%" is
+      this measurement under responder_proportion with an absolute_threshold
+      reference -- not a separate measurement.
+
+  - id: fasting_plasma_glucose
+    label: "Fasting plasma glucose"
+    concept: glycaemic_control
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mg_per_dl
+    typical_ta: [metabolic_endocrine]
+    synonyms: ["FPG", "fasting plasma glucose", "fasting blood glucose", "FBG", "2-hour glucose"]
+
+  - id: continuous_glucose_time_in_range
+    label: "CGM time in range"
+    concept: glycaemic_control
+    method: continuous_glucose_monitoring
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: percent_of_time
+    typical_ta: [metabolic_endocrine]
+    synonyms: ["time in range", "TIR", "time above range", "TAR", "time below range", "TBR", "CGM"]
+
+  - id: c_peptide
+    label: "C-peptide"
+    concept: beta_cell_function
+    method: laboratory
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: ng_per_ml
+    typical_ta: [metabolic_endocrine]
+    synonyms: ["C-peptide", "MMTT C-peptide", "mixed meal tolerance test C-peptide", "C-peptide AUC"]
+
+  - id: body_weight
+    label: "Body weight"
+    concept: body_weight
+    method: anthropometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    direction_by_ta:
+      metabolic_endocrine: decrease_is_better
+      oncology: increase_is_better
+      rare_genetic: increase_is_better
+      obstetrics_gynaecology: not_stated
+    default_scale: kilograms
+    synonyms: ["body weight", "weight", "weight loss", "weight reduction", "percent change in body weight",
+               "body weight reduction"]
+    patterns: ['\bbody weight\b', '\bweight (loss|reduction|gain)\b']
+    notes: >-
+      The clearest case for direction_by_ta. Weight falls in an obesity trial and
+      rises in a cachexia or paediatric-growth trial; a single default would be
+      wrong for one of them. Where the TA does not resolve it, not_stated is the
+      honest answer.
+
+  - id: body_mass_index
+    label: "Body mass index (BMI)"
+    concept: body_composition
+    method: anthropometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    direction_by_ta: {metabolic_endocrine: decrease_is_better}
+    default_scale: kg_per_m2
+    synonyms: ["BMI", "body mass index"]
+
+  - id: waist_circumference
+    label: "Waist circumference"
+    concept: body_composition
+    method: anthropometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: centimetres
+    typical_ta: [metabolic_endocrine]
+    synonyms: ["waist circumference", "waist"]
+
+  - id: fat_free_mass
+    label: "Fat-free mass"
+    concept: body_composition
+    method: body_composition_analysis
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: percentage
+    synonyms: ["fat free mass", "% fat free mass", "lean body mass", "fat mass"]
+
+  - id: ldl_cholesterol
+    label: "LDL cholesterol"
+    concept: lipid_profile
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mmol_per_l
+    typical_ta: [metabolic_endocrine, cardiovascular]
+    synonyms: ["LDL-C", "LDL cholesterol", "low-density lipoprotein cholesterol"]
+
+  - id: non_hdl_cholesterol
+    label: "Non-HDL cholesterol"
+    concept: lipid_profile
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mmol_per_l
+    typical_ta: [metabolic_endocrine, cardiovascular]
+    synonyms: ["non-HDL cholesterol", "non-HDL-C", "fasting non-HDL cholesterol"]
+
+  - id: triglycerides
+    label: "Triglycerides"
+    concept: lipid_profile
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mmol_per_l
+    typical_ta: [metabolic_endocrine, cardiovascular]
+    synonyms: ["triglycerides", "TG", "fasting triglycerides"]
+
+  - id: hypoglycaemia
+    label: "Hypoglycaemia"
+    concept: hypoglycaemia
+    method: clinical_event
+    domain: safety
+    event_polarity: harm
+    typical_ta: [metabolic_endocrine]
+    synonyms: ["hypoglycemia", "hypoglycaemia", "severe hypoglycemia", "level 2 hypoglycemia",
+               "glucose < 54 mg/dL"]
+
+  - id: resting_metabolic_rate
+    label: "Resting metabolic rate"
+    concept: energy_expenditure
+    method: indirect_calorimetry
+    domain: pharmacodynamic
+    default_direction: neutral
+    default_scale: kcal_per_day
+    synonyms: ["resting metabolic rate", "RMR", "resting energy expenditure", "REE"]
+
+  # =========================================================================
+  # CARDIOVASCULAR
+  # =========================================================================
+  - id: systolic_blood_pressure
+    label: "Systolic blood pressure"
+    concept: blood_pressure
+    method: sphygmomanometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    direction_by_ta: {anaesthesia_critical_care: target_range}
+    default_scale: mmhg
+    typical_ta: [cardiovascular]
+    synonyms: ["SBP", "systolic blood pressure", "sitting systolic blood pressure", "resting systolic blood pressure"]
+
+  - id: diastolic_blood_pressure
+    label: "Diastolic blood pressure"
+    concept: blood_pressure
+    method: sphygmomanometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    direction_by_ta: {anaesthesia_critical_care: target_range}
+    default_scale: mmhg
+    typical_ta: [cardiovascular]
+    synonyms: ["DBP", "diastolic blood pressure"]
+
+  - id: nt_probnp
+    label: "NT-proBNP"
+    concept: cardiac_biomarker
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: pg_per_ml
+    typical_ta: [cardiovascular]
+    synonyms: ["NT-proBNP", "BNP", "N-terminal pro b-type natriuretic peptide"]
+
+  - id: left_ventricular_ejection_fraction
+    label: "Left ventricular ejection fraction (LVEF)"
+    concept: cardiac_function
+    method: echocardiography
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: percentage
+    typical_ta: [cardiovascular]
+    synonyms: ["LVEF", "ejection fraction", "left ventricular ejection fraction"]
+
+  - id: major_adverse_cardiovascular_event
+    label: "Major adverse cardiovascular event (MACE)"
+    concept: cardiovascular_event
+    method: adjudicated_composite_event
+    domain: efficacy
+    event_polarity: harm
+    composite: true
+    typical_ta: [cardiovascular]
+    synonyms: ["MACE", "major adverse cardiovascular events", "cardiovascular death, MI or stroke",
+               "composite vascular event", "3-point MACE"]
+
+  - id: heart_failure_hospitalisation
+    label: "Hospitalisation for heart failure"
+    concept: cardiovascular_event
+    method: clinical_event
+    domain: efficacy
+    event_polarity: harm
+    typical_ta: [cardiovascular]
+    synonyms: ["hospitalization for heart failure", "HHF", "heart failure hospitalization"]
+
+  - id: ecg_qtc
+    label: "QT interval, corrected (QTc)"
+    concept: cardiac_repolarisation
+    method: electrocardiography
+    domain: safety
+    default_direction: decrease_is_better
+    default_scale: milliseconds
+    synonyms: ["QTc", "QTcF", "QTcB", "QT interval corrected", "corrected QT interval"]
+    notes: "Safety domain: QTc prolongation is the harm, so a smaller value is the better result."
+
+  - id: heart_rate
+    label: "Heart rate"
+    concept: vital_sign
+    method: vital_signs
+    domain: safety
+    default_direction: target_range
+    default_scale: beats_per_minute
+    synonyms: ["heart rate", "pulse rate"]
+    notes: >-
+      "HR" is omitted deliberately (hazard ratio), and bradycardia/tachycardia live
+      on vital_signs_abnormality -- they are the safety events, not the measured
+      rate.
+
+  - id: coronary_ffr_ct
+    label: "CT-derived fractional flow reserve (FFRct)"
+    concept: coronary_physiology
+    method: imaging_ct
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: dimensionless
+    typical_ta: [cardiovascular]
+    synonyms: ["FFRCT", "FFRct", "fractional flow reserve derived from computed tomography"]
+
+  - id: atherosclerotic_plaque_burden
+    label: "Atherosclerotic plaque burden"
+    concept: plaque_burden
+    method: imaging_mri_or_ct
+    domain: efficacy
+    default_direction: decrease_is_better
+    typical_ta: [cardiovascular]
+    synonyms: ["intraplaque haemorrhage", "IPH volume", "fibrous cap thickness", "plaque volume", "atheroma volume"]
+
+  # =========================================================================
+  # OPHTHALMOLOGY
+  # =========================================================================
+  - id: best_corrected_visual_acuity
+    label: "Best-corrected visual acuity (BCVA)"
+    concept: visual_acuity
+    method: etdrs_chart
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: letters_etdrs
+    typical_ta: [ophthalmology]
+    synonyms: ["BCVA", "best-corrected visual acuity", "ETDRS letters", "visual acuity",
+               "Snellen equivalent", "gain of ETDRS letters", "loss of ETDRS letters"]
+    patterns: ['\bBCVA\b', '\bbest[- ]corrected visual acuity\b', '\bETDRS letters\b']
+    notes: >-
+      Reported in ETDRS letters (higher better) or logMAR (lower better). The
+      instrument is the same measurement; scales.yaml carries the polarity flip, so
+      do not split the term.
+
+  - id: central_subfield_thickness
+    label: "Central subfield thickness (OCT)"
+    concept: retinal_thickness
+    method: optical_coherence_tomography
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: micrometres
+    typical_ta: [ophthalmology]
+    synonyms: ["CST", "central subfield thickness", "central retinal thickness", "CRT", "OCT CST"]
+
+  - id: diabetic_retinopathy_severity_scale
+    label: "Diabetic Retinopathy Severity Scale (DRSS)"
+    concept: retinopathy_severity
+    method: fundus_photography_grading
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: steps_drss
+    typical_ta: [ophthalmology]
+    synonyms: ["DRSS", "Diabetic Retinopathy Severity Scale", "DRSS step improvement"]
+
+  - id: retinal_fluid
+    label: "Retinal fluid (intraretinal / subretinal)"
+    concept: retinal_fluid
+    method: optical_coherence_tomography
+    domain: efficacy
+    event_polarity: harm
+    default_direction: decrease_is_better
+    typical_ta: [ophthalmology]
+    synonyms: ["intraretinal fluid", "IRF", "subretinal fluid", "SRF", "retinal fluid",
+               "absence of fluid", "fluid at the foveal center", "diabetic macular edema", "DME",
+               "macular oedema", "macular edema"]
+
+  - id: proptosis
+    label: "Proptosis (exophthalmometry)"
+    concept: orbital_inflammation
+    method: exophthalmometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: millimetres
+    typical_ta: [ophthalmology, metabolic_endocrine]
+    synonyms: ["proptosis", "exophthalmos", "proptosis responder", "proptosis measurement"]
+
+  - id: clinical_activity_score_ted
+    label: "Clinical Activity Score (thyroid eye disease)"
+    concept: orbital_inflammation
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 7]
+    typical_ta: [ophthalmology, metabolic_endocrine]
+    synonyms: ["CAS", "Clinical Activity Score", "CAS of 0 or 1"]
+
+  - id: diplopia
+    label: "Diplopia"
+    concept: ocular_motility
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [ophthalmology]
+    synonyms: ["diplopia", "diplopia score", "Diplopia Questionnaire", "DQ", "ocular motility", "double vision"]
+
+  - id: intraocular_pressure
+    label: "Intraocular pressure (IOP)"
+    concept: intraocular_pressure
+    method: tonometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mmhg
+    typical_ta: [ophthalmology]
+    synonyms: ["IOP", "intraocular pressure"]
+
+  - id: ocular_itch_score
+    label: "Ocular itch score"
+    concept: ocular_allergy_symptoms
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 4]
+    typical_ta: [ophthalmology, immunology_inflammation]
+    synonyms: ["ocular itch", "ocular itching score", "eye itch"]
+
+  - id: ocular_redness_score
+    label: "Ocular redness score"
+    concept: ocular_allergy_symptoms
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 4]
+    typical_ta: [ophthalmology, immunology_inflammation]
+    synonyms: ["conjunctival redness", "ciliary redness", "episcleral redness", "total redness score",
+               "ocular hyperemia", "Ora Calibra Ocular Hyperemia Scale"]
+
+  - id: intravitreal_injection_burden
+    label: "Intravitreal injection burden"
+    concept: treatment_burden
+    method: clinical_event_count
+    domain: healthcare_utilisation
+    default_direction: decrease_is_better
+    default_scale: count
+    typical_ta: [ophthalmology]
+    synonyms: ["number of intravitreal injections", "IVT injections", "injection frequency",
+               "personalized treatment interval", "PTI"]
+    patterns: ['\bintravitreal\b[^.;]{0,12}\binjections?\b']
+
+  - id: nei_vfq_25
+    label: "NEI Visual Function Questionnaire-25 (NEI-VFQ-25)"
+    concept: vision_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    score_range: [0, 100]
+    typical_ta: [ophthalmology]
+    synonyms: ["NEI-VFQ-25", "NEI VFQ", "National Eye Institute Visual Function Questionnaire"]
+
+  - id: graves_orbitopathy_qol
+    label: "Graves' Orbitopathy Quality of Life (GO-QoL)"
+    concept: vision_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    typical_ta: [ophthalmology, metabolic_endocrine]
+    synonyms: ["GO-QoL", "GO-QOL", "Graves Ophthalmopathy Quality of Life"]
+
+  # =========================================================================
+  # DERMATOLOGY
+  # =========================================================================
+  - id: pasi
+    label: "Psoriasis Area and Severity Index (PASI)"
+    concept: psoriasis_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 72]
+    typical_ta: [dermatology]
+    synonyms: ["PASI", "Psoriasis Area and Severity Index", "PASI75", "PASI90", "PASI100", "PASI 75"]
+    patterns: ['\bPASI\s?\d{2,3}?\b']
+    notes: >-
+      PASI75/90/100 are this measurement under responder_proportion with a
+      threshold, not separate measurements. Sharing the id is what lets a query
+      find the trials that reported PASI as a mean change alongside those that
+      reported it as a responder rate.
+
+  - id: easi
+    label: "Eczema Area and Severity Index (EASI)"
+    concept: atopic_dermatitis_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 72]
+    typical_ta: [dermatology]
+    synonyms: ["EASI", "Eczema Area and Severity Index", "EASI-75", "EASI75", "EASI-90"]
+
+  - id: physicians_global_assessment_skin
+    label: "Physician's Global Assessment (skin)"
+    concept: skin_disease_global_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 4]
+    typical_ta: [dermatology]
+    synonyms: ["sPGA", "static Physician's Global Assessment", "IGA", "Investigator Global Assessment",
+               "PGA", "ssPGA", "Scalp static Physician's Global Assessment", "pp-PGA",
+               "Palmoplantar Psoriasis Physician Global Assessment", "PGA-F", "ppIGA"]
+    patterns: ['\b(s|ss|pp)?[PI]GA\b']
+
+  - id: body_surface_area_involved
+    label: "Body surface area involved"
+    concept: skin_disease_extent
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: percent_body_surface_area
+    typical_ta: [dermatology]
+    synonyms: ["BSA", "body surface area", "psoriatic lesion body surface area", "% BSA"]
+
+  - id: dlqi
+    label: "Dermatology Life Quality Index (DLQI)"
+    concept: skin_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 30]
+    mcid: 4
+    typical_ta: [dermatology]
+    synonyms: ["DLQI", "CDLQI", "Dermatology Life Quality Index", "Children's DLQI", "Scalpdex"]
+
+  - id: salt_score
+    label: "Severity of Alopecia Tool (SALT)"
+    concept: scalp_hair_loss
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 100]
+    typical_ta: [dermatology]
+    synonyms: ["SALT", "SALT score", "Severity of Alopecia Tool", "SALT20", "SALT10"]
+
+  - id: vasi
+    label: "Vitiligo Area Scoring Index (VASI)"
+    concept: vitiligo_extent
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [dermatology]
+    synonyms: ["VASI", "T-VASI", "F-VASI", "Vitiligo Area Scoring Index", "T-VASI75", "F-VASI75"]
+
+  - id: itch_numeric_rating_scale
+    label: "Itch numeric rating scale"
+    concept: pruritus_severity
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 10]
+    mcid: 4
+    typical_ta: [dermatology]
+    synonyms: ["Itch NRS", "WI-NRS", "worst itch numeric rating scale", "pruritus NRS", "itch severity"]
+
+  - id: skin_pain_numeric_rating_scale
+    label: "Skin pain numeric rating scale"
+    concept: skin_pain
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 10]
+    typical_ta: [dermatology]
+    synonyms: ["Skin Pain NRS", "skin pain score"]
+
+  - id: actinic_keratosis_lesion_count
+    label: "Actinic keratosis lesion count"
+    concept: skin_lesion_burden
+    method: lesion_count
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: count
+    typical_ta: [dermatology]
+    synonyms: ["AK reduction", "actinic keratosis", "Olsen grade", "lesion count"]
+
+  # =========================================================================
+  # RHEUMATOLOGY, MUSCULOSKELETAL, PAIN
+  # =========================================================================
+  - id: acr_response_composite
+    label: "ACR response (joint count + composite)"
+    concept: inflammatory_arthritis_activity
+    method: composite_index
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: percentage_of_participants
+    composite: true
+    typical_ta: [rheumatology]
+    synonyms: ["ACR20", "ACR50", "ACR70", "ACR response", "American College of Rheumatology response",
+               "joint count", "tender joint count", "swollen joint count", "ACR 20"]
+    patterns: ['\bACR\s?\d{2}\b', '\bACR response\b', '\b(tender|swollen) joint count\b']
+    notes: >-
+      The plan's reference-table fixture ("Joint count + composite"). ACR20 is a
+      >=20% improvement across a defined core set; the 20 is a Threshold on this
+      measurement, parsed separately, so ACR20/50/70 share one id and differ only in
+      threshold value. That is deliberate -- it makes "same measurement, different
+      threshold" a queryable relationship.
+
+  - id: das28
+    label: "DAS28"
+    concept: inflammatory_arthritis_activity
+    method: composite_index
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    composite: true
+    typical_ta: [rheumatology]
+    synonyms: ["DAS28", "DAS28-CRP", "DAS28-ESR", "Disease Activity Score 28"]
+
+  - id: asas_response
+    label: "ASAS response (axial spondyloarthritis)"
+    concept: axial_spondyloarthritis_activity
+    method: composite_index
+    domain: efficacy
+    default_direction: increase_is_better
+    composite: true
+    typical_ta: [rheumatology]
+    synonyms: ["ASAS20", "ASAS40", "ASAS response", "BASDAI", "ASDAS"]
+
+  - id: womac
+    label: "WOMAC osteoarthritis index"
+    concept: osteoarthritis_symptoms
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 96]
+    typical_ta: [musculoskeletal_pain]
+    synonyms: ["WOMAC", "Western Ontario McMaster Universities Arthritis Index",
+               "WOMAC pain", "WOMAC function"]
+
+  - id: pain_intensity_nrs
+    label: "Pain intensity (NRS / VAS)"
+    concept: pain_intensity
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 10]
+    mcid: 2
+    typical_ta: [musculoskeletal_pain, anaesthesia_critical_care]
+    synonyms: ["NPRS", "pain NRS", "numeric pain rating scale", "pain intensity", "VAS pain",
+               "low back pain intensity", "pain score", "absolute pain"]
+    patterns: ['\bN?PRS\b', '\bpain (intensity|severity|score)\b', '\bVAS\b']
+
+  - id: promis_pain_interference
+    label: "PROMIS Pain Interference"
+    concept: pain_interference
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: t_score
+    typical_ta: [musculoskeletal_pain]
+    synonyms: ["PROMIS-PI", "PROMIS Pain Interference", "PROMIS Pain Interference 6b"]
+    patterns: ['\bPROMIS\b[^.;]{0,20}\bpain interfer']
+
+  - id: promis_physical_function
+    label: "PROMIS Physical Function"
+    concept: physical_function
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: t_score
+    synonyms: ["PROMIS-PF", "PROMIS Physical Function"]
+
+  - id: opioid_consumption
+    label: "Opioid consumption"
+    concept: analgesic_consumption
+    method: medication_use
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mme
+    typical_ta: [anaesthesia_critical_care, musculoskeletal_pain]
+    synonyms: ["opioid consumption", "MME", "morphine milligram equivalents", "post-discharge opioid consumption"]
+
+  - id: rescue_medication_use
+    label: "Rescue medication use"
+    concept: rescue_medication
+    method: medication_use
+    domain: efficacy
+    event_polarity: harm
+    typical_ta: [metabolic_endocrine, respiratory, anaesthesia_critical_care]
+    synonyms: ["rescue medication", "time to initiation of rescue medication", "rescue therapy",
+               "need for rescue medication"]
+
+  - id: bone_mineral_density
+    label: "Bone mineral density"
+    concept: bone_density
+    method: dxa
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: z_score
+    typical_ta: [musculoskeletal_pain]
+    synonyms: ["BMD", "bone mineral density", "T-score (BMD)", "DXA"]
+
+  # =========================================================================
+  # NEUROLOGY
+  # =========================================================================
+  - id: nihss
+    label: "NIH Stroke Scale (NIHSS)"
+    concept: stroke_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 42]
+    typical_ta: [neurology]
+    synonyms: ["NIHSS", "National Institute of Health Stroke Scale", "NIH Stroke Scale"]
+
+  - id: modified_rankin_scale
+    label: "Modified Rankin Scale (mRS)"
+    concept: functional_disability
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 6]
+    typical_ta: [neurology]
+    synonyms: ["mRS", "modified Rankin Scale", "functional outcome", "favorable functional outcome",
+               "excellent functional outcome"]
+
+  - id: intracranial_haemorrhage
+    label: "Intracranial haemorrhage"
+    concept: bleeding_event
+    method: imaging_confirmed_event
+    domain: safety
+    event_polarity: harm
+    typical_ta: [neurology]
+    synonyms: ["symptomatic intracranial hemorrhage", "sICH", "intracranial haemorrhage", "ICH"]
+
+  - id: seizure_frequency
+    label: "Seizure frequency"
+    concept: seizure_burden
+    method: seizure_diary
+    domain: efficacy
+    event_polarity: harm
+    default_direction: decrease_is_better
+    default_scale: count_per_period
+    typical_ta: [neurology]
+    synonyms: ["seizure frequency", "number of clinical seizures", "seizure count", "50% responder rate",
+               "monthly seizure frequency"]
+
+  - id: edss
+    label: "Expanded Disability Status Scale (EDSS)"
+    concept: ms_disability
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 10]
+    typical_ta: [neurology]
+    synonyms: ["EDSS", "Expanded Disability Status Scale", "confirmed disability progression", "CDP"]
+
+  - id: timed_25_foot_walk
+    label: "Timed 25-Foot Walk (T25-FW)"
+    concept: ambulatory_function
+    method: timed_performance_test
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: seconds
+    typical_ta: [neurology]
+    synonyms: ["T25-FW", "Timed 25-Foot Walk", "timed walk"]
+    notes: "Faster is better, so the raw quantity is decrease_is_better -- the opposite polarity to 6MWD, which measures distance not time."
+
+  - id: cognitive_composite
+    label: "Cognitive test composite"
+    concept: cognitive_function
+    method: computerised_cognitive_battery
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: z_score
+    typical_ta: [neurology, psychiatry]
+    synonyms: ["Test My Brain", "Matrix Reasoning", "Verbal Paired Associates Memory",
+               "Multiracial Emotion Identification", "cognitive composite", "MCCB", "FACT-Cog",
+               "Dot Pattern Expectancy", "TOPX", "Translational Bandit Task", "TBT"]
+    notes: >-
+      "Digit Symbol Coding" was listed here in round one and again on
+      `digit_symbol_coding` when that term was added; `vocab validate` caught the
+      collision. It belongs to the specific subtest -- a composite is scored across
+      a battery, and an endpoint naming one subtest is measuring that subtest.
+
+  - id: migraine_days
+    label: "Monthly migraine days"
+    concept: headache_burden
+    method: headache_diary
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: count_per_period
+    typical_ta: [neurology]
+    synonyms: ["MMD", "monthly migraine days", "migraine days", "headache days"]
+
+  - id: resting_state_functional_connectivity
+    label: "Resting-state functional connectivity"
+    concept: brain_connectivity
+    method: functional_mri
+    domain: exploratory
+    default_direction: neutral
+    typical_ta: [psychiatry, neurology]
+    synonyms: ["resting-state functional connectivity", "rsFC", "functional connectivity", "fMRI connectivity"]
+
+  # =========================================================================
+  # PSYCHIATRY
+  # =========================================================================
+  - id: madrs
+    label: "Montgomery-Åsberg Depression Rating Scale (MADRS)"
+    concept: depression_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 60]
+    typical_ta: [psychiatry]
+    synonyms: ["MADRS", "Montgomery-Asberg Depression Rating Scale"]
+
+  - id: hamilton_depression_rating_scale
+    label: "Hamilton Depression Rating Scale (HAM-D)"
+    concept: depression_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 52]
+    typical_ta: [psychiatry]
+    synonyms: ["HAM-D", "HAMD", "HAM-D17", "Hamilton Depression Rating Scale", "HDRS"]
+
+  - id: hamilton_anxiety_rating_scale
+    label: "Hamilton Anxiety Rating Scale (HAM-A)"
+    concept: anxiety_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 56]
+    typical_ta: [psychiatry]
+    synonyms: ["HAM-A", "HAMA", "Hamilton Anxiety Rating Scale"]
+
+  - id: panss
+    label: "Positive and Negative Syndrome Scale (PANSS)"
+    concept: schizophrenia_symptom_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [30, 210]
+    typical_ta: [psychiatry]
+    synonyms: ["PANSS", "Positive and Negative Syndrome Scale"]
+
+  - id: bprs
+    label: "Brief Psychiatric Rating Scale (BPRS)"
+    concept: schizophrenia_symptom_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [psychiatry]
+    synonyms: ["BPRS", "Brief Psychiatric Rating Scale", "BPRS Global Score"]
+
+  - id: sans_saps
+    label: "SANS / SAPS"
+    concept: schizophrenia_symptom_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [psychiatry]
+    synonyms: ["SANS", "SAPS", "SANS/SAPS", "Scale for Assessment of Negative Symptoms",
+               "Scale for Assessment of Positive Symptoms"]
+
+  - id: clinical_global_impression_severity
+    label: "Clinical Global Impression - Severity (CGI-S)"
+    concept: global_clinical_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [1, 7]
+    typical_ta: [psychiatry]
+    synonyms: ["CGI-S", "Clinical Global Impression-Severity", "CGI Severity"]
+
+  - id: clinical_global_impression_improvement
+    label: "Clinical Global Impression - Improvement (CGI-I)"
+    concept: global_clinical_change
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [1, 7]
+    typical_ta: [psychiatry]
+    synonyms: ["CGI-I", "Clinical Global Impression-Improvement"]
+    notes: "Anchored at 4 = no change, 1 = very much improved, so a lower score is the better result."
+
+  - id: aberrant_behavior_checklist
+    label: "Aberrant Behavior Checklist (ABC)"
+    concept: behavioural_symptom_severity
+    method: caregiver_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [psychiatry]
+    synonyms: ["ABC-I", "Aberrant Behavior Checklist", "ABC Irritability", "ABC Social Withdrawal",
+               "Hyperactivity/Noncompliance Subscale", "Inappropriate Speech Subscale",
+               "Stereotypic Behavior Subscale"]
+
+  - id: adhd_rating_scale
+    label: "ADHD Rating Scale (ADHD-RS)"
+    concept: adhd_symptom_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [psychiatry]
+    synonyms: ["ADHD-RS-5", "ADHD Rating Scale", "ADHD-RS Total Score"]
+
+  - id: suicidal_ideation_behaviour
+    label: "Suicidal ideation and behaviour (C-SSRS)"
+    concept: suicidality
+    method: clinician_rated_instrument
+    domain: safety
+    event_polarity: harm
+    typical_ta: [psychiatry]
+    synonyms: ["C-SSRS", "Columbia-Suicide Severity Rating Scale", "suicidal ideation", "suicidal behavior"]
+
+  - id: extrapyramidal_symptom_scale
+    label: "Extrapyramidal symptom scales (AIMS / BARS / SAS)"
+    concept: extrapyramidal_symptoms
+    method: clinician_rated_instrument
+    domain: safety
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [psychiatry]
+    synonyms: ["AIMS", "Abnormal Involuntary Movement Scale", "BARS", "Barnes Akathisia Rating Scale",
+               "SAS", "Simpson Angus Scale", "MSAS", "Modified Simpson Angus Scale"]
+
+  - id: global_functioning_scale
+    label: "Global Functioning scales (role / social)"
+    concept: psychosocial_functioning
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: score_points
+    typical_ta: [psychiatry]
+    synonyms: ["Global Functioning - Role Scale", "Global Functioning - Social Scale", "GFS",
+               "GAF", "Global Assessment of Functioning"]
+    notes: >-
+      The "GFR" abbreviation for Global Functioning - Role is deliberately NOT a
+      synonym: it collides with glomerular filtration rate, and an abbreviation that
+      resolves to two measurements in different specialties is worse than no
+      abbreviation at all.
+
+  - id: sleep_quality_index
+    label: "Pittsburgh Sleep Quality Index (PSQI)"
+    concept: sleep_quality
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 21]
+    synonyms: ["PSQI", "Pittsburgh Sleep Quality Index", "sleep quality", "sleep"]
+
+  - id: fatigue_severity
+    label: "Fatigue severity"
+    concept: fatigue
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    synonyms: ["Fatigue Severity Scale", "FSS", "FACIT-Fatigue", "fatigue severity"]
+
+  # =========================================================================
+  # SUBSTANCE USE
+  # =========================================================================
+  - id: abstinence
+    label: "Abstinence"
+    concept: substance_abstinence
+    method: self_report_plus_biochemical_verification
+    domain: efficacy
+    event_polarity: benefit
+    default_direction: increase_is_better
+    typical_ta: [substance_use]
+    synonyms: ["point prevalence abstinence", "PPA", "continuous abstinence rate", "CAR",
+               "7-day PPA", "30-day PPA", "abstinence rate", "smoking abstinence"]
+
+  - id: treatment_retention
+    label: "Retention in treatment"
+    concept: treatment_retention
+    method: clinical_event
+    domain: efficacy
+    event_polarity: benefit
+    default_direction: increase_is_better
+    typical_ta: [substance_use, infectious_disease]
+    synonyms: ["retention in treatment", "retention in OUD treatment", "retention in care", "treatment retention"]
+    notes: >-
+      One of the few benefit-polarity events in the corpus. Under time_to_event it
+      gives shorter_is_better only for time-TO-retention, which is not how it is
+      used; in practice it appears as an incidence_proportion, where benefit
+      polarity correctly yields increase_is_better.
+
+  # =========================================================================
+  # INFECTIOUS DISEASE AND VACCINES
+  # =========================================================================
+  - id: hiv_rna_viral_load
+    label: "HIV-1 RNA viral load"
+    concept: viral_load
+    method: laboratory_pcr
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: copies_per_ml
+    typical_ta: [infectious_disease]
+    synonyms: ["HIV-1 RNA", "viral load", "HIV RNA", "FDA Snapshot", "virologic suppression",
+               "HIV-1 RNA < 50 copies/mL"]
+
+  - id: cd4_count
+    label: "CD4 cell count"
+    concept: immune_reconstitution
+    method: flow_cytometry
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: cells_per_ul
+    typical_ta: [infectious_disease]
+    synonyms: ["CD4 count", "CD4+ T cell count", "CD4 cell count"]
+
+  - id: hbv_dna
+    label: "Hepatitis B virus DNA"
+    concept: viral_load
+    method: laboratory_pcr
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: copies_per_ml
+    typical_ta: [infectious_disease]
+    synonyms: ["HBV DNA", "hepatitis B virus DNA", "HBsAg loss", "functional cure"]
+
+  - id: pathogen_clearance
+    label: "Microbiological clearance"
+    concept: pathogen_clearance
+    method: culture_or_pcr
+    domain: efficacy
+    event_polarity: benefit
+    default_direction: increase_is_better
+    typical_ta: [infectious_disease]
+    synonyms: ["microbiological cure", "negative PCR", "culture conversion", "pathogen clearance",
+               "sputum culture conversion"]
+
+  - id: infection_event
+    label: "Infection event"
+    concept: infection_event
+    method: clinical_event
+    domain: efficacy
+    event_polarity: harm
+    typical_ta: [infectious_disease]
+    synonyms: ["confirmed infection", "symptomatic infection", "PCR-confirmed", "breakthrough infection",
+               "EVD", "vaccine efficacy"]
+
+  - id: antibody_titre
+    label: "Antibody titre"
+    concept: humoral_immune_response
+    method: serology
+    domain: immunogenicity
+    default_direction: increase_is_better
+    default_scale: geometric_mean_titre
+    typical_ta: [vaccines, infectious_disease]
+    synonyms: ["rSBA", "hSBA", "antibody titer", "antibody titre", "GMT", "geometric mean titer",
+               "seroprotection", "seroconversion", "4-fold increase", "GMC"]
+    patterns: ['\b(r|h)SBA\b', '\bantibody tit(er|re)s?\b', '\bGM[TC]\b', '\bserocon\w+\b', '\bseroprotect\w+\b']
+
+  # =========================================================================
+  # HAEMATOLOGY (NON-MALIGNANT)
+  # =========================================================================
+  - id: haemoglobin
+    label: "Haemoglobin"
+    concept: haemoglobin
+    method: laboratory
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: g_per_dl
+    typical_ta: [haematology]
+    synonyms: ["hemoglobin", "haemoglobin", "Hb", "Hgb"]
+
+  - id: transfusion_burden
+    label: "Transfusion burden / transfusion independence"
+    concept: transfusion_dependence
+    method: clinical_event_count
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: count
+    typical_ta: [haematology, oncology]
+    synonyms: ["RBC-TI", "transfusion independence", "red blood cell unit equivalents", "RUE",
+               "transfusion burden", "RBC transfusions"]
+
+  - id: annualised_bleeding_rate
+    label: "Annualised bleeding rate (ABR)"
+    concept: bleeding_event
+    method: bleed_diary
+    domain: efficacy
+    event_polarity: harm
+    default_direction: decrease_is_better
+    default_scale: events_per_year
+    typical_ta: [haematology]
+    synonyms: ["ABR", "annualized bleeding rate", "AJBR", "annualized joint bleeding rate"]
+
+  - id: vaso_occlusive_crisis
+    label: "Vaso-occlusive crisis"
+    concept: sickle_cell_crisis
+    method: clinical_event
+    domain: efficacy
+    event_polarity: harm
+    typical_ta: [haematology]
+    synonyms: ["VOC", "vaso-occlusive crisis", "vaso-occlusive event", "VOE", "pain crisis"]
+
+  - id: platelet_count
+    label: "Platelet count"
+    concept: platelet_count
+    method: laboratory
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: cells_per_ul
+    typical_ta: [haematology]
+    synonyms: ["platelet count", "platelets", "PLT"]
+
+  # =========================================================================
+  # RENAL AND HEPATIC
+  # =========================================================================
+  - id: egfr
+    label: "Estimated glomerular filtration rate (eGFR)"
+    concept: kidney_function
+    method: laboratory_estimated
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: dimensionless
+    typical_ta: [nephrology_urology]
+    synonyms: ["eGFR", "estimated glomerular filtration rate", "GFR", "eGFR slope"]
+
+  - id: albuminuria
+    label: "Albuminuria (UACR)"
+    concept: kidney_damage
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: ratio
+    typical_ta: [nephrology_urology]
+    synonyms: ["UACR", "urine albumin-to-creatinine ratio", "proteinuria", "albuminuria"]
+
+  - id: acute_kidney_injury
+    label: "Acute kidney injury"
+    concept: kidney_injury_event
+    method: clinical_event
+    domain: safety
+    event_polarity: harm
+    typical_ta: [nephrology_urology, anaesthesia_critical_care]
+    synonyms: ["acute kidney injury", "AKI", "renal failure"]
+
+  - id: liver_stiffness
+    label: "Liver stiffness"
+    concept: liver_fibrosis
+    method: elastography
+    domain: efficacy
+    default_direction: decrease_is_better
+    typical_ta: [gastroenterology_hepatology]
+    synonyms: ["VCTE-LSM", "liver stiffness measurement", "FibroScan", "magnetic resonance elastography", "MRE"]
+
+  - id: elf_score
+    label: "Enhanced Liver Fibrosis (ELF) score"
+    concept: liver_fibrosis
+    method: laboratory_composite
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [gastroenterology_hepatology]
+    synonyms: ["ELF score", "Enhanced Liver Fibrosis"]
+
+  - id: liver_enzymes
+    label: "Liver enzymes (ALT / AST)"
+    concept: hepatic_injury
+    method: laboratory
+    domain: safety
+    default_direction: decrease_is_better
+    default_scale: units_per_l
+    synonyms: ["ALT", "AST", "alanine aminotransferase", "aspartate aminotransferase", "transaminases", "liver function tests"]
+
+  - id: fluorescein_angiography_findings
+    label: "Fluorescein angiography findings"
+    concept: retinal_perfusion
+    method: fluorescein_angiography
+    domain: efficacy
+    default_direction: decrease_is_better
+    typical_ta: [ophthalmology]
+    synonyms: ["fluorescein angiography", "FA", "foveal avascular zone", "FAZ area", "macular leakage",
+               "retinal non-perfusion", "leakage on FA"]
+
+  - id: c_reactive_protein
+    label: "C-reactive protein (CRP)"
+    concept: systemic_inflammation
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mg_per_dl
+    synonyms: ["CRP", "hs-CRP", "high-sensitivity CRP", "C-reactive protein", "hsCRP"]
+    patterns: ['\bhs-?CRP\b', '\bC-reactive protein\b']
+
+  - id: nutritional_status
+    label: "Nutritional status"
+    concept: nutritional_status
+    method: composite_assessment
+    domain: efficacy
+    default_direction: increase_is_better
+    synonyms: ["nutritional status", "anthropometry", "biochemical assessment of nutrition",
+               "malnutrition", "nutritional assessment"]
+    notes: >-
+      Assessed by anthropometric, biochemical, or dietary measures that the registry
+      text rarely distinguishes. Deliberately one term at concept grain -- splitting
+      it would create instrument entries no trial actually names.
+
+  - id: who_functional_class
+    label: "WHO functional class"
+    concept: functional_class
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [1, 4]
+    typical_ta: [cardiovascular, respiratory]
+    synonyms: ["WHO functional class", "WHO FC", "NYHA class", "New York Heart Association class",
+               "functional class"]
+    notes: "Class I is least impaired, so the raw quantity is decrease_is_better."
+
+  # =========================================================================
+  # SAFETY (cross-cutting)
+  # =========================================================================
+  - id: adverse_event
+    label: "Adverse event"
+    concept: adverse_event
+    method: safety_reporting
+    domain: safety
+    event_polarity: harm
+    synonyms: ["adverse event", "AE", "TEAE", "treatment-emergent adverse event", "adverse events",
+               "AESI", "adverse event of special interest", "treatment emergent adverse event",
+               "severity of TEAEs", "AE/ADR", "adverse drug reaction"]
+    patterns: ['\b(TE)?AEs?\b', '\badverse (event|reaction|experience)s?\b', '\bAESIs?\b', '\bsafety and tolerability\b']
+    notes: >-
+      The single most common measurement in a registry-wide sample. Under
+      incidence_proportion it is "number of participants with a TEAE"; under
+      event_count, "number of TEAEs"; under time_to_event, "time to first AESI" --
+      three forms of one measurement, and a clean demonstration of the
+      SAME_MEASUREMENT_DIFFERENT_FORM edge outside efficacy.
+
+  - id: serious_adverse_event
+    label: "Serious adverse event"
+    concept: adverse_event
+    method: safety_reporting
+    domain: safety
+    event_polarity: harm
+    synonyms: ["SAE", "serious adverse event", "TESAE", "treatment-emergent serious adverse event", "TE-SAE"]
+    patterns: ['\b(TE)?SAEs?\b', '\bserious adverse events?\b']
+
+  - id: adverse_event_leading_to_discontinuation
+    label: "Adverse event leading to discontinuation or dose modification"
+    concept: adverse_event
+    method: safety_reporting
+    domain: safety
+    event_polarity: harm
+    synonyms: ["AEs leading to discontinuation", "discontinuation due to AE",
+               "AEs leading to dose modification", "dose reduction due to AE"]
+
+  - id: laboratory_abnormality
+    label: "Laboratory abnormality"
+    concept: laboratory_safety
+    method: laboratory
+    domain: safety
+    event_polarity: harm
+    synonyms: ["laboratory abnormality", "clinically significant laboratory change", "hematology and clinical chemistry",
+               "shift from normal to abnormal", "laboratory tests"]
+
+  - id: vital_signs_abnormality
+    label: "Vital signs abnormality"
+    concept: vital_sign
+    method: vital_signs
+    domain: safety
+    event_polarity: harm
+    synonyms: ["vital signs", "changes in vital signs", "hypotension", "hypertensive event",
+               "bradycardia", "tachycardia"]
+
+  - id: ecg_abnormality
+    label: "ECG abnormality"
+    concept: cardiac_repolarisation
+    method: electrocardiography
+    domain: safety
+    event_polarity: harm
+    synonyms: ["12-lead ECG", "electrocardiogram", "ECG abnormality", "Holter monitoring"]
+
+  - id: injection_or_infusion_reaction
+    label: "Injection- or infusion-related reaction"
+    concept: adverse_event
+    method: safety_reporting
+    domain: safety
+    event_polarity: harm
+    synonyms: ["injection site reaction", "infusion-related reaction", "IRR", "injection site pain"]
+
+  - id: treatment_discontinuation
+    label: "Treatment discontinuation"
+    concept: treatment_discontinuation
+    method: clinical_event
+    domain: safety
+    event_polarity: harm
+    synonyms: ["discontinuation of study treatment", "treatment discontinuation", "withdrawal from study",
+               "study drug discontinuation"]
+
+  # =========================================================================
+  # PHARMACOKINETICS
+  # =========================================================================
+  - id: pk_cmax
+    label: "Maximum observed concentration (Cmax)"
+    concept: drug_exposure
+    method: bioanalytical_assay
+    domain: pharmacokinetic
+    default_direction: neutral
+    default_scale: ng_per_ml
+    synonyms: ["Cmax", "C max", "maximum observed plasma concentration", "peak concentration", "Cmax,ss"]
+    patterns: ['\bC\s?max\b']
+
+  - id: pk_tmax
+    label: "Time to maximum concentration (Tmax)"
+    concept: drug_exposure
+    method: bioanalytical_assay
+    domain: pharmacokinetic
+    default_direction: neutral
+    default_scale: hours
+    synonyms: ["Tmax", "T max", "time to reach maximum observed plasma concentration"]
+    patterns: ['\bT\s?max\b']
+
+  - id: pk_auc
+    label: "Area under the concentration-time curve (AUC)"
+    concept: drug_exposure
+    method: bioanalytical_assay
+    domain: pharmacokinetic
+    default_direction: neutral
+    default_scale: ng_h_per_ml
+    synonyms: ["AUC", "AUC0-t", "AUC0-inf", "AUC0-last", "AUC0-24", "area under the plasma concentration-time curve"]
+    patterns: ['\bAUC\s?[0-9]*[-,]?\w*\b']
+
+  - id: pk_ctrough
+    label: "Trough concentration (Ctrough)"
+    concept: drug_exposure
+    method: bioanalytical_assay
+    domain: pharmacokinetic
+    default_direction: neutral
+    default_scale: ng_per_ml
+    synonyms: ["Ctrough", "C trough", "trough concentration", "Cmin", "predose concentration"]
+    patterns: ['\bC\s?(trough|min)\b', '\btrough concentrations?\b']
+
+  - id: pk_half_life
+    label: "Elimination half-life (t½)"
+    concept: drug_disposition
+    method: bioanalytical_assay
+    domain: pharmacokinetic
+    default_direction: neutral
+    default_scale: hours
+    synonyms: ["t1/2", "T1/2", "half-life", "elimination half-life", "terminal half-life"]
+    patterns: ['\bt\s?1/2\b', '\bhalf[- ]life\b']
+
+  - id: pk_clearance
+    label: "Clearance (CL)"
+    concept: drug_disposition
+    method: bioanalytical_assay
+    domain: pharmacokinetic
+    default_direction: neutral
+    default_scale: litres_per_hour
+    synonyms: ["CL", "clearance", "CL/F", "apparent clearance"]
+
+  - id: pk_volume_of_distribution
+    label: "Volume of distribution (Vd)"
+    concept: drug_disposition
+    method: bioanalytical_assay
+    domain: pharmacokinetic
+    default_direction: neutral
+    default_scale: litres
+    synonyms: ["Vd", "Vz", "Vz/F", "volume of distribution"]
+
+  - id: drug_concentration
+    label: "Drug concentration"
+    concept: drug_exposure
+    method: bioanalytical_assay
+    domain: pharmacokinetic
+    default_direction: neutral
+    default_scale: ng_per_ml
+    synonyms: ["plasma concentration", "serum concentration", "serum drug concentration",
+               "concentration of total", "drug levels"]
+    patterns: ['\b(plasma|serum|blood|urine)\b[^.;]{0,30}\bconcentrations?\b']
+    notes: >-
+      Use for a plain concentration measurement where no named PK parameter is
+      given. The named parameters above are kept as separate measurements rather
+      than as forms of this one, because Cmax and AUC are distinct quantities a
+      pharmacologist would never merge -- and because `concept: drug_exposure` still
+      groups them for any query that wants them together.
+
+  # =========================================================================
+  # IMMUNOGENICITY
+  # =========================================================================
+  - id: anti_drug_antibody
+    label: "Anti-drug antibody (ADA)"
+    concept: anti_drug_immunogenicity
+    method: immunoassay
+    domain: immunogenicity
+    event_polarity: harm
+    default_direction: decrease_is_better
+    synonyms: ["ADA", "anti-drug antibody", "antidrug antibodies", "immunogenicity",
+               "magnitude of ADA", "ADA titer", "occurrence of ADA"]
+    patterns: ['\bADAs?\b', '\banti[- ]?drug antibod\w+\b']
+
+  - id: neutralising_antibody
+    label: "Neutralising antibody (NAb)"
+    concept: anti_drug_immunogenicity
+    method: immunoassay
+    domain: immunogenicity
+    event_polarity: harm
+    default_direction: decrease_is_better
+    synonyms: ["NAb", "neutralizing antibody", "neutralising antibody", "NAbs"]
+
+  # =========================================================================
+  # PATIENT-REPORTED / QUALITY OF LIFE (cross-cutting)
+  # =========================================================================
+  - id: eortc_qlq_c30
+    label: "EORTC QLQ-C30"
+    concept: health_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    score_range: [0, 100]
+    typical_ta: [oncology]
+    synonyms: ["EORTC QLQ-C30", "QLQ-C30", "Quality of life questionnaire - Core 30",
+               "EORTC QLQ-OV28", "EORTC QLQ-LC13", "global health status"]
+    notes: >-
+      Functional and global-health scales are increase_is_better; symptom scales
+      (and the LC13 / OV28 modules) are decrease_is_better. The subscale is not in
+      the `measure` string often enough to split the term, so the default is set to
+      the global-health reading and disagreement should be resolved from the
+      `description` cues in directions.yaml.
+
+  - id: eq5d
+    label: "EQ-5D"
+    concept: health_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: dimensionless
+    synonyms: ["EQ-5D", "EQ-5D-5L", "EQ5D5L", "EQ-VAS", "EuroQol", "utility score"]
+
+  - id: sf36
+    label: "SF-36 / SF-12"
+    concept: health_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    synonyms: ["SF-36", "SF-12", "Short Form 36", "physical component summary", "mental component summary"]
+
+  - id: fact_g
+    label: "FACT-G / FACT subscales"
+    concept: health_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    typical_ta: [oncology]
+    synonyms: ["FACT-G", "FACT", "Functional Assessment of Cancer Therapy"]
+
+  - id: iwqol_lite
+    label: "Impact of Weight on Quality of Life (IWQOL-Lite)"
+    concept: health_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    typical_ta: [metabolic_endocrine]
+    synonyms: ["IWQOL-Lite", "IWQOL-Lite-CT", "Impact of Weight on Quality of Life"]
+
+  - id: patient_global_impression
+    label: "Patient Global Impression (PGIS / PGIC)"
+    concept: global_clinical_change
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    synonyms: ["PGIS", "PGIC", "Patient Global Impression of Severity",
+               "Patient Global Impression of Change", "Global Rate of Change", "GRoC"]
+
+  - id: health_related_quality_of_life_unspecified
+    label: "Health-related quality of life (instrument unspecified)"
+    concept: health_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    synonyms: ["quality of life", "QoL", "HRQoL", "health-related quality of life", "quality of life assessment"]
+    notes: >-
+      A deliberate catch-all for the very common bare "Quality of life assessment".
+      Conforming to it is honest -- the concept is known, the instrument is not --
+      and it keeps those rows out of the review queue while remaining easy to filter
+      out of any analysis that needs a named instrument.
+
+  # =========================================================================
+  # HEALTHCARE UTILISATION
+  # =========================================================================
+  - id: hospitalisation
+    label: "Hospitalisation"
+    concept: hospitalisation
+    method: clinical_event
+    domain: healthcare_utilisation
+    event_polarity: harm
+    synonyms: ["hospitalization", "hospitalisation", "rate of respiratory hospitalizations",
+               "readmission", "re-hospitalization", "admission"]
+
+  - id: length_of_stay
+    label: "Length of stay"
+    concept: length_of_stay
+    method: clinical_event
+    domain: healthcare_utilisation
+    default_direction: decrease_is_better
+    default_scale: days
+    synonyms: ["length of stay", "LOS", "ICU length of stay", "hospital stay", "duration of hospitalization"]
+
+  # =========================================================================
+  # OBSTETRICS
+  # =========================================================================
+  - id: perinatal_composite_outcome
+    label: "Perinatal composite outcome"
+    concept: perinatal_outcome
+    method: adjudicated_composite_event
+    domain: efficacy
+    event_polarity: harm
+    composite: true
+    typical_ta: [obstetrics_gynaecology]
+    synonyms: ["perinatal composite outcome", "adverse perinatal outcome", "neonatal composite"]
+
+  - id: gestational_age_at_delivery
+    label: "Gestational age at delivery"
+    concept: pregnancy_duration
+    method: clinical_measurement
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: weeks
+    typical_ta: [obstetrics_gynaecology]
+    synonyms: ["gestational age at delivery", "preterm birth", "time to delivery"]
+
+  # =========================================================================
+  # UNRESOLVED
+  # =========================================================================
+  - id: not_stated
+    label: "Measurement not determinable"
+    concept: not_stated
+    domain: exploratory
+    definition: >-
+      The text names no identifiable quantity or event. Reached only via the review
+      queue; the conforming pipeline must never assign it automatically, because
+      doing so would hide an unmatched row behind a conformed-looking one.
+    synonyms: []
+
+# The `concept` values used above, listed so `vocab validate` can check for typos
+# and so promoting concept to its own dimension later is a mechanical change.
+  # --- added in vocabulary round two ----------------------------------------
+  # Every entry below is here because it appeared repeatedly in the unbiased
+  # sample and matched nothing. Frequencies are sample occurrences (`measure`
+  # field, vocab_review_v2.csv).
+
+  # The standard neurocognitive battery. These five travel together in
+  # schizophrenia, MS and oncology-survivorship trials and were the single
+  # largest coherent cluster in the miss list (~25 sample occurrences between
+  # them), all falling to no measurement at all.
+  - id: hopkins_verbal_learning_test
+    label: "Hopkins Verbal Learning Test - Revised (HVLT-R)"
+    concept: cognitive_function
+    method: performance_test
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: score_points
+    synonyms: ["HVLT-R", "HVLT", "Hopkins Verbal Learning Test", "Hopkins Verbal Learning Test-Revised"]
+
+  - id: brief_visuospatial_memory_test
+    label: "Brief Visuospatial Memory Test - Revised (BVMT-R)"
+    concept: cognitive_function
+    method: performance_test
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: score_points
+    synonyms: ["BVMT-R", "BVMT", "Brief Visuospatial Memory Test", "Brief Visuospatial Memory Test-Revised"]
+
+  - id: trail_making_test
+    label: "Trail Making Test (TMT)"
+    concept: cognitive_function
+    method: performance_test
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: seconds
+    synonyms: ["Trail Making Test", "TMT", "Trail Making Test A", "Trail Making Test B", "TMT-A", "TMT-B"]
+    notes: >-
+      Scored in seconds to completion, so decrease_is_better -- the opposite of
+      every other instrument in this battery. Worth its own entry rather than
+      folding into cognitive_composite for exactly that reason.
+
+  - id: controlled_oral_word_association_test
+    label: "Controlled Oral Word Association Test (COWAT)"
+    concept: cognitive_function
+    method: performance_test
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: count
+    synonyms: ["COWAT", "Controlled Oral Word Association Test", "verbal fluency test"]
+
+  - id: digit_symbol_coding
+    label: "Digit Symbol Coding / Symbol Digit Modalities Test"
+    concept: cognitive_function
+    method: performance_test
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: score_points
+    synonyms: ["Digit Symbol Coding", "Digit Symbol Substitution Test", "DSST", "Symbol Digit Modalities Test", "SDMT"]
+
+  - id: clinician_administered_ptsd_scale
+    label: "Clinician-Administered PTSD Scale for DSM-5 (CAPS-5)"
+    concept: ptsd_symptom_severity
+    method: clinician_reported_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    synonyms: ["CAPS-5", "CAPS-5-R", "Clinician-Administered PTSD Scale", "Clinician Administered PTSD Scale for DSM-5"]
+
+  # Oncology surgical/pathological outcomes. "R0 resection rate" alone was 19
+  # sample occurrences and matched no measurement; the FORM matched (a responder
+  # proportion) but the thing being measured did not, which is precisely the case
+  # that belongs in the review queue rather than being silently dropped.
+  - id: surgical_margin_status
+    label: "Surgical margin status (R0 / R1 / R2 resection)"
+    concept: surgical_completeness
+    method: pathology
+    domain: efficacy
+    default_direction: increase_is_better
+    event_polarity: benefit
+    synonyms: ["R0 resection", "R0 resection rate", "margin-negative resection", "complete resection",
+               "resection margin status", "negative surgical margin", "R0"]
+    notes: >-
+      R0 (no residual tumour microscopically) is the good outcome, so direction is
+      stated for the R0 form; an R1/R2 endpoint inverts and should carry
+      event_polarity harm at conform time.
+
+  - id: pathological_response
+    label: "Pathological response to neoadjuvant therapy (pCR / MPR)"
+    concept: tumour_response
+    method: pathology
+    domain: efficacy
+    default_direction: increase_is_better
+    event_polarity: benefit
+    synonyms: ["pathological complete response", "pathologic complete response", "pCR",
+               "major pathological response", "major pathologic response", "MPR",
+               "pathological response", "tumour regression grade", "tumor regression grade", "TRG",
+               "pathological downstaging"]
+    notes: >-
+      Deliberately separate from tumour_burden_recist: RECIST is a radiological
+      assessment of a lesion, this is a histological assessment of a resected
+      specimen, and the two are different measurements of the same concept. The
+      neoadjuvant literature treats them as non-interchangeable.
+
+  - id: biochemical_marker_normalisation
+    label: "Normalisation of a disease biochemical marker"
+    concept: biochemical_disease_marker
+    method: laboratory
+    domain: efficacy
+    default_direction: increase_is_better
+    event_polarity: benefit
+    synonyms: ["normalization of biochemical markers", "normalisation of biochemical markers",
+               "biochemical normalization", "biochemical normalisation",
+               "normalization of biochemical markers of disease"]
+    notes: >-
+      The standard efficacy endpoint shape in inherited metabolic disease, where
+      the analyte differs per disorder (plasma acylcarnitine, urine acylglycine,
+      GAG excretion) but the endpoint is always "did the marker reach the normal
+      range". Kept at construct level for that reason -- enumerating every analyte
+      would be a vocabulary of one entry per trial.
+
+  - id: treatment_adherence
+    label: "Treatment adherence / compliance"
+    concept: treatment_adherence
+    method: derived
+    domain: healthcare_utilisation
+    default_direction: increase_is_better
+    default_scale: percentage
+    synonyms: ["adherence", "treatment adherence", "medication adherence", "compliance",
+               "protocol adherence", "adherence to treatment", "treatment compliance"]
+
+  - id: brain_volume_mri
+    label: "Brain volume on MRI"
+    concept: neurodegeneration
+    method: imaging
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: millilitres
+    synonyms: ["brain volume", "whole brain volume", "brain atrophy", "hippocampal volume",
+               "grey matter volume", "gray matter volume", "percent brain volume change"]
+    notes: >-
+      increase_is_better because the endpoint is nearly always volume LOSS being
+      slowed; an endpoint written as "brain atrophy" inverts, and the conforming
+      pipeline should take the direction from the form (change vs rate of decline)
+      rather than assuming.
+
+  - id: disease_progression_event
+    label: "Disease progression (event)"
+    concept: disease_progression
+    method: clinical_assessment
+    domain: efficacy
+    default_direction: decrease_is_better
+    event_polarity: harm
+    synonyms: ["disease progression", "progression of disease", "radiographic progression",
+               "clinical progression", "progressive disease"]
+    notes: >-
+      Bare "Disease progression" was 12 sample occurrences and matched nothing:
+      tumour_burden_recist covers the RECIST assessment, but progression is also an
+      endpoint in non-oncology settings (IPF, CKD, MS) where RECIST is meaningless.
+      This entry is the disease-agnostic event; where the text names RECIST,
+      longest-match hands it to tumour_burden_recist instead.
+
+concepts:
+  - adhd_symptom_severity
+  - adverse_event
+  - airflow_obstruction
+  - ambulatory_function
+  - analgesic_consumption
+  - anti_drug_immunogenicity
+  - anxiety_severity
+  - asthma_control
+  - atopic_dermatitis_severity
+  - axial_spondyloarthritis_activity
+  - behavioural_symptom_severity
+  - beta_cell_function
+  - biochemical_disease_marker
+  - bleeding_event
+  - bleeding_severity
+  - blood_pressure
+  - body_composition
+  - body_weight
+  - bone_density
+  - brain_connectivity
+  - cardiac_biomarker
+  - cardiac_function
+  - cardiac_repolarisation
+  - cardiovascular_event
+  - cognitive_function
+  - coronary_physiology
+  - depression_severity
+  - disease_exacerbation
+  - disease_progression
+  - disease_recurrence
+  - drug_disposition
+  - drug_exposure
+  - energy_expenditure
+  - exercise_capacity
+  - extrapyramidal_symptoms
+  - fatigue
+  - functional_class
+  - functional_disability
+  - gas_transfer
+  - global_clinical_change
+  - global_clinical_severity
+  - glycaemic_control
+  - haematologic_response
+  - haemoglobin
+  - headache_burden
+  - health_related_quality_of_life
+  - hepatic_injury
+  - hospitalisation
+  - humoral_immune_response
+  - hypoglycaemia
+  - immune_reconstitution
+  - infection_event
+  - inflammatory_arthritis_activity
+  - intraocular_pressure
+  - kidney_damage
+  - kidney_function
+  - kidney_injury_event
+  - laboratory_safety
+  - length_of_stay
+  - lipid_profile
+  - liver_fibrosis
+  - lung_fibrosis_extent
+  - lung_volume
+  - ms_disability
+  - neurodegeneration
+  - not_stated
+  - nutritional_status
+  - ocular_allergy_symptoms
+  - ocular_motility
+  - orbital_inflammation
+  - organ_support_free_days
+  - osteoarthritis_symptoms
+  - oxygenation
+  - pain_intensity
+  - pain_interference
+  - pathogen_clearance
+  - perinatal_outcome
+  - physical_function
+  - plaque_burden
+  - platelet_count
+  - pregnancy_duration
+  - pruritus_severity
+  - psoriasis_severity
+  - psychosocial_functioning
+  - ptsd_symptom_severity
+  - rescue_medication
+  - residual_disease
+  - respiratory_quality_of_life
+  - retinal_fluid
+  - retinal_perfusion
+  - retinal_thickness
+  - retinopathy_severity
+  - scalp_hair_loss
+  - schizophrenia_symptom_severity
+  - seizure_burden
+  - sickle_cell_crisis
+  - skin_disease_extent
+  - skin_disease_global_severity
+  - skin_lesion_burden
+  - skin_pain
+  - skin_related_quality_of_life
+  - sleep_quality
+  - stroke_severity
+  - substance_abstinence
+  - suicidality
+  - surgical_completeness
+  - survival
+  - systemic_inflammation
+  - transfusion_dependence
+  - treatment_adherence
+  - treatment_burden
+  - treatment_discontinuation
+  - treatment_failure
+  - treatment_retention
+  - tumour_burden
+  - tumour_marker
+  - tumour_response
+  - viral_load
+  - vision_related_quality_of_life
+  - visual_acuity
+  - vital_sign
+  - vitiligo_extent
+
+# Unlike the other dimensions, MEASUREMENT has no automatic fallback. A measure
+# string that matches nothing here must go to conformed.review_queue unmatched --
+# never to `not_stated`, which would hide an unconformed row behind a
+# conformed-looking one. `not_stated` is reachable only by an explicit reviewer
+# decision via `review resolve`.
+default_when_unmatched: null
+on_unmatched: review_queue
+
+coverage_on_sample:
+  corpus_rows: 13542
+  matched_from_measure_pct: 56.7
+  matched_from_measure_or_description_pct: 64.5
+  # The round-one figure was 77.8%, and the gap is NOT recall. It was synonyms
+  # matched as substrings: `ess` inside "assessment" and "progression" put 9.8%
+  # of all outcome rows under `epistaxis_severity_score`, `alt`/`ast` inside
+  # "Health"/"Past" under `liver_enzymes`, `fa` inside "Fatigue"/"Factor" under
+  # `fluorescein_angiography_findings`, `ree` inside "preeclampsia"/"-free"
+  # under `resting_metabolic_rate`. matching.yaml now specifies whole-token
+  # matching, and tests/test_vocab_loader.py pins each of those strings.
+  round_one_reported_pct: 77.8
+  round_one_figure_was_inflated_by: substring_synonym_matching
+  most_frequent_terms_pct:
+    adverse_event: 7.9
+    tumour_burden_recist: 7.9
+    vital_status: 6.7
+    health_related_quality_of_life_unspecified: 3.1
+    anti_drug_antibody: 2.0
+

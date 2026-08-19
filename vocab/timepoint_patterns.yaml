@@ -1,0 +1,515 @@
+# Dimension: TIMEPOINT -- a hybrid, per plan section 4.
+#
+# Not a lookup: AACT's `time_frame` is free text with an effectively unbounded
+# vocabulary (in the 500-study sample, all 500 of the most frequent values are
+# distinct wordings, with a long tail beyond them). So this file holds a small
+# closed set of *categories*, each with the regexes that recognise it and hints for
+# pulling structured values out. The conformed row keeps both:
+#
+#   timepoint_pattern -- an id from this file
+#   timepoint_raw     -- the source string, verbatim, always
+#
+# Categories are tried in `priority` order, lowest number first; first match wins.
+# The ordering carries real meaning, because most strings match several patterns.
+# Three calls worth naming explicitly:
+#
+#  * "Baseline THROUGH Week 52" vs "Baseline TO Week 52". Both name a baseline and
+#    a horizon. The first is read as cumulative_window (a collection period -- the
+#    safety signature), the second as baseline_to_timepoint (an assessment at a
+#    horizon -- the change-from-baseline signature). "through", "up to", "during",
+#    "throughout" signal accumulation; ",", "and", "to" signal two assessments.
+#    This is a linguistic convention, not a certainty, and the endpoint's form
+#    usually settles it -- so where the conformed form disagrees with the timepoint
+#    category, trust the form and record the conflict rather than overwrite either.
+#
+#  * A bare duration ("7 months", "6 weeks") is NOT a fixed timepoint. It means
+#    "over a period of", not "at". Reading "6 weeks" as "at Week 6" silently turns
+#    a collection window into an assessment visit. The discriminator is purely
+#    positional: a unit label before the number ("Week 6") is a timepoint, a number
+#    before the unit ("6 weeks") is a duration.
+#
+#  * A list separator (",", "and", ";") between two timepoints means repeated
+#    measures; a range connective ("to", "through", "-", "up to") between the same
+#    two means one window. "Day 1 and Day 21" is multi_timepoint; "Day 1 to Day 90"
+#    is cumulative_window.
+#
+# `extract` names the fields a step-3 parser should populate from the named capture
+# groups, so this file is the parser spec, not just a classifier.
+
+version: 1
+dimension: timepoint_pattern
+
+# Applied to `time_frame` before any pattern below is tried. Order matters.
+preprocessing:
+  # Round two additions (drop_uninformative_parentheticals, split_hyphenated_units)
+  # are listed first because the later steps assume they have run.
+  #
+  # drop_uninformative_parentheticals: remove a "(...)" group ONLY when the text
+  # outside it still contains a digit followed by a time unit. "Week 0 (Visit 1) to
+  # Week 52 (Visit 9)" becomes "Week 0 to Week 52"; "Baseline (Week 0) to (Week 76)"
+  # is left alone, because stripping it would delete the only horizons in the
+  # string. Unconditional stripping loses more than it gains.
+  - drop_uninformative_parentheticals
+  # split_hyphenated_units: "Week-12" -> "Week 12", "12-weeks" -> "12 weeks". The
+  # hyphen is a typographic choice in registry text, never semantic, but it defeats
+  # every `unit\s*value` pattern below.
+  - split_hyphenated_units
+  # normalise_ordinal_timepoints: "12th week" -> "week 12", "3rd month" -> "month
+  # 3". An ordinal before a unit names the Nth occasion, which is a fixed
+  # timepoint; merely stripping the suffix would leave "12 week", indistinguishable
+  # from the duration "12 weeks". Bare ordinals elsewhere ("1st dose") just lose
+  # the suffix.
+  - normalise_ordinal_timepoints
+  - collapse_whitespace           # runs of spaces/newlines -> single space
+  - normalise_unicode_dashes      # en/em dash and minus sign -> "-"
+  - normalise_plus_minus          # "+/-", "+ /-" -> "±"
+  - normalise_list_separators     # CJK "、" "，" and a stray "\\" -> ","
+
+  - strip_trailing_punctuation    # trailing "." / ";"
+  - expand_numeral_words          # see numeral_words below
+  - expand_abbreviations          # see abbreviations below
+  - match_case_insensitively      # patterns are written lowercase-friendly
+
+# Misspellings frequent enough in the sample to be worth normalising rather than
+# leaving to the review queue.
+common_typos:
+  basline: "baseline"
+  baseine: "baseline"
+  randomisaton: "randomisation"
+
+abbreviations:
+  upto: "up to"
+  thru: "through"
+  wk: "week"
+  wks: "weeks"
+  mo: "month"
+  mos: "months"
+  yr: "year"
+  yrs: "years"
+  hr: "hour"
+  hrs: "hours"
+  d: "day"
+  bl: "baseline"
+  eot: "end of treatment"
+  eos: "end of study"
+
+terms:
+
+  - id: event_driven
+    label: "Event-driven"
+    priority: 10
+    definition: >-
+      The analysis fires on accrual of a target number of events, not on the
+      calendar. Any duration given is an administrative estimate of when that will
+      happen, not the endpoint's timepoint.
+    extract: [estimated_max_value, estimated_max_unit]
+    patterns:
+      - 'event[- ]driven'
+      - 'until (the |a )?(required |target |pre-?specified )?(number of )?(events|deaths) (have )?(been )?(accrued|observed|reached|occurred)'
+      - 'until (death|disease progression|progression or death|the event of interest)'
+      - 'time from randomi[sz]ation.{0,40}assessed up to (approximately )?(?P<estimated_max_value>\d+(?:\.\d+)?)\s*(?P<estimated_max_unit>day|week|month|year)s?'
+      - 'then every \d+ \w+,? until (disease )?progression'
+    examples:
+      - "Event-driven, trial is estimated to be up to 4.5 years"
+      - "Time from randomisation assessed up to 49 months"
+      - "From baseline, then every 6 weeks, until disease progression or discontinuation from study"
+    notes: >-
+      Recognising this matters more than its frequency suggests: an event-driven
+      endpoint has no meaningful timepoint value at all, and forcing one produces a
+      fake comparison against trials that really did assess at a fixed visit.
+
+  - id: visit_window
+    label: "Fixed timepoint with an explicit window"
+    priority: 20
+    definition: >-
+      A single scheduled timepoint carrying a stated tolerance -- the protocol's
+      visit window.
+    extract: [value, unit, window_pm, anchor]
+    patterns:
+      - '(?P<value>\d+(?:\.\d+)?)\s*±\s*(?P<window_pm>\d+)\s*(?P<unit>day|week|month|year|hour)s?\b'
+      - '(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>day|week|month|year|hour)s?\b[^.;]{0,30}?\(\s*±\s*(?P<window_pm>\d+)'
+      - '(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>day|week|month|year|hour)s?\b[^.;]{0,45}?visit window of\s*±?\s*(?P<window_pm>\d+)'
+      - '(?P<unit>day|week|month|year)\s*(?P<value>\d+)\s*±\s*(?P<window_pm>\d+)'
+    examples:
+      - "90 ± 7 days"
+      - "90 days after randomization (±7 days)"
+      - "90 days after randomization, with an allowable visit window of ±14 days"
+    notes: >-
+      The tolerance must sit close to the value. A loose gap lets a long compound
+      string match on a "±" belonging to a different clause -- observed on
+      "From enrollment until after the 6th menstrual period but before the 7th, or
+      within 9 months from randomisation ...", which is not a visit window.
+
+  - id: anchored_offset
+    label: "Offset from a named anchor event"
+    priority: 45
+    definition: >-
+      A fixed elapsed time measured from an explicitly named anchor other than
+      study baseline -- randomisation, transplant, surgery, first dose, delivery,
+      last-patient-in.
+    extract: [value, value_end, unit, anchor]
+    # An offset only classifies here when it is the WHOLE timepoint. Where the
+    # string also carries accumulation phrasing, the anchored offset is merely the
+    # end of a collection window ("From baseline up to 7 days after last dose"),
+    # and cumulative_window is the right reading -- so these veto the patterns
+    # below and let matching continue down the priority order.
+    not_if_matches:
+      - '^\s*(?:throughout|during)\b'
+      - '\bfrom\b[^.;]{0,60}\b(?:to|through|until|up to)\b'
+      - '\bup to\b'
+      - '\bthroughout\b'
+    patterns:
+      - '(?P<value>\d+(?:\.\d+)?)\s*-\s*(?P<value_end>\d+)\s*(?P<unit>hour|day|week|month)s?\s+after\s+(?P<anchor>[a-z][a-z ]{2,30}?)\s*(initiation|administration|start|infusion)'
+      - '(?P<value>\d+(?:\.\d+)?)[- ]*(?P<unit>hour|day|week|month|year)s?\s*(follow(s|ing)?|after|post|from)\s*(the\s+)?(?P<anchor>randomi[sz]ation|transplant\w*|surgery|administration|infusion|dosing|first dose|last dose|delivery|discharge|admission|inclusion|index date|treatment|vaccination|the last participant[a-z ]*randomi[sz]ed)'
+      - '(?P<unit>month|week|day)s?\s*(?P<value>\d+)\s*-\s*(?P<value_end>\d+)\s*post[- ](?P<anchor>transplantation|operative|partum|infusion|randomi[sz]ation|vaccination)'
+      - '(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>hour|day|week|month|year)s?\s*(from|after|within)\s*the\s*(time|date|index date)\s*of\s*(?P<anchor>randomi[sz]ation|surgery|inclusion|delivery|enrol?lment)'
+      - 'after\s*(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>hour|day|week|month|year)s?\s*of\s*(?P<anchor>treatment|therapy|dosing|exposure)'
+      - '(?P<value>\d+(?:\.\d+)?)[- ]*(?P<unit>minute|hour|day|week|month|year)s?\s*(?P<anchor>post-?[a-z]{2,20})\b'
+      - '(?:^|\b)(?P<unit2>day|week|month|year)\s*(?P<value2>\d+)\s*,?\s*(?:after|post|following)[- ]*(?P<anchor2>[a-z][a-z-]{1,25})'
+      # Round two: the anchor list above is a closed enum and the corpus is not.
+      # "36 months from enrollment", "6 months after diagnosis of TA-TMA",
+      # "2 hours after injection", "9 months after first IMP administration" all
+      # fell to `unspecified` for want of an open-ended anchor. Placed LAST in this
+      # term so every named anchor above still wins and still populates the tidy
+      # `anchor` value; this one keeps whatever noun phrase it finds. Vetoed by
+      # `not_if_matches` on windows ("from X to Y"), which cumulative_window owns.
+      - '(?P<value8>\d+(?:\.\d+)?)\s*[- ]?(?P<unit8>minute|hour|day|week|month|year)s?\s+(?:after|from|post|following)\s+(?:the\s+)?(?P<anchor8>[a-z][a-z0-9 ,\-]{2,45}?)\s*$'
+      - '(?P<value9>\d+(?:\.\d+)?)\s*[- ]?(?P<unit9>minute|hour|day|week|month|year)s?\s+(?:after|from|post|following)\s+(?:the\s+)?(?P<anchor9>receiving|starting|initiation of|diagnosis of|first|last|study|treatment|surgery|injection|infusion|vaccination|enrol?ment|randomi[sz]ation)\b'
+    examples:
+      - "5 days following randomization"
+      - "Months 1-6 post-transplantation"
+      - "24-72 hours after probenecid initiation"
+      - "1 year from the time of randomization"
+      - "After 52 weeks of treatment."
+      - "2-years after the last participant has been randomised"
+      - "90 days post administration"
+      - "3-months post-randomization"
+      - "Day 180 after discharge"
+      - "At day 8, post-CAC"
+      - "Day 90 post-randomization"
+
+  - id: multi_timepoint
+    label: "Several fixed timepoints"
+    priority: 35
+    definition: >-
+      Two or more named assessment timepoints joined by list separators, with or
+      without a baseline. Repeated measures, not a single window.
+    extract: [values, unit, has_baseline]
+    patterns:
+      # "Week 2, Week 4, Week 8"  /  "Day 1 and Day 21"  /  "week 12, week 24"
+      - '(?:(?:end of\s+)?(?P<unit>week|month|day|year|visit|cycle|hour)s?\s*\d+[^,;&]{0,25}?(?:,|;|&|\band\b|\bvs\.?\b)\s*)+(?:end of\s+)?(?:week|month|day|year|visit|cycle|hour)s?\s*\d+'
+      # "Weeks 28, 36, and 48"  /  "Months 3, 6, 9 and 12"
+      - '(?P<unit>week|month|day|year|visit)s?\s*(?P<values>\d+(?:\s*(?:,|;|&|\band\b)\s*(?:and\s*)?\d+)+)'
+      # "3 Months, 6 Months, 12 Months"  /  "2 weeks, 6 weeks, 10 weeks"
+      - '(?:\d+\s*(?P<unit2>week|month|day|year)s?\s*(?:,|;|&|\band\b)\s*)+\d+\s*(?:week|month|day|year)s?'
+      # "0, 6 and 12 months"  /  "24, 48, 60, 72, and 96 weeks"
+      - '(?P<values2>\d+(?:\s*(?:,|;|\band\b)\s*(?:and\s*)?\d+)+)\s*(?P<unit3>week|month|day|year)s\b'
+      # Round two: "at 22 and 28 OLE weeks" -- a cohort or phase label sits between
+      # the last value and the unit.
+      - '(?P<values4>\d+(?:\s*(?:,|;|\band\b)\s*(?:and\s*)?\d+)+)\s+[a-z]{2,12}\s+(?P<unit4>week|month|day|year)s\b'
+      # "Before treatment,on day 3 of treatment,on day 7 of treatment"
+      - '(?:on\s+(?:day|week|month)\s*\d+[^,;]{0,30}[,;]\s*){1,}on\s+(?:day|week|month)\s*\d+'
+    examples:
+      - "Weeks 28, 36, and 48"
+      - "week 12, week 24"
+      - "Baseline, Months 3, 6, 9 and 12"
+      - "Baseline, Week 2, Week 4, Week 8"
+      - "3 Months, 6 Months, 12 Months, 18 Months, 24 Months"
+      - "Day 1 and Day 21"
+      - "Baseline, end of month 2, end of month 4, and end of month 6"
+      - "0, 6 and 12 months"
+      - "2 and 4 weeks"
+      - "Week16、Week24、Week52"
+      - "End of Period I (week 12) vs. End of Period 2 (week 24)"
+    notes: >-
+      Every pattern requires a list separator, never a range connective. That is
+      what keeps "Week 0 to Week 52" (one window) out of this category and in
+      baseline_to_timepoint / cumulative_window.
+
+  - id: baseline_to_timepoint
+    label: "Baseline plus a single assessment timepoint"
+    priority: 40
+    definition: >-
+      A baseline reference and exactly one post-baseline assessment -- the
+      change-from-baseline signature.
+    extract: [value, unit]
+    patterns:
+      # Round two: `through` and `up to` added to the connective set on the
+      # evidence in `connective_evidence` below -- they were routing to
+      # cumulative_window, and in the joined export they are change-from-baseline
+      # more often than not.
+      - '(?:^|\b)(?:from|at|between)?\s*baseline\s*(?:\((?:week 0|day 0|t0|day 1)\)|visit)?\s*(?:,|;|\band\b|\bto\b|\bthrough\b|\bup to\b|\buntil\b|->)\s*(?:at\s+)?(?:the\s+)?(?:end of[^,;]{0,40}?)?\(?(?P<unit>week|month|day|year|visit|cycle)\s*(?P<value>\d+(?:\.\d+)?)'
+      - '(?:^|\b)(?:from|at|between)?\s*baseline\s*(?:visit)?\s*(?:,|;|\band\b|\bto\b|\bthrough\b|\bup to\b|\buntil\b)\s*(?P<value2>\d+(?:\.\d+)?)\s*(?P<unit2>week|month|day|year)s?'
+      - '^\s*(?P<unit3>week|day)\s*0\s*(?:to|through|up to|and|,|-)\s*(?:week|day)?\s*(?P<value3>\d+(?:\.\d+)?)'
+      - '(?P<value4>\d+(?:\.\d+)?)[- ]*(?P<unit4>week|month|day|year)s?\s*(?:endpoint\s*)?from\s*baseline'
+      - 'change from baseline (?:to|at)\s*(?P<unit5>week|month|day|year)\s*(?P<value5>\d+(?:\.\d+)?)'
+      - 'from baseline to\s*(?P<value6>\d+(?:\.\d+)?)[- ]*(?P<unit6>week|month|day|year)s?\s*endpoint'
+      - 'baseline\s*(?:and|,)\s*end of treatment at\s*(?P<value7>\d+)\s*(?P<unit7>week|month|day)s?'
+    examples:
+      - "Baseline, Week 24"
+      - "Baseline to Week 52"
+      - "From baseline (week 0) to end of double-blinded treatment (week 26)"
+      - "Week 0 to Week 52"
+      - "24 weeks from Baseline"
+      - "Between baseline visit and week 21"
+      - "Baseline and end of treatment at 12 weeks."
+      - "At baseline and at Week 52."
+      - "From baseline (week 0) to (week 76)"
+    examples_round_two:
+      - "Baseline through Week 216"
+      - "Baseline up to Week 24"
+      - "Week 0 (Visit 1) to Week 52 (Visit 9)"
+    notes: >-
+      Requires a baseline token AND exactly one horizon. Where more than one horizon
+      follows the baseline ("Baseline, Months 3, 6, 9 and 12"), multi_timepoint wins
+      on priority. Round one sent "through"/"up to" to cumulative_window on a
+      linguistic argument (a window reads as cumulative, a point as a change); the
+      joined export says that argument is wrong -- see connective_evidence below.
+    connective_evidence:
+      # Measured on endpoint_rows.csv (1,000 joined outcome rows, round two). For
+      # each connective following a baseline token, the resolved FORM of the paired
+      # `measure`/`description` was counted as change-family
+      # (change_from_baseline, percent_change_from_baseline, ratio_to_baseline,
+      # shift_from_baseline) or cumulative-family (incidence_proportion,
+      # event_count, event_rate, time_to_event, responder_proportion).
+      #   connective   n    change   cumulative
+      #   "to"        104      60        18
+      #   "and"/","   109      63         9
+      #   "up to"      24      19         5
+      #   "through"    21       9         8
+      # Every connective is change-majority, so all four now match here. "up to"
+      # is decisive (79%); "through" is a coin flip (53%) and is genuinely
+      # ambiguous in the source data -- "Baseline through Week 52" appears against
+      # "Change from Baseline through Week 216" AND against "Annualized asthma
+      # exacerbation rate over 52 weeks" in the same corpus. The connective simply
+      # does not carry the distinction, so the timepoint layer stops pretending it
+      # does and `disambiguation` at the foot of this file hands the call to the
+      # form dimension, which does know.
+
+  - id: single_fixed
+    label: "Single fixed timepoint"
+    priority: 50
+    definition: >-
+      One named assessment timepoint -- a unit label followed by a number -- with no
+      baseline reference, no list, and no window.
+    extract: [value, unit]
+    patterns:
+      - '^\s*(?:at\s+)?(?P<unit>week|month|day|year|visit|cycle|hour|minute)\s*(?P<value>\d+(?:\.\d+)?)\s*(?:\([^)]*\))?\s*(?:of (?:the )?(?:current trial|double-?blind[\w ]*|open-?label[\w ]*|treatment[\w ]*|study[\w ]*))?\s*$'
+      - '^\s*at\s+(?P<value2>\d+(?:\.\d+)?)\s*(?P<unit2>minute|hour|week|month|day|year)s?\b'
+    examples:
+      - "Week 24"
+      - "Month 12"
+      - "At Week 52"
+      - "Day 90"
+      - "At 12 months"
+      - "Day 119 (fMRI 5)"
+      - "Week 6 of double-blind treatment period"
+    notes: >-
+      Deliberately does NOT match a bare "7 months" -- that is bare_duration. The
+      only number-first form accepted here is "At 12 months", where "at" makes the
+      timepoint reading explicit.
+
+  - id: bare_duration
+    label: "Bare duration, no anchor"
+    priority: 60
+    definition: >-
+      A duration with no anchor and no accumulation keyword -- "7 months",
+      "6 weeks", "24 months". Read as an observation period of that length starting
+      at study/treatment start, NOT as an assessment at that timepoint.
+    extract: [value, value_alt, unit, approximate]
+    patterns:
+      - '^\s*(?P<approximate>approximately|approx\.?|about|max\.?|maximum of|at least|up to)?\s*(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>minute|hour|day|week|month|year)s?\s*(?:total|treatment duration|of treatment|of follow[- ]?up|of therapy|of observation)?\s*$'
+      - '^\s*(?P<value2>\d+)\s*(?:or|to|-)\s*(?P<value_alt>\d+)\s*(?P<unit2>minute|hour|day|week|month|year)s?\s*$'
+    examples:
+      - "7 months"
+      - "6 weeks"
+      - "Approximately 36 months"
+      - "12 Weeks Treatment Duration"
+      - "21 or 28 days"
+      - "max. 50 months"
+    notes: >-
+      About a sixth of sampled time_frame occurrences once "Approximately N months"
+      forms are included. Kept separate from single_fixed precisely because the two
+      are near-identical in shape and opposite in meaning.
+
+  - id: cumulative_window
+    label: "Cumulative collection window"
+    priority: 70
+    definition: >-
+      Everything occurring across an interval is counted -- the signature of safety,
+      exposure, and event-count endpoints. Triggered by "up to", "through",
+      "throughout", "during", "over", "until", "within", or a range connective
+      between two labelled timepoints.
+    extract: [start_anchor, end_value, end_unit, approximate]
+    patterns:
+      - '\b(?:up to|through|throughout|during|over|until|within|for the duration of)\b[^.;]{0,60}?(?P<approximate>approximately|approx\.?|about)?\s*(?P<end_value>\d+(?:\.\d+)?)\s*(?P<end_unit>hour|day|week|month|year)s?'
+      - '\b(?:up to|through|throughout|until)\b[^.;]{0,40}?(?P<end_unit2>week|month|day|year)\s*(?P<end_value2>\d+)'
+      - '^\s*(?P<start_anchor>baseline|screening|randomi[sz]ation|first dose|enrol?lment|informed consent|day \d+)\b[^.;]{0,40}\b(?:through|up to|until|to)\b[^.;]{0,40}?(?:(?P<end_unit3>week|month|day|year)\s*)?(?P<end_value3>\d+(?:\.\d+)?)'
+      - '\bfrom\s+(?P<start_anchor2>[\w\s()]{3,40}?)\s+(?:to|through|until)\s+[^.;]{0,40}?(?P<end_value4>\d+(?:\.\d+)?)\s*(?P<end_unit4>hour|day|week|month|year)s?'
+      - '\b(?:up to|through|until)\s+(?:the\s+)?end of (?:the\s+)?(?:stud(?:y|ies)|treatment|follow-?up)\b'
+      - '\b(?:up to|through)\b[^.;]{0,60}\b(?:study completion|end of study|last participant)\b'
+      # Round two: an interval between two named non-baseline timepoints --
+      # "week 24 to week 48", "From Day 1 to Day 14", "Weeks 1-24", "at 22 and 28
+      # OLE weeks". Every pattern above needs an explicit "from"/"up to"/"through"
+      # keyword, so a bare "X to Y" matched nothing. baseline_to_timepoint has the
+      # lower priority and still claims the case where the start IS baseline.
+      - '(?P<start_unit5>week|day|month|year)s?\s*(?P<start_value5>\d+)\s*(?:to|through|until|-|\u2013)\s*(?:(?:week|day|month|year)s?\s*)?(?P<end_value5>\d+)\b'
+      - '^\s*(?P<start_value6>\d+)\s*(?:to|-|through)\s*(?P<end_value6>\d+)\s*(?P<end_unit6>minute|hour|day|week|month|year)s?\b'
+    examples:
+      - "Up to approximately 24 months"
+      - "Baseline through Week 52"
+      - "Baseline up to 52 weeks"
+      - "From baseline up to 7 days after last dose"
+      - "Up to 10 years"
+      - "Up to approximately Week 52"
+      - "Day 1 to Day 90"
+      - "Through participant study completion, approximately Week 56"
+
+  - id: event_relative
+    label: "Relative to a clinical event, no calendar value"
+    priority: 80
+    definition: >-
+      Anchored to something that happens rather than to a time -- "periprocedural",
+      "at the time of delivery", "at discharge", "end of treatment".
+    extract: [anchor]
+    patterns:
+      - '^\s*(?P<anchor>periprocedural|intra-?operative|peri-?operative|peri-?partum|post-?operative)\s*$'
+      - '\bat (?:the )?(?:time of|moment of|end of)\s*(?P<anchor2>delivery|discharge|surgery|progression|death|relapse|transplant\w*)'
+      - '^\s*(?:at\s+)?(?P<anchor3>end of treatment|end of study|study completion|discharge|hospital discharge|icu discharge|final visit|last dose|end of follow-?up)\s*$'
+      - '\bupon completion of\b'
+      # Round two: "Day of Surgery", "Day of discharge", "On the day of transplant".
+      - '^\s*(?:on\s+)?(?:the\s+)?day of\s+(?P<anchor4>[a-z][a-z ]{2,30})\s*$'
+    examples:
+      - "Periprocedural"
+      - "At the time of delivery."
+      - "upon completion of the 56-day Post-Therapy monitoring session"
+
+  - id: baseline_only
+    label: "Baseline only"
+    priority: 90
+    definition: >-
+      The string names a baseline and nothing else. Usually a data-entry artefact --
+      a baseline characteristic recorded as an outcome, or a truncated entry.
+    extract: []
+    patterns:
+      - '^\s*(?:at\s+)?baseline\s*$'
+      - '^\s*(?:at\s+)?(?:screening|day 0|week 0)\s*$'
+    examples:
+      - "Baseline"
+      - "At Baseline"
+
+  - id: unspecified
+    label: "Not parseable"
+    priority: 999
+    definition: >-
+      No pattern matched. The raw string is still kept in timepoint_raw; this
+      category is the honest answer rather than a forced classification, and its
+      population is the natural work queue for improving these patterns.
+    extract: []
+    patterns: []
+
+# Time-unit tokens shared by the parsers above, mapping onto scales.yaml ids.
+unit_tokens:
+  # `minute` added in round two: "60 minutes", "30 minutes post-dose" and the
+  # peri-procedural PK schedules were falling to `unspecified` for want of it.
+  minute: minutes
+  minutes: minutes
+  hour: hours
+  hours: hours
+  day: days
+  days: days
+  week: weeks
+  weeks: weeks
+  month: months
+  months: months
+  year: years
+  years: years
+
+# Written-out numerals seen in the sample ("one year", "Twelve weeks after
+# randomization"). Expanded by `expand_numeral_words` before matching.
+numeral_words:
+  one: 1
+  two: 2
+  three: 3
+  four: 4
+  five: 5
+  six: 6
+  seven: 7
+  eight: 8
+  nine: 9
+  ten: 10
+  eleven: 11
+  twelve: 12
+  eighteen: 18
+  twenty-four: 24
+  fifty-two: 52
+
+# Measured against the 500-study vocab_review sample (the 500 most frequent
+# distinct `time_frame` values, covering 4,014 outcome rows), applying the
+# preprocessing above and first-match-by-priority. Recorded so step 3 can treat it
+# as a regression baseline rather than re-deriving it.
+coverage_on_sample:
+  # ROUND ONE, kept for comparison. Measured on the first sample, which took the
+  # 500 most frequent distinct values per field -- i.e. almost entirely head. The
+  # 96.6% below is not wrong, it is answering an easier question than the one that
+  # matters.
+  round_one:
+    sampled_occurrences: 4014
+    sampled_distinct_values: 500
+    classified_pct: 96.6
+  # ROUND TWO. Measured on the unbiased sample (every value with frequency >= 2,
+  # plus a seeded random 300 of the singleton tail) and weighted back up to the
+  # whole corpus: a sampled singleton stands for the 8.76 corpus singletons it was
+  # drawn from. 13,542 outcome rows, 4,425 distinct time_frame strings.
+  round_two:
+    corpus_rows: 13542
+    distinct_values: 4425
+    sampled_distinct_values: 2097
+    classified_pct: 93.1
+    classified_pct_before_round_two_fixes: 88.4
+    # Independent check on the joined export (endpoint_rows.csv, 1,000 rows drawn
+    # separately from the sample above): 90.8% classified. The two agree within
+    # the sampling error, which is the point of measuring both.
+    classified_pct_on_joined_export: 90.8
+    by_category_pct:
+      cumulative_window: 29.3
+      bare_duration: 20.6
+      baseline_to_timepoint: 15.3
+      multi_timepoint: 12.3
+      anchored_offset: 7.6
+      unspecified: 6.9
+      single_fixed: 5.7
+      event_driven: 1.1
+      visit_window: 0.4
+      event_relative: 0.3
+      baseline_only: 0.2
+    what_round_two_fixed: >-
+      Uninformative parentheticals ("Week 0 (Visit 1) to Week 52 (Visit 9)"),
+      hyphenated units ("Week-12", "12-weeks"), ordinal suffixes ("12th week"),
+      minutes as a unit, an open-ended anchor for "<N> <unit> after <anything>",
+      intervals between two non-baseline timepoints ("week 24 to week 48"), and
+      "through"/"up to" after a baseline token -- see connective_evidence on
+      baseline_to_timepoint, which is a correction to a round-one judgment call
+      rather than a gap.
+    notes: >-
+      The residual 6.9% is genuine long tail: multi-phase narrative schedules
+      ("18 weeks total: 8 weeks on Rett-T, 8 weeks on placebo, 2 week washout in
+      interim"), per-cohort schedules, and labelled study periods with no absolute
+      horizon. Chasing it would overfit. `unspecified` plus the review queue is the
+      honest home for it.
+
+disambiguation:
+  - between: [baseline_to_timepoint, cumulative_window]
+    when: >-
+      the string carries a baseline token, a "through" / "up to" connective, and
+      exactly one horizon.
+    prefer: cumulative_window
+    if_form_in: [incidence_proportion, event_count, event_rate, event_free_days,
+                 time_to_event, responder_proportion, proportion_of_time_in_state,
+                 annualized_rate_of_change]
+    otherwise: baseline_to_timepoint
+    why: >-
+      "Baseline through Week 52" means a two-point comparison when the endpoint is a
+      change and an accrual window when the endpoint counts events. 21 such rows in
+      the joined export split 9 / 8 on the connective alone -- no lexical rule can
+      do better than a coin flip, and the form resolves it exactly.

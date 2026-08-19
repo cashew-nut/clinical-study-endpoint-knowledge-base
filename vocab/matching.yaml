@@ -1,0 +1,151 @@
+# HOW the vocabularies are matched. Not a term list -- a contract that the
+# conforming pipeline (build order step 3) must implement, and that
+# `endpoints vocab validate` checks the term files against.
+#
+# WHY THIS FILE EXISTS. Round one left "how do you match a synonym?" implicit, and
+# the obvious reading -- substring containment -- is catastrophically wrong. Under
+# it, measurements.yaml scored 77.8% coverage on the corpus; with whole-token
+# matching the same file scores 51.1%. The 26.7-point difference was not coverage,
+# it was `ess` matching inside "assessment" and "progression" (assigning 9.8% of
+# all outcome rows to `epistaxis_severity_score`), `alt` and `ast` inside "Health"
+# and "Past" (-> `liver_enzymes`), `fa` inside "Fatigue" and "Factor"
+# (-> `fluorescein_angiography_findings`), and `ree` inside "preeclampsia" and
+# "-free" (-> `resting_metabolic_rate`). None of that is visible in a coverage
+# number; all of it would have silently poisoned the SAME_MEASUREMENT edges the
+# graph layer is for. Matching rules are therefore part of the vocabulary, not an
+# implementation detail of whoever writes the matcher.
+
+version: 1
+
+normalisation:
+  # Applied to the registry string AND to every synonym before comparison, in
+  # this order. Patterns are written against the normalised form.
+  - collapse_whitespace                # runs of whitespace -> single space
+  - trim                               # leading/trailing whitespace
+  - normalise_unicode_dashes           # non-breaking hyphen, en/em dash -> "-"
+  - normalise_unicode_quotes           # curly quotes -> ASCII
+  - unescape_markdown                  # registry text arrives with \>, \<, \[, \]
+  - casefold_unless_case_sensitive     # see `case_sensitivity` below
+
+synonyms:
+  # A synonym is a WHOLE-TOKEN match, never a substring. Implement as a boundary
+  # assertion that treats digits and underscores as word characters:
+  #     (?<![\w])<escaped synonym>(?![\w])
+  # `\b` alone is not sufficient at a non-word edge (a synonym ending in ")" or
+  # "-" has no word boundary there), which is why the lookarounds are specified
+  # explicitly rather than left to the implementer.
+  match: whole_token
+  # Internal spaces in a synonym match a space OR a hyphen, so "6 minute walk"
+  # matches "6-minute walk". Nothing else in the synonym is loosened.
+  internal_space_matches: '[\s\-]+'
+  case_sensitivity:
+    # Short all-caps acronyms are matched case-SENSITIVELY. Whole-token matching
+    # already rules out the substring disasters above, but not the homograph ones:
+    # lower-cased "AU" is the English word "au" in loan phrases, "L" is a common
+    # sentence-initial label, "PR" is both partial response and the ECG PR
+    # interval. Requiring the registry text to have written them in capitals is
+    # the cheapest available evidence that the acronym was meant.
+    rule: case_sensitive_if_all_caps_and_length_le_5
+    # Below this length an acronym is not matched from `synonyms` at all, even in
+    # capitals -- too many false friends to be worth the recall. Spell such terms
+    # out in `patterns`, where surrounding context can be required.
+    min_synonym_length: 2
+
+patterns:
+  # Regexes are applied to the normalised string with IGNORECASE ON by default.
+  # A pattern needing case sensitivity scopes it inline with `(?-i: ... )`, which
+  # is how forms.yaml's bare-acronym patterns (OS, PFS, ORR, pCR) are written.
+  # Do not strip the flag and rely on a per-pattern side table.
+  default_flags: [IGNORECASE]
+  inline_case_sensitive_syntax: '(?-i:...)'
+  # Named capture groups are the parser's output contract, not decoration:
+  # timepoint_patterns.yaml's `extract` names the groups its patterns must set.
+  named_groups_are_load_bearing: true
+
+precedence:
+  # Where a file declares `match_precedence` (forms, references) or `priority`
+  # (timepoint_patterns), terms are tried in that order and the FIRST match wins.
+  # Within a term, `synonyms` are tried before `patterns`. Where a file declares
+  # neither -- measurements.yaml, with 150+ terms that no human should have to keep
+  # in a total order -- the winner is the LONGEST MATCHED SPAN.
+  #
+  # Longest-match is not a tie-break of last resort, it is the specificity rule:
+  # "Impact of Weight on Quality of Life-Lite (IWQOL-Lite)" matches both
+  # `iwqol_lite` (10 chars) and `body_weight` (6 chars, on the word "weight"), and
+  # the instrument is what the endpoint is about. Likewise "AEs Leading to
+  # Discontinuation" must resolve to
+  # `adverse_event_leading_to_discontinuation`, not to the `adverse_event` that
+  # its first three characters also match. Both cases were live defects found in
+  # round two; both fall out of longest-match with no list to maintain.
+  # Ties (equal span) break on the earlier term in file order, which is
+  # alphabetical by id -- arbitrary, but deterministic, and a genuine tie means
+  # the two terms are synonymous at that span anyway.
+  #
+  # Take the longest span across ALL of a term's synonyms and patterns, not the
+  # first one that hits. `iwqol_lite` lists "IWQOL-Lite" before "Impact of Weight
+  # on Quality of Life"; stopping at the first hit scores that term 10 characters
+  # and loses it to `health_related_quality_of_life_unspecified` matching "Quality
+  # of Life" at 15. Synonym order inside a term is not meaningful and must not
+  # decide a match.
+  strategy: first_match_wins
+  strategy_when_unordered: longest_match_wins
+  synonyms_before_patterns: true
+  # A term may declare `not_if_matches`: a list of regexes that VETO the term for
+  # this string even if one of its own patterns hits. Checked before the term's
+  # patterns. Used where a broad pattern needs a narrow carve-out and reordering
+  # would break a different case -- forms.yaml's responder_proportion vetoes
+  # physiological rates ("heart rate", "resting metabolic rate") so its generic
+  # "<good outcome> rate" pattern can stay broad.
+  veto_field: not_if_matches
+
+cascade:
+  # WHERE to look, when the first field yields nothing. Evidence from the joined
+  # export (endpoint_rows.csv, 1,000 rows): `measure` alone leaves 41.8% of rows
+  # with no form; reading `description` when `measure` is silent recovers 36.1% of
+  # those, and does it from text the sponsor wrote rather than from a guess.
+  # Five of the eight bare "Adverse Events" / "Safety" titles in that export have
+  # a description that says "incidence and severity of adverse events" outright.
+  # That is why there is no lexical rule mapping a bare safety title to
+  # incidence_proportion: the registry usually answers the question itself, and
+  # where it does not, `not_stated` is the honest result.
+  form:
+    - field: measure
+      match_method: exact
+    - field: description
+      match_method: syntactic_rule    # provenance MUST record that this was inferred
+    - field: time_frame
+      match_method: syntactic_rule    # baseline_to_timepoint -> change_from_baseline
+    - fallback: not_stated
+  measurement:
+    - field: measure
+      match_method: exact
+    - field: description
+      match_method: syntactic_rule
+    - fallback: review_queue          # an unmatched MEASUREMENT is queued, unlike form
+  timepoint:
+    - field: time_frame
+      match_method: exact
+    - fallback: unspecified
+  reference:
+    # time_frame FIRST, and this is not a detail. References cover 17.4% of corpus
+    # rows when read from `measure` and 44.2% when read from `time_frame`: the time
+    # origin of an endpoint ("from randomisation", "post-transplant", "after first
+    # dose") is written into the timing field, not the title. Reading `measure`
+    # first would take the weaker signal and stop.
+    - field: time_frame
+      match_method: exact
+    - field: measure
+      match_method: exact
+    - field: description
+      match_method: syntactic_rule
+    - fallback: not_stated
+
+provenance:
+  # Every conformed row carries how it was matched. A cascade hit from
+  # `description` or `time_frame` is NEVER recorded as `exact` -- the whole point
+  # of keeping the cascade is that a downstream query can exclude inferred forms.
+  match_method: [exact, syntactic_rule, semantic]
+  confidence_floor:
+    exact: 1.0
+    syntactic_rule: 0.7
+    semantic: 0.5

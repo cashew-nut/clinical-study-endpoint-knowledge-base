@@ -35,6 +35,19 @@ from clinical_endpoints.ingest.pull_log import write_pull_log
 API_BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
 SOURCE = "ctgov_api"
 
+# What this backend actually lands, for raw._pull_log.source_tables (differs from
+# the AACT backend: the API exposes no MeSH tree numbers at all, so there is no
+# mesh_terms table here -- instead it lands the coarse browse-branch letters AACT
+# has no equivalent of; see ingest/aact.py).
+SOURCE_TABLES = (
+    "studies",
+    "design_outcomes",
+    "conditions",
+    "browse_conditions",
+    "browse_interventions",
+    "browse_condition_branches",
+)
+
 PAGE_SIZE = 200
 REQUEST_TIMEOUT_S = 30
 MAX_RETRIES = 3
@@ -152,6 +165,50 @@ def _extract_outcome_rows(study: dict) -> list[dict]:
     return rows
 
 
+def _extract_condition_rows(study: dict) -> list[dict]:
+    """Sponsor free-text conditions, protocolSection.conditionsModule.conditions[] --
+    not MeSH-coded, so this feeds raw.conditions, not raw.browse_conditions."""
+    nct_id = _get_path(study, "protocolSection", "identificationModule", "nctId")
+    conditions = _get_path(study, "protocolSection", "conditionsModule", "conditions") or []
+    return [{"nct_id": nct_id, "name": name} for name in conditions if name]
+
+
+def _extract_mesh_rows(study: dict, *, module: str, mesh_type: str) -> list[dict]:
+    """NLM-assigned MeSH terms from derivedSection.<module>.meshes[] (id, term) --
+    shared by conditionBrowseModule and interventionBrowseModule."""
+    nct_id = _get_path(study, "protocolSection", "identificationModule", "nctId")
+    meshes = _get_path(study, "derivedSection", module, "meshes") or []
+    rows = []
+    for mesh in meshes:
+        term = mesh.get("term")
+        if not term:
+            continue
+        rows.append(
+            {
+                "nct_id": nct_id,
+                "mesh_term": term,
+                "mesh_term_normalised": term.strip().lower(),
+                "mesh_type": mesh_type,
+            }
+        )
+    return rows
+
+
+def _extract_condition_branch_rows(study: dict) -> list[dict]:
+    """Coarse top-level MeSH tree branches, derivedSection.conditionBrowseModule
+    .browseBranches[] (abbrev, name) -- e.g. "BC04" = Neoplasms. This is the only
+    tree-level signal the API exposes; there is no per-condition tree number."""
+    nct_id = _get_path(study, "protocolSection", "identificationModule", "nctId")
+    branches = _get_path(study, "derivedSection", "conditionBrowseModule", "browseBranches") or []
+    rows = []
+    for branch in branches:
+        abbrev = branch.get("abbrev")
+        if not abbrev:
+            continue
+        rows.append({"nct_id": nct_id, "branch_abbrev": abbrev, "branch_name": branch.get("name")})
+    return rows
+
+
 def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     """Pull filtered studies + their outcome measures from the CT.gov API into raw.*.
 
@@ -167,6 +224,10 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
 
     studies: list[dict] = []
     outcomes_by_nct: dict[str, list[dict]] = {}
+    conditions_by_nct: dict[str, list[dict]] = {}
+    browse_conditions_by_nct: dict[str, list[dict]] = {}
+    browse_interventions_by_nct: dict[str, list[dict]] = {}
+    condition_branches_by_nct: dict[str, list[dict]] = {}
     seen_nct_ids: set[str] = set()
     target = max(filters.limit * 3, filters.limit + 50)
 
@@ -189,6 +250,14 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
             seen_nct_ids.add(nct_id)
             studies.append(row)
             outcomes_by_nct[nct_id] = _extract_outcome_rows(study)
+            conditions_by_nct[nct_id] = _extract_condition_rows(study)
+            browse_conditions_by_nct[nct_id] = _extract_mesh_rows(
+                study, module="conditionBrowseModule", mesh_type="condition"
+            )
+            browse_interventions_by_nct[nct_id] = _extract_mesh_rows(
+                study, module="interventionBrowseModule", mesh_type="intervention"
+            )
+            condition_branches_by_nct[nct_id] = _extract_condition_branch_rows(study)
 
         page_token = payload.get("nextPageToken")
         if not page_token or len(studies) >= target:
@@ -196,7 +265,18 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
 
     studies.sort(key=lambda r: r["start_date"] or "", reverse=True)
     studies = studies[: filters.limit]
+    kept_nct_ids = [s["nct_id"] for s in studies]
     outcomes = [o for s in studies for o in outcomes_by_nct.get(s["nct_id"], [])]
+    conditions = [c for nct_id in kept_nct_ids for c in conditions_by_nct.get(nct_id, [])]
+    browse_conditions = [
+        m for nct_id in kept_nct_ids for m in browse_conditions_by_nct.get(nct_id, [])
+    ]
+    browse_interventions = [
+        m for nct_id in kept_nct_ids for m in browse_interventions_by_nct.get(nct_id, [])
+    ]
+    condition_branches = [
+        b for nct_id in kept_nct_ids for b in condition_branches_by_nct.get(nct_id, [])
+    ]
 
     con.execute(
         """
@@ -242,6 +322,67 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
             ],
         )
 
-    row_counts = {"studies": len(studies), "design_outcomes": len(outcomes)}
-    log_entry = write_pull_log(con, source=SOURCE, filters=filters.as_dict(), row_counts=row_counts)
+    con.execute("CREATE OR REPLACE TABLE raw.conditions (nct_id VARCHAR, name VARCHAR)")
+    if conditions:
+        con.executemany(
+            "INSERT INTO raw.conditions VALUES (?, ?)",
+            [(c["nct_id"], c["name"]) for c in conditions],
+        )
+
+    con.execute(
+        """
+        CREATE OR REPLACE TABLE raw.browse_conditions (
+            nct_id VARCHAR, mesh_term VARCHAR, mesh_term_normalised VARCHAR, mesh_type VARCHAR
+        )
+        """
+    )
+    if browse_conditions:
+        con.executemany(
+            "INSERT INTO raw.browse_conditions VALUES (?, ?, ?, ?)",
+            [
+                (m["nct_id"], m["mesh_term"], m["mesh_term_normalised"], m["mesh_type"])
+                for m in browse_conditions
+            ],
+        )
+
+    con.execute(
+        """
+        CREATE OR REPLACE TABLE raw.browse_interventions (
+            nct_id VARCHAR, mesh_term VARCHAR, mesh_term_normalised VARCHAR, mesh_type VARCHAR
+        )
+        """
+    )
+    if browse_interventions:
+        con.executemany(
+            "INSERT INTO raw.browse_interventions VALUES (?, ?, ?, ?)",
+            [
+                (m["nct_id"], m["mesh_term"], m["mesh_term_normalised"], m["mesh_type"])
+                for m in browse_interventions
+            ],
+        )
+
+    con.execute(
+        """
+        CREATE OR REPLACE TABLE raw.browse_condition_branches (
+            nct_id VARCHAR, branch_abbrev VARCHAR, branch_name VARCHAR
+        )
+        """
+    )
+    if condition_branches:
+        con.executemany(
+            "INSERT INTO raw.browse_condition_branches VALUES (?, ?, ?)",
+            [(b["nct_id"], b["branch_abbrev"], b["branch_name"]) for b in condition_branches],
+        )
+
+    row_counts = {
+        "studies": len(studies),
+        "design_outcomes": len(outcomes),
+        "conditions": len(conditions),
+        "browse_conditions": len(browse_conditions),
+        "browse_interventions": len(browse_interventions),
+        "browse_condition_branches": len(condition_branches),
+    }
+    log_entry = write_pull_log(
+        con, source=SOURCE, filters=filters.as_dict(), row_counts=row_counts, source_tables=SOURCE_TABLES
+    )
     return {**log_entry, "row_counts": row_counts}
