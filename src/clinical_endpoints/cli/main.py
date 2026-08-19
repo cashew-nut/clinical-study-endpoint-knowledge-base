@@ -14,6 +14,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from clinical_endpoints.conform.pipeline import run_conform
 from clinical_endpoints.db import (
     AactConnectionError,
     MissingAactCredentialsError,
@@ -404,15 +405,75 @@ def ta_diff_tree(
 
 
 @app.command()
-def conform() -> None:
-    """Normalize -> syntactic rules -> semantic fallback -> review queue."""
-    _not_yet_implemented("conform", "step 3 (conforming pipeline)")
+def conform(
+    warehouse: str = typer.Option(
+        "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
+    ),
+) -> None:
+    """Normalize -> syntactic rules -> semantic fallback -> review queue.
+    Reads raw.design_outcomes + vocab.*, writes conformed.endpoints and
+    conformed.review_queue. Requires `endpoints vocab validate` and `endpoints
+    pull` to have already been run against this warehouse."""
+    con = connect(warehouse)
+    try:
+        try:
+            result = run_conform(con)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+    finally:
+        con.close()
+
+    console.print(
+        f"[green]Conformed {result['rows_conformed']} of {result['total_rows']} row(s)[/green] "
+        f"-> conformed.endpoints; {result['rows_queued']} -> conformed.review_queue"
+    )
 
 
 @review_app.command("list")
-def review_list(status: str = typer.Option("pending", "--status")) -> None:
-    """List review_queue entries."""
-    _not_yet_implemented("review list", "step 3 (conforming pipeline)")
+def review_list(
+    status: str = typer.Option("pending", "--status"),
+    reason: Optional[str] = typer.Option(None, "--reason"),
+    limit: int = typer.Option(20, "--limit"),
+    warehouse: str = typer.Option(
+        "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
+    ),
+) -> None:
+    """List conformed.review_queue entries -- run `endpoints conform` first."""
+    con = connect(warehouse)
+    try:
+        if not _table_exists(con, "conformed", "review_queue"):
+            console.print("[red]No conformed.review_queue yet -- run `endpoints conform` first.[/red]")
+            raise typer.Exit(code=1)
+
+        where = ["status = ?"]
+        params: list = [status]
+        if reason:
+            where.append("reason = ?")
+            params.append(reason)
+        params.append(limit)
+
+        rows = con.execute(
+            f"""
+            SELECT review_id, nct_id, reason, measure_raw, best_semantic_candidate, best_semantic_score
+            FROM conformed.review_queue
+            WHERE {' AND '.join(where)}
+            ORDER BY queued_at
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    finally:
+        con.close()
+
+    table = Table("review_id", "nct_id", "reason", "measure", "best candidate", "score")
+    for review_id, nct_id, row_reason, measure_raw, candidate, score in rows:
+        table.add_row(
+            review_id[:12], nct_id, row_reason, (measure_raw or "")[:60],
+            candidate or "-", f"{score:.2f}" if score is not None else "-",
+        )
+    console.print(table)
+    console.print(f"Showing {len(rows)} row(s) with status={status!r}" + (f", reason={reason!r}" if reason else ""))
 
 
 @review_app.command("resolve")
