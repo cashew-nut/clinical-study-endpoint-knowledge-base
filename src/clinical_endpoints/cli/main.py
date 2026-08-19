@@ -21,6 +21,7 @@ from clinical_endpoints.ingest import aact as aact_backend
 from clinical_endpoints.ingest import ctgov_api as ctgov_api_backend
 from clinical_endpoints.ingest.ctgov_api import CtgovApiError
 from clinical_endpoints.ingest.filters import PullFilters
+from clinical_endpoints.vocab.sample import run_vocab_sample
 
 SOURCES = ("aact", "ctgov_api")
 
@@ -122,11 +123,27 @@ def pull(
 
 @vocab_app.command("sample")
 def vocab_sample(
-    limit: int = typer.Option(500, "--limit"),
-    out: str = typer.Option("vocab_review.csv", "--out"),
+    limit: int = typer.Option(
+        500, "--limit", help="Max distinct values per field, most frequent first."
+    ),
+    out: str = typer.Option("vocab_review.csv", "--out", help="CSV output path."),
+    warehouse: str = typer.Option(
+        "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
+    ),
 ) -> None:
     """Export distinct measure/description/time_frame strings with frequency counts."""
-    _not_yet_implemented("vocab sample", "step 2 (checkpoint back to chat, not Claude Code)")
+    con = connect(warehouse)
+    try:
+        result = run_vocab_sample(con, limit=limit, out_path=out)
+    finally:
+        con.close()
+
+    counts = result["field_counts"]
+    console.print(
+        f"[green]Wrote {result['row_count']} rows -> {result['out_path']}[/green] "
+        f"(measure={counts['measure']}, description={counts['description']}, "
+        f"time_frame={counts['time_frame']})"
+    )
 
 
 @vocab_app.command("validate")
