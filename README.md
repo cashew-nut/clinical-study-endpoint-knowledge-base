@@ -18,8 +18,12 @@ covers setup, refresh, and ad hoc querying.
 ## Status
 
 Build-order step 1 (scaffold + ingestion) is implemented: `endpoints pull`.
-Everything else in `endpoints --help` is stubbed pending later steps (vocab
-review, conforming pipeline, graph layer).
+Build-order step 2's export half is also implemented: `endpoints vocab
+sample`, which writes `raw.design_outcomes` measure/description/time_frame
+values as a long-format CSV (`field, value, frequency`, one block per field,
+most frequent first) for human vocab review. `vocab validate` and everything
+else in `endpoints --help` is stubbed pending later steps (conforming
+pipeline, graph layer).
 
 ## Setup
 
@@ -128,6 +132,8 @@ src/clinical_endpoints/
     pull_log.py   shared raw._pull_log writer
     aact.py       AACT backend
     ctgov_api.py  ClinicalTrials.gov API v2 backend (default)
+  vocab/
+    sample.py     `vocab sample` CSV export (step 2)
   conform/        normalize / syntactic rules / semantic fallback / threshold+timepoint parsers (step 3)
   graph/          node/edge materialization (step 4)
   cli/            `endpoints` CLI
