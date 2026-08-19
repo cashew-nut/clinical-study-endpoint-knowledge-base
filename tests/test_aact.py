@@ -3,24 +3,8 @@ from __future__ import annotations
 import json
 from datetime import date
 
-import pytest
-
-from clinical_endpoints.ingest.pull import PHASE_ALIASES, PullFilters, normalize_phases, run_pull
-
-
-def test_normalize_phases_maps_shorthand_to_aact_values():
-    assert normalize_phases(["3"]) == ["PHASE3"]
-    assert normalize_phases(["1/2", "3"]) == ["PHASE1/PHASE2", "PHASE3"]
-
-
-def test_normalize_phases_rejects_unknown_value():
-    with pytest.raises(ValueError, match="Unrecognized phase"):
-        normalize_phases(["5"])
-
-
-def test_normalize_phases_covers_all_declared_aliases():
-    # every alias should round-trip without raising
-    assert normalize_phases(list(PHASE_ALIASES)) == list(PHASE_ALIASES.values())
+from clinical_endpoints.ingest.aact import run_pull
+from clinical_endpoints.ingest.filters import PullFilters
 
 
 def test_run_pull_lands_filtered_studies_and_outcomes(fake_aact_con):
@@ -53,11 +37,12 @@ def test_run_pull_logs_every_invocation(fake_aact_con):
     run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
 
     log_rows = fake_aact_con.execute(
-        "SELECT filters_json, source_tables, row_counts FROM raw._pull_log ORDER BY pulled_at"
+        "SELECT source, filters_json, source_tables, row_counts FROM raw._pull_log ORDER BY pulled_at"
     ).fetchall()
     assert len(log_rows) == 2  # one entry per pull, history accumulates
 
-    filters_json, source_tables, row_counts = log_rows[0]
+    source, filters_json, source_tables, row_counts = log_rows[0]
+    assert source == "aact"
     assert json.loads(filters_json) == {"phases": ["3"], "limit": 500, "since": None}
     assert set(source_tables) == {"studies", "design_outcomes"}
     assert json.loads(row_counts) == {"studies": 2, "design_outcomes": 2}

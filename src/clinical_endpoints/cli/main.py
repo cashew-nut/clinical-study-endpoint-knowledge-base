@@ -17,7 +17,12 @@ from clinical_endpoints.db import (
     attach_aact,
     connect,
 )
-from clinical_endpoints.ingest.pull import PullFilters, run_pull
+from clinical_endpoints.ingest import aact as aact_backend
+from clinical_endpoints.ingest import ctgov_api as ctgov_api_backend
+from clinical_endpoints.ingest.ctgov_api import CtgovApiError
+from clinical_endpoints.ingest.filters import PullFilters
+
+SOURCES = ("aact", "ctgov_api")
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
@@ -55,12 +60,22 @@ def pull(
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
+    source: str = typer.Option(
+        "ctgov_api",
+        "--source",
+        help='Ingestion backend: "ctgov_api" (public API, default -- AACT access is '
+        'currently broken) or "aact" (requires .env credentials).',
+    ),
 ) -> None:
-    """Pull filtered studies + design_outcomes from AACT into raw.*, and log the pull."""
+    """Pull filtered studies + design_outcomes into raw.*, and log the pull."""
+    if source not in SOURCES:
+        console.print(f"[red]--source must be one of {SOURCES}, got {source!r}[/red]")
+        raise typer.Exit(code=1)
+
     if ta:
         console.print(
             "[red]--ta is not supported yet: therapeutic area is derived from the MeSH "
-            "condition mapping built in build-order step 2 (vocab), not a native AACT "
+            "condition mapping built in build-order step 2 (vocab), not a native source "
             "field. Run without --ta for now.[/red]"
         )
         raise typer.Exit(code=1)
@@ -78,13 +93,19 @@ def pull(
 
     con = connect(warehouse)
     try:
-        attach_aact(con)
-    except (MissingAactCredentialsError, AactConnectionError) as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    try:
-        result = run_pull(con, filters)
+        if source == "aact":
+            try:
+                attach_aact(con)
+            except (MissingAactCredentialsError, AactConnectionError) as exc:
+                console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(code=1) from exc
+            result = aact_backend.run_pull(con, filters)
+        else:
+            try:
+                result = ctgov_api_backend.run_pull(con, filters)
+            except CtgovApiError as exc:
+                console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(code=1) from exc
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -93,7 +114,7 @@ def pull(
 
     console.print(
         f"[green]Pull {result['pull_id']} complete[/green] "
-        f"({result['pulled_at'].isoformat()}): "
+        f"(source={source}, {result['pulled_at'].isoformat()}): "
         f"{result['row_counts']['studies']} studies, "
         f"{result['row_counts']['design_outcomes']} design_outcomes -> raw.*"
     )

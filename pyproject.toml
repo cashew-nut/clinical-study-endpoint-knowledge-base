@@ -1,7 +1,7 @@
 [project]
 name = "clinical-endpoints"
 version = "0.1.0"
-description = "Ontology + graph pipeline for clinical trial endpoints, sourced from AACT."
+description = "Ontology + graph pipeline for clinical trial endpoints, sourced from AACT or the ClinicalTrials.gov API."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
     "typer>=0.12.0",
     "rich>=13.7.0",
     "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
 ]
 
 [project.scripts]

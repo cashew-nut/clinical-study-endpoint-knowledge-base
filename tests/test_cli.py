@@ -23,9 +23,16 @@ def test_pull_without_credentials_fails_clearly(tmp_path, monkeypatch):
     monkeypatch.setattr("clinical_endpoints.db.load_dotenv", lambda: None)
     monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(app, ["pull", "--phase", "3"])
+    result = runner.invoke(app, ["pull", "--phase", "3", "--source", "aact"])
     assert result.exit_code == 1
     assert "Missing AACT credentials" in result.output
+
+
+def test_pull_rejects_unknown_source(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["pull", "--phase", "3", "--source", "bogus"])
+    assert result.exit_code == 1
+    assert "--source must be one of" in result.output
 
 
 def test_pull_rejects_ta_filter_not_yet_supported(tmp_path, monkeypatch):
