@@ -1,0 +1,345 @@
+# MeSH condition -> therapeutic area.
+#
+# Therapeutic area is not a field on either ingestion backend, so it has to be
+# derived from the NLM-assigned MeSH codes on each study. Both backends expose
+# those, but not identically:
+#
+#   AACT      ctgov.browse_conditions (nct_id, mesh_term, downcase_mesh_term,
+#             mesh_type) and ctgov.browse_interventions; ctgov.mesh_terms carries
+#             the thesaurus itself, including tree numbers, so a tree-number join
+#             is available.
+#   CT.gov v2 derivedSection.conditionBrowseModule.meshes[] (term + id) and
+#             .browseBranches[] (abbrev + name); the branch abbreviations are
+#             top-level tree letters, so only the coarse tree level is available.
+#
+# So the mapping is written in three layers, applied in this order, first hit wins
+# per condition:
+#
+#   1. term_overrides  -- exact descriptor match. Highest priority. This is where
+#                         multi-tree ambiguity gets settled by hand.
+#   2. tree_prefixes   -- MeSH tree-number prefix. Used when tree numbers are
+#                         joinable (AACT) or when a branch abbreviation is enough.
+#   3. term_patterns   -- regex on the descriptor string. The fallback that keeps
+#                         the mapping working on the CT.gov backend and on
+#                         descriptors the tree table does not cover.
+#
+# A study usually has several conditions and therefore several areas. Keep them
+# all; therapeutic_areas.yaml `precedence` picks the primary. Do not collapse to
+# one area here.
+#
+# IMPORTANT -- vaccines are not derivable from conditions. A meningococcal vaccine
+# trial codes its condition as "Meningococcal Infections" (an infection), never as
+# "Vaccines". The vaccines area must come from the INTERVENTION MeSH codes, so it
+# has its own block below and is applied before the condition layers.
+
+version: 1
+dimension: ta_mesh_mapping
+applies_to: [browse_conditions, browse_interventions]
+
+# --- layer 0: intervention-derived areas ---------------------------------
+# Matched against browse_interventions / interventionBrowseModule, not conditions.
+intervention_rules:
+  - ta: vaccines
+    tree_prefixes: ["D20.215.894"]        # Vaccines
+    term_patterns:
+      - '\bvaccines?\b'
+      - '\bimmuni[sz]ation\b'
+      - '\btoxoids?\b'
+    notes: >-
+      Applied before the condition layers. A vaccine trial should surface as
+      `vaccines` primary with the target infection retained as a secondary area,
+      which the keep-all-matches rule gives for free.
+
+# --- layer 1: exact descriptor overrides ---------------------------------
+# Each of these sits in more than one MeSH tree, or sits in a tree that would send
+# it to the wrong development group. Listed descriptor-exact (case-insensitive,
+# match against downcase_mesh_term).
+term_overrides:
+
+  # Tumours carry an organ-system tree as well as C04. Oncology must win.
+  "Lung Neoplasms": oncology
+  "Carcinoma, Non-Small-Cell Lung": oncology
+  "Small Cell Lung Carcinoma": oncology
+  "Breast Neoplasms": oncology
+  "Prostatic Neoplasms": oncology
+  "Ovarian Neoplasms": oncology
+  "Colorectal Neoplasms": oncology
+  "Pancreatic Neoplasms": oncology
+  "Liver Neoplasms": oncology
+  "Stomach Neoplasms": oncology
+  "Urinary Bladder Neoplasms": oncology
+  "Kidney Neoplasms": oncology
+  "Head and Neck Neoplasms": oncology
+  "Brain Neoplasms": oncology
+  "Melanoma": oncology
+  "Glioblastoma": oncology
+  # Haematological malignancy is oncology, not haematology (see therapeutic_areas.yaml).
+  "Leukemia": oncology
+  "Leukemia, Myeloid, Acute": oncology
+  "Leukemia, Lymphocytic, Chronic, B-Cell": oncology
+  "Lymphoma": oncology
+  "Lymphoma, Non-Hodgkin": oncology
+  "Hodgkin Disease": oncology
+  "Multiple Myeloma": oncology
+  "Myelodysplastic Syndromes": oncology
+  "Myeloproliferative Disorders": oncology
+
+  # Eye complications of systemic disease -- treated by ophthalmologists.
+  "Diabetic Retinopathy": ophthalmology
+  "Macular Edema": ophthalmology
+  "Diabetic Macular Edema": ophthalmology
+  "Macular Degeneration": ophthalmology
+  "Wet Macular Degeneration": ophthalmology
+  "Graves Ophthalmopathy": ophthalmology
+  "Conjunctivitis, Allergic": ophthalmology
+  "Uveitis": ophthalmology
+  "Glaucoma": ophthalmology
+
+  # Skin-and-connective-tissue (C17) splits across three different TAs.
+  "Psoriasis": dermatology
+  "Dermatitis, Atopic": dermatology
+  "Vitiligo": dermatology
+  "Alopecia Areata": dermatology
+  "Hidradenitis Suppurativa": dermatology
+  "Acne Vulgaris": dermatology
+  "Keratosis, Actinic": dermatology
+  "Arthritis, Psoriatic": rheumatology
+  "Arthritis, Rheumatoid": rheumatology
+  "Lupus Erythematosus, Systemic": rheumatology
+  "Scleroderma, Systemic": rheumatology
+  "Spondylarthritis": rheumatology
+  "Spondylitis, Ankylosing": rheumatology
+  "Gout": rheumatology
+  "Sjogren's Syndrome": rheumatology
+  "Osteoarthritis": musculoskeletal_pain
+  "Osteoarthritis, Knee": musculoskeletal_pain
+  "Osteoporosis": musculoskeletal_pain
+
+  # Lung involvement of a rheumatological disease -- the trials are respiratory.
+  "Lung Diseases, Interstitial": respiratory
+  "Idiopathic Pulmonary Fibrosis": respiratory
+  "Scleroderma, Diffuse": rheumatology
+  "Hypertension, Pulmonary": respiratory
+  "Cystic Fibrosis": respiratory
+
+  # Metabolic vs endocrine vs cardiovascular boundary cases.
+  "Diabetes Mellitus, Type 2": metabolic_endocrine
+  "Diabetes Mellitus, Type 1": metabolic_endocrine
+  "Obesity": metabolic_endocrine
+  "Dyslipidemias": metabolic_endocrine
+  "Hypercholesterolemia": metabolic_endocrine
+  "Non-alcoholic Fatty Liver Disease": gastroenterology_hepatology
+  "Metabolic Dysfunction-Associated Steatotic Liver Disease": gastroenterology_hepatology
+  "Hypertension": cardiovascular
+  "Heart Failure": cardiovascular
+  "Atrial Fibrillation": cardiovascular
+  "Myocardial Infarction": cardiovascular
+  "Coronary Artery Disease": cardiovascular
+  "Atherosclerosis": cardiovascular
+
+  # Stroke sits in both nervous system and cardiovascular; trials are neurology.
+  "Stroke": neurology
+  "Ischemic Stroke": neurology
+  "Brain Ischemia": neurology
+  "Intracranial Hemorrhage, Hypertensive": neurology
+  "Multiple Sclerosis": neurology
+  "Epilepsy": neurology
+  "Parkinson Disease": neurology
+  "Alzheimer Disease": neurology
+  "Migraine Disorders": neurology
+
+  # Mental health, and the substance-use split out of it.
+  "Schizophrenia": psychiatry
+  "Depressive Disorder, Major": psychiatry
+  "Bipolar Disorder": psychiatry
+  "Anxiety Disorders": psychiatry
+  "Attention Deficit Disorder with Hyperactivity": psychiatry
+  "Autism Spectrum Disorder": psychiatry
+  "Opioid-Related Disorders": substance_use
+  "Substance-Related Disorders": substance_use
+  "Alcoholism": substance_use
+  "Tobacco Use Disorder": substance_use
+  "Smoking Cessation": substance_use
+
+  # Non-malignant haematology.
+  "Anemia, Sickle Cell": haematology
+  "beta-Thalassemia": haematology
+  "Hemophilia A": haematology
+  "Purpura, Thrombocytopenic, Idiopathic": haematology
+  "Anemia, Aplastic": haematology
+
+  # Infection -- these code under organ systems as well.
+  "HIV Infections": infectious_disease
+  "Hepatitis B, Chronic": infectious_disease
+  "Hepatitis C, Chronic": infectious_disease
+  "Tuberculosis": infectious_disease
+  "Malaria": infectious_disease
+  "COVID-19": infectious_disease
+  "Hemorrhagic Fever, Ebola": infectious_disease
+  "Meningococcal Infections": infectious_disease
+  "Meningitis, Cryptococcal": infectious_disease
+  "Sepsis": anaesthesia_critical_care
+  "Respiratory Distress Syndrome": anaesthesia_critical_care
+  "Critical Illness": anaesthesia_critical_care
+
+  # Transplantation and its complications.
+  "Graft vs Host Disease": transplantation
+  "Hematopoietic Stem Cell Transplantation": transplantation
+  "Kidney Transplantation": transplantation
+  "Graft Rejection": transplantation
+
+  # Renal.
+  "Renal Insufficiency, Chronic": nephrology_urology
+  "Glomerulonephritis, IGA": nephrology_urology
+  "Acute Kidney Injury": nephrology_urology
+
+  # Gastro.
+  "Inflammatory Bowel Diseases": gastroenterology_hepatology
+  "Crohn Disease": gastroenterology_hepatology
+  "Colitis, Ulcerative": gastroenterology_hepatology
+  "Liver Cirrhosis": gastroenterology_hepatology
+
+  # Allergy/immunology.
+  "Asthma": respiratory
+  "Pulmonary Disease, Chronic Obstructive": respiratory
+  "Rhinitis, Allergic": immunology_inflammation
+  "Food Hypersensitivity": immunology_inflammation
+  "Hypersensitivity": immunology_inflammation
+
+  # Rare/genetic that would otherwise scatter across organ systems.
+  "Telangiectasia, Hereditary Hemorrhagic": rare_genetic
+  "Muscular Dystrophy, Duchenne": rare_genetic
+  "Amyloidosis": rare_genetic
+
+  # Pain and peri-operative.
+  "Pain, Postoperative": musculoskeletal_pain
+  "Low Back Pain": musculoskeletal_pain
+  "Chronic Pain": musculoskeletal_pain
+
+  # Obstetric.
+  "Pregnancy Complications": obstetrics_gynaecology
+  "Pre-Eclampsia": obstetrics_gynaecology
+  "Premature Birth": obstetrics_gynaecology
+  "Endometriosis": obstetrics_gynaecology
+  "Infertility": obstetrics_gynaecology
+
+# --- layer 2: MeSH tree-number prefixes ----------------------------------
+# Applied when a descriptor did not hit an override. Longest prefix wins, then the
+# `ta` precedence in therapeutic_areas.yaml resolves what remains.
+#
+# CAVEAT WORTH KNOWING BEFORE TRUSTING THESE: MeSH restructured the urogenital
+# branches in 2021 -- the old C12 (Male Urogenital) / C13 (Female Urogenital and
+# Pregnancy Complications) were merged into C12 (Urogenital Diseases). Both the
+# legacy and current prefixes are listed so a mapping built against either
+# thesaurus version resolves. The `mesh_terms` table's tree numbers should be spot-
+# checked against this table on the first real pull.
+tree_prefixes:
+  "C01": infectious_disease
+  "C04": oncology
+  "C05": musculoskeletal_pain
+  "C05.550": rheumatology          # Joint Diseases
+  "C05.799": rheumatology          # Rheumatic Diseases
+  "C06": gastroenterology_hepatology
+  "C07": otolaryngology_dental
+  "C08": respiratory
+  "C09": otolaryngology_dental
+  "C10": neurology
+  "C11": ophthalmology
+  "C12": nephrology_urology
+  "C12.050.703": obstetrics_gynaecology   # Pregnancy Complications (post-2021)
+  "C13": obstetrics_gynaecology           # legacy Female Urogenital and Pregnancy
+  "C13.703": obstetrics_gynaecology       # legacy Pregnancy Complications
+  "C14": cardiovascular
+  "C15": haematology
+  "C15.378.190": oncology                 # Leukemia sits under Hemic and Lymphatic
+  "C16": rare_genetic
+  "C16.320": rare_genetic                 # Genetic Diseases, Inborn
+  "C17": dermatology
+  "C17.300": rheumatology                 # Connective Tissue Diseases
+  "C18": metabolic_endocrine
+  "C19": metabolic_endocrine
+  "C20": immunology_inflammation
+  "C20.452.845": transplantation          # Graft vs Host Disease
+  "C23": other                            # Pathological Conditions, Signs and Symptoms
+  "C25": other                            # Chemically-Induced Disorders
+  "C25.775": substance_use                # Substance-Related Disorders
+  "C26": anaesthesia_critical_care        # Wounds and Injuries
+  "F01": psychiatry
+  "F03": psychiatry
+  "F03.900": substance_use                # Substance-Related Disorders
+
+# --- layer 3: descriptor regex fallback ----------------------------------
+# Keeps the mapping useful on the CT.gov backend, where only coarse branch letters
+# are available, and on descriptors the tree table misses. Evaluated in order.
+term_patterns:
+  - ta: oncology
+    patterns:
+      - '\b(neoplasm|carcinoma|sarcoma|lymphoma|leukemia|leukaemia|melanoma|myeloma|glioma|blastoma|adenocarcinoma|mesothelioma)\b'
+      - '\b(cancer|tumou?r|malignan\w+|metasta\w+|oncolog\w+)\b'
+      - '\bmyelodysplastic\b'
+  - ta: transplantation
+    patterns: ['\b(transplant\w*|graft[- ]v\w*[- ]host|allograft|gvhd)\b']
+  - ta: vaccines
+    patterns: ['\b(vaccin\w+|immuni[sz]ation)\b']
+  - ta: infectious_disease
+    patterns:
+      - '\b(infect\w+|sepsis|septic|hiv|hepatitis|tuberculosis|malaria|covid|influenza|pneumonia|bacter\w+|vir(al|us)|fungal|candid\w+|meningitis)\b'
+  - ta: ophthalmology
+    patterns: ['\b(retina\w*|macula\w*|ocular|ophthalm\w+|uveitis|glaucoma|conjunctivitis|keratitis|cornea\w*|vision|blindness)\b']
+  - ta: dermatology
+    patterns: ['\b(psoriasis|dermatitis|eczema|vitiligo|alopecia|acne|urticaria|hidradenitis|pruritus|skin disease|cutaneous)\b']
+  - ta: rheumatology
+    patterns: ['\b(rheumat\w+|arthritis|lupus|spondyl\w+|scleroderma|sjogren|vasculitis|gout)\b']
+  - ta: respiratory
+    patterns: ['\b(asthma|copd|pulmonary|respiratory|lung|bronch\w+|cystic fibrosis|emphysema|rhinosinusitis)\b']
+  - ta: cardiovascular
+    patterns: ['\b(cardi\w+|heart|coronary|myocardial|atrial|arrhythmi\w+|hypertension|atheroscler\w+|thromb\w+|stroke volume|vascular)\b']
+  - ta: neurology
+    patterns: ['\b(stroke|epilep\w+|seizure|multiple sclerosis|parkinson|alzheimer|dementia|migraine|neuropath\w+|neurolog\w+|myasthenia|amyotrophic)\b']
+  - ta: psychiatry
+    patterns: ['\b(schizophren\w+|depress\w+|bipolar|anxiety|psychiat\w+|autism|adhd|attention deficit|psychosis|ptsd|obsessive)\b']
+  - ta: substance_use
+    patterns: ['\b(opioid[- ]related|substance[- ]related|addiction|alcoholism|alcohol use|tobacco use|smoking|nicotine)\b']
+  - ta: metabolic_endocrine
+    patterns: ['\b(diabet\w+|obesity|overweight|dyslipid\w+|cholesterol|thyroid|metabolic syndrome|endocrin\w+|hypoglyc\w+|hyperglyc\w+)\b']
+  - ta: gastroenterology_hepatology
+    patterns: ['\b(hepat\w+(?!itis [bc])|liver|cirrhosis|steatot\w+|colitis|crohn|bowel|gastro\w+|coeliac|celiac|pancreatitis|esophag\w+)\b']
+  - ta: nephrology_urology
+    patterns: ['\b(renal|kidney|nephr\w+|dialysis|urinar\w+|bladder|prostatic hyperplasia|incontinence)\b']
+  - ta: haematology
+    patterns: ['\b(anemia|anaemia|sickle|thalassemia|thalassaemia|h(a)?emophilia|thrombocytopeni\w+|neutropeni\w+|transfusion)\b']
+  - ta: immunology_inflammation
+    patterns: ['\b(autoimmun\w+|immunodeficien\w+|allerg\w+|hypersensitivit\w+|atopy|inflammat\w+)\b']
+  - ta: obstetrics_gynaecology
+    patterns: ['\b(pregnan\w+|obstetric|labou?r|eclampsia|endometriosis|infertilit\w+|contracept\w+|menopaus\w+|perinatal|neonat\w+|preterm)\b']
+  - ta: anaesthesia_critical_care
+    patterns: ['\b(an(a)?esthes\w+|sedation|intensive care|critical (care|illness)|ventilat\w+|postoperative|perioperative|resuscitat\w+|shock)\b']
+  - ta: musculoskeletal_pain
+    patterns: ['\b(osteoarthritis|osteoporosis|pain|analgesi\w+|fracture|musculoskeletal|tendin\w+|back pain)\b']
+  - ta: otolaryngology_dental
+    patterns: ['\b(otitis|hearing|tinnitus|dental|periodont\w+|oral health|tonsil\w+|laryng\w+)\b']
+  - ta: rare_genetic
+    patterns: ['\b(hereditar\w+|congenital|inborn error|orphan disease|muscular dystrophy|amyloidosis|telangiectasia)\b']
+
+# Fallbacks when nothing above hits.
+defaults:
+  no_pattern_matched: other
+  no_mesh_terms_on_study: not_stated
+
+# Anything a reviewer should know before relying on this file.
+caveats:
+  - >-
+    The tree_prefixes table is written from the MeSH C/F branch structure and has
+    NOT been validated against a live `mesh_terms` join -- this environment cannot
+    reach AACT (egress-blocked) and no warehouse has been pulled yet. Layers 1 and
+    3 are written to stand alone, so the mapping degrades to descriptor matching
+    rather than breaking if a prefix is wrong; the first real pull should
+    nonetheless diff tree-derived areas against pattern-derived ones and reconcile.
+  - >-
+    Neither backend's condition table is pulled today -- `pull` writes only
+    raw.studies and raw.design_outcomes. Adding raw.browse_conditions (and
+    raw.browse_interventions, needed for the vaccines rule) is a prerequisite for
+    running this mapping, and is what `endpoints pull --ta` is currently blocked on.
+  - >-
+    NLM's condition coding is algorithmic and imperfect at the study level. Treat a
+    derived TA as a grouping convenience, not as a study attribute of record.

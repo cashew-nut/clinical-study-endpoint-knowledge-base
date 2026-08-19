@@ -1,0 +1,197 @@
+# Dimension: THERAPEUTIC AREA.
+#
+# Not a native field on either ingestion backend -- it is derived from the study's
+# MeSH-coded conditions (see ta_mesh_mapping.yaml). This file is only the closed
+# list of areas plus the rules for resolving a study that maps to several.
+#
+# Granularity is the industry/ICH-style TA split a clinical development group would
+# recognise, not the MeSH tree itself. MeSH's top-level C branches are organ
+# systems; a TA is how trials are actually organised (oncology is one TA whatever
+# organ the tumour is in, vaccines are one TA whatever the pathogen).
+#
+# `precedence` breaks ties when a study's conditions map to more than one TA, which
+# is the common case: a lung cancer trial codes to both Neoplasms and Respiratory
+# Tract Diseases, a diabetic macular oedema trial to both Eye Diseases and
+# Endocrine. Lower number wins for `primary_ta`. ALL matched areas are still kept
+# in a separate many-to-many table so the IN_TA graph edge stays truthful --
+# precedence picks a primary, it does not discard the others.
+#
+# The precedence order below encodes the convention that the disease being treated
+# beats the organ it appears in: oncology first (a tumour trial is an oncology
+# trial), then vaccines and infectious disease (a trial is defined by the pathogen,
+# not the organ it infects), then the organ-system areas, then the broad catch-alls
+# last so they only win when nothing specific matched.
+
+version: 1
+dimension: therapeutic_area
+terms:
+
+  - id: oncology
+    label: "Oncology"
+    precedence: 10
+    definition: "Malignant neoplasms and their treatment, including haematological malignancies."
+    synonyms: ["cancer", "oncology", "tumour", "tumor", "neoplasm", "malignancy", "carcinoma"]
+    notes: >-
+      Haematological malignancies (leukaemia, lymphoma, myeloma) are oncology, not
+      haematology -- haematology here means non-malignant blood disease. This split
+      matches how development groups are organised and keeps "haematology" from
+      becoming a synonym for oncology.
+
+  - id: vaccines
+    label: "Vaccines and immunisation"
+    precedence: 20
+    definition: "Prophylactic immunisation, immunogenicity, and vaccine safety."
+    synonyms: ["vaccine", "vaccination", "immunisation", "immunization", "prophylaxis"]
+
+  - id: infectious_disease
+    label: "Infectious disease"
+    precedence: 25
+    definition: "Bacterial, viral, fungal, and parasitic infection, including HIV, hepatitis, TB, and malaria."
+    synonyms: ["infection", "infectious disease", "antimicrobial", "antiviral", "HIV", "hepatitis", "sepsis"]
+
+  - id: cardiovascular
+    label: "Cardiovascular"
+    precedence: 30
+    definition: "Heart and vascular disease: heart failure, coronary disease, arrhythmia, hypertension, thrombosis."
+    synonyms: ["cardiology", "cardiovascular", "heart failure", "hypertension", "coronary"]
+
+  - id: metabolic_endocrine
+    label: "Metabolic and endocrine"
+    precedence: 35
+    definition: "Diabetes, obesity, dyslipidaemia, thyroid and other endocrine disease, inborn errors of metabolism."
+    synonyms: ["metabolic", "endocrine", "diabetes", "obesity", "lipids", "thyroid", "diabetology"]
+
+  - id: respiratory
+    label: "Respiratory"
+    precedence: 40
+    definition: "Airway and lung disease: asthma, COPD, cystic fibrosis, interstitial lung disease, pulmonary hypertension."
+    synonyms: ["respiratory", "pulmonary", "asthma", "COPD", "lung disease", "pulmonology"]
+
+  - id: neurology
+    label: "Neurology"
+    precedence: 45
+    definition: "Nervous system disease: stroke, epilepsy, multiple sclerosis, Parkinson's, Alzheimer's, migraine, neuropathy."
+    synonyms: ["neurology", "neurological", "stroke", "epilepsy", "multiple sclerosis", "dementia"]
+
+  - id: psychiatry
+    label: "Psychiatry and mental health"
+    precedence: 50
+    definition: "Mental and behavioural disorders: depression, schizophrenia, anxiety, bipolar, ADHD, autism."
+    synonyms: ["psychiatry", "mental health", "depression", "schizophrenia", "anxiety", "psychiatric"]
+
+  - id: substance_use
+    label: "Substance use and addiction"
+    precedence: 52
+    definition: "Opioid, alcohol, tobacco, and other substance use disorders, and smoking cessation."
+    synonyms: ["addiction", "substance use", "opioid use disorder", "smoking cessation", "alcohol dependence"]
+    notes: >-
+      Split from psychiatry because trials, endpoints (abstinence, retention in
+      treatment), and regulatory pathways are distinct, and both appear in the
+      sample.
+
+  - id: immunology_inflammation
+    label: "Immunology and inflammation"
+    precedence: 55
+    definition: "Systemic autoimmune and inflammatory disease, allergy, and immunodeficiency."
+    synonyms: ["immunology", "autoimmune", "inflammation", "allergy", "atopy", "immunodeficiency"]
+
+  - id: rheumatology
+    label: "Rheumatology"
+    precedence: 58
+    definition: "Inflammatory joint and connective tissue disease: rheumatoid arthritis, psoriatic arthritis, axial spondyloarthritis, lupus, systemic sclerosis, gout."
+    synonyms: ["rheumatology", "rheumatoid arthritis", "arthritis", "lupus", "spondyloarthritis"]
+
+  - id: dermatology
+    label: "Dermatology"
+    precedence: 60
+    definition: "Skin disease: psoriasis, atopic dermatitis, vitiligo, alopecia areata, acne, hidradenitis."
+    synonyms: ["dermatology", "skin", "psoriasis", "atopic dermatitis", "eczema", "cutaneous"]
+
+  - id: ophthalmology
+    label: "Ophthalmology"
+    precedence: 62
+    definition: "Eye disease: diabetic macular oedema, AMD, glaucoma, thyroid eye disease, allergic conjunctivitis."
+    synonyms: ["ophthalmology", "eye", "retina", "macular", "ocular", "vision"]
+
+  - id: gastroenterology_hepatology
+    label: "Gastroenterology and hepatology"
+    precedence: 64
+    definition: "Digestive and liver disease: IBD, coeliac, MASH/NASH, cirrhosis, chronic hepatitis complications."
+    synonyms: ["gastroenterology", "hepatology", "IBD", "Crohn", "ulcerative colitis", "liver", "NASH", "MASH"]
+
+  - id: nephrology_urology
+    label: "Nephrology and urology"
+    precedence: 66
+    definition: "Kidney and urinary tract disease: CKD, IgA nephropathy, dialysis, incontinence, BPH."
+    synonyms: ["nephrology", "urology", "renal", "kidney", "CKD", "dialysis", "bladder"]
+
+  - id: haematology
+    label: "Haematology (non-malignant)"
+    precedence: 68
+    definition: "Non-malignant blood disease: sickle cell, thalassaemia, haemophilia, anaemia, ITP, transfusion medicine."
+    synonyms: ["haematology", "hematology", "sickle cell", "haemophilia", "anaemia", "thalassaemia"]
+
+  - id: musculoskeletal_pain
+    label: "Musculoskeletal and pain"
+    precedence: 70
+    definition: "Non-inflammatory musculoskeletal disease and pain: osteoarthritis, osteoporosis, back pain, post-operative and chronic pain."
+    synonyms: ["musculoskeletal", "orthopaedic", "osteoarthritis", "osteoporosis", "pain", "analgesia"]
+
+  - id: obstetrics_gynaecology
+    label: "Obstetrics, gynaecology, and reproductive health"
+    precedence: 72
+    definition: "Pregnancy, labour, fertility, contraception, endometriosis, menopause."
+    synonyms: ["obstetrics", "gynaecology", "gynecology", "pregnancy", "fertility", "reproductive", "perinatal"]
+
+  - id: anaesthesia_critical_care
+    label: "Anaesthesia and critical care"
+    precedence: 74
+    definition: "Peri-operative care, anaesthesia, sedation, and intensive care including sepsis management and ventilation."
+    synonyms: ["anaesthesia", "anesthesia", "critical care", "intensive care", "ICU", "perioperative", "sedation"]
+
+  - id: transplantation
+    label: "Transplantation"
+    precedence: 76
+    definition: "Solid organ and haematopoietic stem cell transplantation, graft-versus-host disease, and rejection."
+    synonyms: ["transplantation", "transplant", "graft", "GVHD", "HSCT", "allograft"]
+
+  - id: rare_genetic
+    label: "Rare and genetic disease"
+    precedence: 78
+    definition: "Monogenic and rare disorders not better placed in an organ-system area: HHT, lysosomal storage disease, muscular dystrophy."
+    synonyms: ["rare disease", "orphan", "genetic disorder", "congenital", "inherited"]
+
+  - id: otolaryngology_dental
+    label: "ENT and dental"
+    precedence: 80
+    definition: "Ear, nose, throat, oral, and dental conditions."
+    synonyms: ["ENT", "otolaryngology", "dental", "oral health", "hearing", "rhinitis"]
+
+  - id: other
+    label: "Other / not classified"
+    precedence: 900
+    definition: >-
+      The study's conditions carry MeSH codes but none map to an area above --
+      health services research, general symptom management, healthy-volunteer
+      studies. A real classification, not a failure.
+    synonyms: []
+
+  - id: not_stated
+    label: "No MeSH conditions available"
+    precedence: 999
+    definition: >-
+      The study has no usable MeSH condition codes, so no area can be derived.
+      Distinct from `other`: there is nothing to classify, rather than nothing that
+      matched.
+    synonyms: []
+
+# How a study with several matching areas is resolved.
+resolution:
+  keep_all_matches: true          # study_therapeutic_area is many-to-many
+  primary_by: precedence          # lowest `precedence` wins for the endpoint's ta_id
+  tie_break: mesh_term_frequency  # then the area backed by most matching conditions
+  notes: >-
+    `conformed.endpoints.ta_id` carries the primary only, because an endpoint needs
+    one TA to group by. The full set lives alongside it so the IN_TA edges and any
+    "trials in both oncology and ophthalmology" query stay correct. If a query ever
+    needs to override the precedence order, it can -- the raw matches are there.

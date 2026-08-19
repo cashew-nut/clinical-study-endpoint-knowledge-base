@@ -1,0 +1,323 @@
+# Dimension: REFERENCE -- what the endpoint is measured against.
+#
+# The plan's reference table mixes two things under this heading on purpose
+# ("Randomisation", "Baseline sum of diameters", "Patient pre-dose baseline"), and
+# that is the right call: for a time-to-event endpoint the thing you measure
+# against is a time origin, for a change endpoint it is a prior value, and for a
+# target-attainment endpoint it is an external standard. All three answer the same
+# question -- "relative to what?" -- so they share a dimension, and `kind` keeps
+# them separable in SQL:
+#
+#   time_origin       -- a clock starts here (randomisation, first dose, surgery)
+#   value_reference   -- a prior measurement on the same participant
+#   external_standard -- a value from outside the participant (a guideline
+#                        threshold, a predicted-normal value, the control arm)
+#
+# `implies_form` records the forms a reference is normally seen with; the
+# conforming pipeline can use it to upgrade a form of `not_stated`, but must record
+# that as an inference, not an exact match.
+
+version: 1
+dimension: reference
+terms:
+
+  # --- time origins --------------------------------------------------------
+  - id: randomisation
+    label: "Randomisation"
+    kind: time_origin
+    definition: >-
+      The moment of random treatment assignment. The default time origin for
+      time-to-event efficacy endpoints in a randomised trial, and the origin the
+      ITT estimand is defined from.
+    implies_form: [time_to_event, event_free_rate_at_timepoint]
+    synonyms:
+      - "randomization"
+      - "randomisation"
+      - "from randomization"
+      - "date of randomization"
+      - "time of randomization"
+    patterns:
+      - '\brandomi[sz]ation\b'
+      - '\brandomi[sz]ed\b'
+
+  - id: treatment_start
+    label: "First dose / start of treatment"
+    kind: time_origin
+    definition: >-
+      Administration of the first dose of study intervention. The origin for the
+      treatment-emergent window that defines a TEAE, and the usual origin for
+      single-arm and safety endpoints.
+    implies_form: [incidence_proportion, event_count, event_rate, time_to_event]
+    synonyms:
+      - "first dose"
+      - "start of treatment"
+      - "treatment initiation"
+      - "start of exposure"
+      - "initiation of study drug"
+      - "treatment-emergent"
+    patterns:
+      - '\b(first|initial) dose\b'
+      - '\bstart of (treatment|exposure|study (drug|intervention))\b'
+      - '\btreatment[- ]emergent\b'
+
+  - id: enrolment
+    label: "Enrolment / informed consent"
+    kind: time_origin
+    definition: >-
+      Signing of informed consent, screening, or enrolment -- used when safety
+      collection begins before any dose is given.
+    implies_form: [incidence_proportion, event_count]
+    synonyms:
+      - "enrollment"
+      - "enrolment"
+      - "informed consent"
+      - "ICF"
+      - "inclusion"
+      - "study entry"
+    patterns:
+      - '\b(enrol?lment|informed consent|ICF|study entry|inclusion)\b'
+
+  - id: index_event
+    label: "Index clinical event or procedure"
+    kind: time_origin
+    definition: >-
+      A clinical event or procedure that starts the clock: surgery, transplant,
+      stroke onset, hospital admission, delivery, index infection.
+    implies_form: [time_to_event, incidence_proportion, event_free_rate_at_timepoint]
+    synonyms:
+      - "post-operative"
+      - "after surgery"
+      - "post-transplantation"
+      - "index date"
+      - "periprocedural"
+      - "symptom onset"
+      - "admission"
+    patterns:
+      - '\b(post|after|following)[- ](surgery|operation|procedure|transplant\w*|admission|discharge|delivery|infusion)\b'
+      - '\bindex (date|event|procedure|hospitali[sz]ation)\b'
+      - '\bperiprocedural\b'
+      - '\bfrom (spinal |general )?an(a)?esthesia\b'
+
+  # --- value references ----------------------------------------------------
+  - id: patient_baseline
+    label: "Participant's own baseline"
+    kind: value_reference
+    definition: >-
+      The participant's last pre-treatment value of the same measurement. The
+      default reference for every change-from-baseline endpoint.
+    implies_form: [change_from_baseline, percent_change_from_baseline, ratio_to_baseline, shift_from_baseline]
+    synonyms:
+      - "baseline"
+      - "from baseline"
+      - "pre-treatment"
+      - "pre-treatment value"
+      - "day 1"
+      - "week 0"
+    patterns:
+      - '\bfrom baseline\b'
+      - '\bbaseline\b'
+      - '\bpre[- ]?treatment\b'
+
+  - id: pre_dose
+    label: "Pre-dose value (same day)"
+    kind: value_reference
+    definition: >-
+      A value taken immediately before a dose within a dosing interval, rather than
+      the study-level baseline. The reference for trough PK and for within-day
+      haemodynamic measures.
+    implies_form: [change_from_baseline, value_at_timepoint, ratio_to_baseline]
+    synonyms:
+      - "pre-dose"
+      - "predose"
+      - "trough"
+      - "before dosing"
+      - "pre-dose baseline"
+    patterns:
+      - '\bpre[- ]?dose\b'
+      - '\btrough\b'
+
+  - id: screening
+    label: "Screening value"
+    kind: value_reference
+    definition: >-
+      The value recorded at the screening visit, used where screening and baseline
+      are deliberately distinct (run-in periods, washout designs).
+    implies_form: [change_from_baseline, shift_from_baseline]
+    synonyms:
+      - "screening"
+      - "at screening"
+      - "screening visit"
+    patterns:
+      - '\bscreening\b'
+
+  - id: parent_trial_baseline
+    label: "Parent-trial baseline"
+    kind: value_reference
+    definition: >-
+      The baseline of the originating trial, referenced from an extension or
+      rollover study. Distinguishing this from the extension's own baseline is
+      essential -- "maintained 80% of the weight reduction achieved in the parent
+      trial" is anchored two studies back.
+    implies_form: [change_from_baseline, percent_change_from_baseline, responder_proportion]
+    synonyms:
+      - "baseline of the parent trial"
+      - "parent trial baseline"
+      - "parent study baseline"
+      - "achieved in the parent trial"
+      - "OL baseline"
+    patterns:
+      - '\bparent (trial|study)\b'
+      - '\bbaseline of the (parent|originating|preceding) (trial|study)\b'
+
+  - id: baseline_sum_of_diameters
+    label: "Baseline sum of diameters (RECIST)"
+    kind: value_reference
+    definition: >-
+      The sum of the longest diameters of RECIST target lesions at baseline. The
+      denominator for the >=30% decrease that defines a RECIST partial response.
+    implies_form: [responder_proportion, percent_change_from_baseline]
+    synonyms:
+      - "baseline sum of diameters"
+      - "sum of longest diameters"
+      - "SLD"
+      - "sum of target lesion diameters"
+      - "baseline target lesion"
+    patterns:
+      - '\bsum of (the )?(longest )?diameters\b'
+      - '\b(SLD|SoD)\b'
+      - '\btarget lesion\w* .{0,20}baseline\b'
+
+  - id: nadir
+    label: "Nadir (smallest value on study)"
+    kind: value_reference
+    definition: >-
+      The smallest value recorded so far on study, including baseline. RECIST
+      progressive disease is defined against the nadir, not against baseline --
+      conflating the two is a real error, so it gets its own term.
+    implies_form: [responder_proportion, percent_change_from_baseline, time_to_event]
+    synonyms:
+      - "nadir"
+      - "smallest sum on study"
+      - "best response"
+      - "lowest value on study"
+    patterns:
+      - '\bnadir\b'
+      - '\bsmallest sum\b'
+
+  # --- external standards --------------------------------------------------
+  - id: absolute_threshold
+    label: "Fixed clinical threshold"
+    kind: external_standard
+    definition: >-
+      A guideline or protocol-defined absolute target that is the same for every
+      participant -- HbA1c < 7%, HIV-1 RNA < 50 copies/mL, rSBA titre >= 1:8, BCVA
+      Snellen 20/40 or better. The participant's own baseline is irrelevant.
+    implies_form: [responder_proportion, proportion_of_time_in_state]
+    synonyms:
+      - "target"
+      - "goal"
+      - "threshold"
+      - "cut-off"
+      - "seroprotection threshold"
+      - "normal range"
+    patterns:
+      - '\b(achiev\w+|attain\w+|reach\w+|maintain\w+) .{0,40}(<|>|≤|≥|less than|greater than|below|above)\s*\d'
+      - '\b(target|goal|threshold|cut-?off)\b'
+
+  - id: predicted_normal
+    label: "Predicted-normal value"
+    kind: external_standard
+    definition: >-
+      A population-normative predicted value derived from age, sex, height, and
+      ethnicity -- percent-predicted FEV1, FVC, DLCO, and comparable normative
+      references. The unit "% predicted" is the giveaway.
+    implies_form: [value_at_timepoint, change_from_baseline]
+    synonyms:
+      - "percent predicted"
+      - "% predicted"
+      - "predicted normal"
+      - "ppFEV1"
+      - "predicted value"
+    patterns:
+      - '%\s*(of\s*)?predicted\b'
+      - '\bpercent(age)? predicted\b'
+      - '\bpp(FEV1|FVC)\b'
+
+  - id: normative_population_score
+    label: "Normative population score"
+    kind: external_standard
+    definition: >-
+      A score calibrated against a reference population rather than the
+      participant's own baseline -- PROMIS T-scores (mean 50, SD 10), cognitive
+      z-scores.
+    implies_form: [value_at_timepoint]
+    synonyms:
+      - "T-score"
+      - "z-score"
+      - "standardised score"
+      - "calibrated to a mean t-score of 50"
+    patterns:
+      - '\b(T|z)[- ]scores?\b'
+      - '\bcalibrated to a mean\b'
+
+  - id: comparator_arm
+    label: "Concurrent comparator arm"
+    kind: external_standard
+    definition: >-
+      The endpoint is defined explicitly as a between-arm contrast rather than a
+      within-participant quantity -- "ocular itch score in participants receiving X
+      as compared to placebo".
+    implies_form: [change_from_baseline, value_at_timepoint, responder_proportion]
+    synonyms:
+      - "as compared to placebo"
+      - "versus placebo"
+      - "compared with control"
+      - "relative to comparator"
+      - "between-group difference"
+    patterns:
+      - '\b(as )?compared (to|with)\b'
+      - '\bversus\b'
+      - '\bvs\.?\b'
+      - '\bbetween[- ](group|arm|treatment) difference\b'
+
+  # --- unresolved ----------------------------------------------------------
+  - id: none
+    label: "No reference (absolute quantity)"
+    kind: value_reference
+    definition: >-
+      The endpoint is an absolute quantity with nothing to compare against -- Cmax,
+      a raw event count, a concentration. Distinct from not_stated: here we are
+      confident there is no reference.
+    implies_form: [value_at_timepoint, auc_over_time, event_count]
+
+  - id: not_stated
+    label: "Reference not determinable"
+    kind: value_reference
+    definition: >-
+      The text does not say what the endpoint is measured against and no default
+      applies. Kept explicit so an unresolved reference is visible rather than null.
+
+# Precedence when several references match. Earlier wins. The specific baselines
+# must beat the generic one: "baseline sum of diameters" and "baseline of the
+# parent trial" both contain the word "baseline".
+match_precedence:
+  - baseline_sum_of_diameters
+  - parent_trial_baseline
+  - nadir
+  - predicted_normal
+  - normative_population_score
+  - pre_dose
+  - screening
+  - patient_baseline
+  - randomisation
+  - treatment_start
+  - index_event
+  - enrolment
+  - absolute_threshold
+  - comparator_arm
+  - none
+  - not_stated
+
+# Declared fallback: a raw string matching no term above conforms to `not_stated`
+# rather than to NULL, so unresolved values stay countable.
+default_when_unmatched: not_stated

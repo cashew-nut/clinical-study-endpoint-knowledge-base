@@ -6,6 +6,7 @@ shape, and each stub names the step that implements it.
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -21,6 +22,13 @@ from clinical_endpoints.ingest import aact as aact_backend
 from clinical_endpoints.ingest import ctgov_api as ctgov_api_backend
 from clinical_endpoints.ingest.ctgov_api import CtgovApiError
 from clinical_endpoints.ingest.filters import PullFilters
+from clinical_endpoints.vocab.loader import (
+    VocabError,
+    default_vocab_dir,
+    load_vocab,
+    validate_vocab,
+    write_vocab_tables,
+)
 from clinical_endpoints.vocab.sample import run_vocab_sample
 
 SOURCES = ("aact", "ctgov_api")
@@ -147,9 +155,58 @@ def vocab_sample(
 
 
 @vocab_app.command("validate")
-def vocab_validate() -> None:
-    """Load vocab/*.yaml into vocab.* tables; check uniqueness, no orphan synonyms."""
-    _not_yet_implemented("vocab validate", "step 2 (checkpoint back to chat, not Claude Code)")
+def vocab_validate(
+    vocab_dir: Optional[str] = typer.Option(
+        None, "--vocab-dir", help="Path to the vocab/ directory (default: found by walking up from cwd)."
+    ),
+    warehouse: str = typer.Option(
+        "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
+    ),
+    check_only: bool = typer.Option(
+        False, "--check-only", help="Validate without writing to the warehouse."
+    ),
+    strict: bool = typer.Option(
+        False, "--strict", help="Treat warnings as errors."
+    ),
+) -> None:
+    """Load vocab/*.yaml into vocab.* tables; check ids, synonyms, regexes, cross-file refs."""
+    try:
+        resolved = Path(vocab_dir) if vocab_dir else default_vocab_dir()
+        docs = load_vocab(resolved)
+    except VocabError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    result = validate_vocab(docs)
+
+    for warning in result.warnings:
+        console.print(f"[yellow]warning[/yellow]  {warning}")
+    for error in result.errors:
+        console.print(f"[red]error[/red]    {error}")
+
+    if result.errors or (strict and result.warnings):
+        console.print(
+            f"[red]{len(result.errors)} error(s), {len(result.warnings)} warning(s) "
+            f"in {resolved} -- nothing written.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    summary = ", ".join(f"{dim}={n}" for dim, n in sorted(result.term_counts.items()))
+    if check_only:
+        console.print(f"[green]Vocabulary valid[/green] ({summary}); --check-only, nothing written.")
+        return
+
+    con = connect(warehouse)
+    try:
+        counts = write_vocab_tables(con, docs, vocab_dir=resolved)
+    finally:
+        con.close()
+
+    console.print(f"[green]Vocabulary valid[/green] ({summary})")
+    console.print(
+        f"Wrote {sum(counts.values())} rows across {len(counts)} vocab.* tables -> {warehouse}"
+        + (f" ({len(result.warnings)} warning(s))" if result.warnings else "")
+    )
 
 
 @app.command()

@@ -17,13 +17,20 @@ covers setup, refresh, and ad hoc querying.
 
 ## Status
 
-Build-order step 1 (scaffold + ingestion) is implemented: `endpoints pull`.
-Build-order step 2's export half is also implemented: `endpoints vocab
-sample`, which writes `raw.design_outcomes` measure/description/time_frame
-values as a long-format CSV (`field, value, frequency`, one block per field,
-most frequent first) for human vocab review. `vocab validate` and everything
-else in `endpoints --help` is stubbed pending later steps (conforming
-pipeline, graph layer).
+Build-order steps 1 and 2 are implemented.
+
+**Step 1 (scaffold + ingestion):** `endpoints pull`.
+
+**Step 2 (vocabulary):** `endpoints vocab sample` exports the distinct
+measure/description/time_frame strings with frequency counts for human review,
+and the eight controlled vocabularies in [`vocab/`](vocab/) are written and
+validated. `endpoints vocab validate` loads them into `vocab.*` tables, checking
+id uniqueness, orphan/ambiguous synonyms, regex compilability, and cross-file
+referential integrity. See [`vocab/README.md`](vocab/README.md) for the schema,
+the judgment calls behind the category boundaries, and measured coverage.
+
+`conform`, `review`, `graph build`, `query`, and `export` are stubbed pending
+steps 3 and 4.
 
 ## Setup
 
@@ -65,6 +72,9 @@ Two interchangeable backends, selected with `--source`, both writing the same
 ## Usage
 
 ```bash
+# Validate the controlled vocabularies and load them into vocab.*
+uv run endpoints vocab validate
+
 # Pull the 500 most recent Phase 3 studies (and their design_outcomes) into raw.*
 # (uses --source ctgov_api by default)
 uv run endpoints pull --phase 3 --limit 500
@@ -84,8 +94,12 @@ refresh, not a one-off script -- the pull history in `raw._pull_log`
 accumulates across runs.
 
 `--ta` (therapeutic area filter) is accepted by the CLI but not implemented
-yet: TA is derived from a MeSH condition mapping built during the vocab
-review step, not a native field on either source.
+yet. The MeSH -> therapeutic area mapping it needs now exists
+(`vocab/ta_mesh_mapping.yaml`), but the conditions it maps are not pulled: both
+backends currently write only `raw.studies` and `raw.design_outcomes`. Adding
+`raw.browse_conditions` (and `raw.browse_interventions`, which the vaccines rule
+needs) is the remaining prerequisite -- see "Known gaps" in
+[`vocab/README.md`](vocab/README.md).
 
 ### A note on the `ctgov_api` backend
 
@@ -95,6 +109,37 @@ can't reach `clinicaltrials.gov` either. If a `pull --source ctgov_api` call
 fails with a `ClinicalTrials.gov API returned HTTP ...` error, the error
 includes the full response body, which is normally enough to identify and
 fix the one wrong field/param name (see `src/clinical_endpoints/ingest/ctgov_api.py`).
+
+## Vocabulary
+
+Eight versioned YAML files in [`vocab/`](vocab/), one per dimension:
+
+| file | terms | dimension |
+|---|---|---|
+| `forms.yaml` | 16 | what kind of number the endpoint is |
+| `measurements.yaml` | 153 | what quantity or event it is about |
+| `references.yaml` | 16 | what it is measured against |
+| `directions.yaml` | 7 | which way is better (derived, not matched) |
+| `scales.yaml` | 57 | the unit |
+| `therapeutic_areas.yaml` | 24 | therapeutic area |
+| `timepoint_patterns.yaml` | 11 | `time_frame` categories + extraction regexes |
+| `ta_mesh_mapping.yaml` | -- | MeSH condition/intervention -> TA |
+
+```bash
+uv run endpoints vocab validate               # check, then write vocab.* tables
+uv run endpoints vocab validate --check-only  # check without writing
+uv run endpoints vocab validate --strict      # warnings become errors
+```
+
+Validation covers id uniqueness and format, synonyms claimed by more than one
+term, regex compilability, cross-file referential integrity (a `default_scale`
+that names no scale, a `direction_by_ta` keyed on a therapeutic area that does
+not exist), match-precedence lists that have drifted out of step with their
+terms, tied precedence/priority values, and closed value sets. Errors fail the
+command and write nothing; warnings are reported and do not.
+
+`vocab/README.md` documents the schema, the decisions worth reviewing, and
+measured coverage against the 500-study sample.
 
 ## Querying the warehouse directly
 
@@ -115,6 +160,19 @@ SELECT pull_id, pulled_at, filters_json, row_counts FROM raw._pull_log ORDER BY 
 SELECT outcome_type, measure, time_frame, description
 FROM raw.design_outcomes
 WHERE nct_id = 'NCT00000000';
+
+-- Vocabulary: forms in match order, with how each derives Direction
+SELECT p.rank, f.id, f.direction_rule
+FROM vocab.term_precedence p JOIN vocab.forms f ON f.id = p.term_id
+WHERE p.dimension = 'form' ORDER BY p.rank;
+
+-- Measurement concepts covered by more than one instrument
+SELECT concept, count(*) AS instruments, string_agg(id, ', ') AS ids
+FROM vocab.measurements GROUP BY 1 HAVING count(*) > 1 ORDER BY 2 DESC;
+
+-- Every synonym that resolves to a given measurement
+SELECT synonym FROM vocab.synonyms
+WHERE dimension = 'measurement' AND term_id = 'hba1c';
 ```
 
 `endpoints query "<sql>"` and `endpoints export --query "<sql>" --format ...`
@@ -124,7 +182,7 @@ step 4) -- the `duckdb` CLI above works today as the escape hatch.
 ## Repo layout
 
 ```
-vocab/            controlled vocabularies (YAML), populated in build-order step 2
+vocab/            controlled vocabularies (YAML) -- see vocab/README.md
 src/clinical_endpoints/
   db.py           DuckDB connection + AACT attach
   ingest/
@@ -134,6 +192,8 @@ src/clinical_endpoints/
     ctgov_api.py  ClinicalTrials.gov API v2 backend (default)
   vocab/
     sample.py     `vocab sample` CSV export (step 2)
+    schema.py     declarative description of the vocab/*.yaml files
+    loader.py     `vocab validate`: parse, validate, write vocab.* tables
   conform/        normalize / syntactic rules / semantic fallback / threshold+timepoint parsers (step 3)
   graph/          node/edge materialization (step 4)
   cli/            `endpoints` CLI
