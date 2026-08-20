@@ -58,22 +58,21 @@ terms:
     typical_ta: [oncology]
     synonyms: ["RECIST", "objective response", "objective response rate", "ORR", "overall response rate",
                "tumour response", "tumor response", "disease control rate", "DCR", "target lesion",
-               "sum of diameters", "progression-free survival", "PFS", "radiographic progression-free survival",
-               "rPFS", "duration of response", "DOR", "complete response", "partial response",
-               "best overall response", "time to progression", "TTP", "time to response", "TTR"]
+               "sum of diameters", "complete response", "partial response", "best overall response"]
     patterns:
       - '\b(objective|overall|complete|partial|best overall) response\b'
-      - '\b(r)?PFS\b'
-      - '\bprogression[- ]free survival\b'
       - '\bdisease control (rate)?\b'
       - '\bRECIST\b'
-      - '\bduration of response\b'
     notes: >-
       The plan's reference table names this as the measurement shared by PFS and
       ORR; that shared id is what makes them a SAME_MEASUREMENT_DIFFERENT_FORM pair.
       The >=30% decrease in the sum of diameters that defines a RECIST partial
       response is a Threshold on this measurement, parsed separately -- it is a
-      convention of the criteria, not part of the term.
+      convention of the criteria, not part of the term. PFS/rPFS/TTP/DOR/TTR --
+      the endpoint NAMES built on this measurement -- moved to
+      named_endpoints.yaml with docs/EVENT_SEMANTICS_SPEC.md; this measurement
+      id is unaffected (still the PFS<->ORR join key) -- only the synonyms that
+      named the endpoint, rather than the assessment, moved with them.
 
   - id: vital_status
     label: "Vital status (death from any cause)"
@@ -82,19 +81,23 @@ terms:
     method: clinical_event
     domain: efficacy
     event_polarity: harm
-    synonyms: ["overall survival", "OS", "death", "mortality", "all-cause mortality", "death rate",
-               "time to death", "survival", "in-hospital mortality", "28-day mortality", "transplant-related mortality"]
+    implies_event: death_any_cause
+    synonyms: ["death", "mortality", "all-cause mortality", "death rate",
+               "in-hospital mortality", "28-day mortality", "transplant-related mortality"]
     patterns:
-      - '\boverall survival\b'
       - '\b(all[- ]cause |in[- ]hospital )?mortality\b'
-      - '\btime to (all[- ]cause )?death\b'
-      - '^OS$'
     notes: >-
       Under time_to_event this yields longer_is_better (OS); under
       incidence_proportion, decrease_is_better (30-day mortality); under
       event_free_rate_at_timepoint, increase_is_better (2-year OS rate). One
       measurement, three directions, all derived -- which is the point of keeping
-      direction out of this file.
+      direction out of this file. "Overall survival"/"OS"/"time to death" and the
+      bare "survival" synonym moved out with docs/EVENT_SEMANTICS_SPEC.md -- the
+      first two into named_endpoints.yaml's `os` definition, "time to death" into
+      events.yaml's `death_any_cause`, and bare "survival" dropped rather than
+      migrated: it named no specific endpoint, and once the sharper PFS/DFS-name
+      synonyms it used to lose length-ties to were gone, it was a false-match
+      risk on any "...-free survival" text.
 
   - id: disease_recurrence
     label: "Disease recurrence or relapse"
@@ -102,15 +105,23 @@ terms:
     method: clinical_event
     domain: efficacy
     event_polarity: harm
+    implies_event: disease_recurrence
     typical_ta: [oncology, haematology]
-    synonyms: ["disease-free survival", "DFS", "relapse-free survival", "RFS", "recurrence-free survival",
-               "event-free survival", "EFS", "leukemia-free survival", "LFS", "recurrence rate",
-               "locoregional recurrence", "invasive breast cancer-free survival", "iBCFS",
-               "graft-versus-host disease-free/failure-free survival", "GFFS"]
+    synonyms: ["recurrence rate", "locoregional recurrence"]
     patterns:
-      - '\b(disease|relapse|recurrence|event|leukemia|leukaemia|progression)[- ]free survival\b'
       - '\b(locoregional |axillary |distant )?recurrence\b'
       - '\brelapse\b'
+    notes: >-
+      "Disease-free survival"/DFS/RFS/EFS/LFS and their disease-specific
+      spellings (iBCFS, GFFS) -- the endpoint NAMES built on this measurement
+      -- moved to named_endpoints.yaml's `dfs`/`efs` definitions with
+      docs/EVENT_SEMANTICS_SPEC.md, along with the `[- ]free survival` pattern
+      that used to match them (which, as a pre-existing latent defect this
+      migration surfaced, also matched "progression-free survival" -- PFS's
+      territory, a different measurement -- whenever nothing more specific
+      claimed the string first). This id is unaffected: rows still resolve
+      here, now via `named_endpoint` provenance instead of a direct
+      synonym/pattern match.
 
   - id: treatment_failure
     label: "Treatment failure / need for subsequent therapy"
@@ -119,12 +130,16 @@ terms:
     method: clinical_event
     domain: efficacy
     event_polarity: harm
+    implies_event: treatment_failure
     typical_ta: [oncology]
-    synonyms: ["failure-free survival", "FFS", "time to first subsequent therapy", "TFST",
-               "time to second subsequent therapy", "TSST", "time to next treatment", "treatment failure"]
-    patterns:
-      - '\bfailure[- ]free survival\b'
-      - '\btime to (first |second )?subsequent (therapy|treatment)\b'
+    synonyms: ["treatment failure"]
+    notes: >-
+      "Failure-free survival"/FFS/TFST/TSST/"time to next treatment" -- the
+      endpoint NAMES built on this measurement -- moved to
+      named_endpoints.yaml's `ffs`/`tfst` definitions with
+      docs/EVENT_SEMANTICS_SPEC.md. This id is unaffected: rows still resolve
+      here, now via `named_endpoint` provenance instead of a direct
+      synonym/pattern match.
 
   - id: minimal_residual_disease
     label: "Minimal residual disease"
@@ -262,6 +277,7 @@ terms:
     method: clinical_event
     domain: efficacy
     event_polarity: harm
+    implies_event: disease_exacerbation
     typical_ta: [respiratory, gastroenterology_hepatology, neurology]
     synonyms: ["exacerbation", "flare", "attack", "annualized exacerbation rate", "AER",
                "severe exacerbation", "moderate-to-severe exacerbation"]
@@ -1984,6 +2000,7 @@ terms:
     domain: efficacy
     default_direction: decrease_is_better
     event_polarity: harm
+    implies_event: disease_progression
     synonyms: ["disease progression", "progression of disease", "radiographic progression",
                "clinical progression", "progressive disease"]
     notes: >-

@@ -38,6 +38,7 @@ terms:
       defined event, analysed as a survival distribution (Kaplan-Meier / Cox),
       with censoring for participants who have not had the event.
     direction_rule: time_polarity
+    event_family: true
     typical_reference: [randomisation, treatment_start, index_event]
     typical_scale: [months, days, weeks, years]
     synonyms:
@@ -79,6 +80,7 @@ terms:
       horizon -- a landmark estimate, either a Kaplan-Meier point estimate or a
       crude proportion. "2-year overall survival", "3-year relapse-free survival".
     direction_rule: higher_count_better
+    event_family: true
     typical_reference: [randomisation, treatment_start, index_event]
     typical_scale: [percentage_of_participants, proportion]
     synonyms:
@@ -166,6 +168,7 @@ terms:
       defined event, where the event is a harm, a clinical event, or a state
       transition rather than a treatment "response".
     direction_rule: inherit_event_polarity
+    event_family: true
     typical_reference: [treatment_start, enrolment]
     typical_scale: [percentage_of_participants, proportion, count]
     synonyms:
@@ -373,6 +376,7 @@ terms:
       denominator -- number of seizures, number of injections, number of
       exacerbations.
     direction_rule: inherit_event_polarity
+    event_family: true
     typical_scale: [count]
     synonyms:
       - "number of events"
@@ -395,6 +399,7 @@ terms:
       Events per unit of person-time -- annualised rates, exacerbations per
       patient-year, bleeds per year.
     direction_rule: inherit_event_polarity
+    event_family: true
     typical_scale: [events_per_year]
     synonyms:
       - "annualized rate"
@@ -442,6 +447,7 @@ terms:
       hospital", "seizure-free days". A count, not a proportion and not a duration
       to a single event: participants who die are conventionally assigned zero.
     direction_rule: higher_count_better
+    event_family: true
     typical_reference: [randomisation, treatment_start]
     typical_scale: [days]
     synonyms:

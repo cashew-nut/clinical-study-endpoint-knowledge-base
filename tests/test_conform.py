@@ -22,6 +22,7 @@ from __future__ import annotations
 import duckdb
 import pytest
 
+from clinical_endpoints.conform import direction as direction_mod
 from clinical_endpoints.conform import resolve, semantic, text as textmod, threshold, timepoint
 from clinical_endpoints.conform.pipeline import conform_row, run_conform
 from clinical_endpoints.conform.rules import load_rules
@@ -76,6 +77,19 @@ def _insert_outcomes(con, rows):
 
 # --------------------------------------------------- reference-table fixtures
 
+#: docs/EVENT_SEMANTICS_SPEC.md's synonym migration: PFS/OS/TTR's endpoint-NAME
+#: synonyms moved out of measurements.yaml into named_endpoints.yaml, so these
+#: rows' measurement now resolves via the step-0 named-endpoint match (its
+#: default_measurement filling a cascade that is legitimately silent) rather
+#: than a direct synonym hit -- match_method=named_endpoint, not exact. The
+#: measurement id itself is unchanged (checked above via the fixture's own
+#: expected_measurement), which is the zero measurement-id-churn invariant;
+#: only the provenance got more honest, exactly as the migration note in each
+#: measurement's `notes` says it would.
+NAMED_ENDPOINT_MEASUREMENT_FIXTURES = frozenset(
+    {"Progression-Free Survival (PFS)", "Overall Survival (OS)", "2-Year Overall Survival (OS)", "Time to Response (TTR)"}
+)
+
 
 def test_reference_table_fixtures_conform_end_to_end(con):
     rows = [
@@ -106,7 +120,10 @@ def test_reference_table_fixtures_conform_end_to_end(con):
         # "exact" match and is not one of these fixtures' claim).
         if expected_form != "not_stated":
             assert form_method == "exact", f"{text!r}: form matched via {form_method!r}, not exact"
-        assert measurement_method == "exact", f"{text!r}: measurement matched via {measurement_method!r}, not exact"
+        expected_measurement_method = "named_endpoint" if text in NAMED_ENDPOINT_MEASUREMENT_FIXTURES else "exact"
+        assert measurement_method == expected_measurement_method, (
+            f"{text!r}: measurement matched via {measurement_method!r}, not {expected_measurement_method!r}"
+        )
 
 
 # ------------------------------------------------------------- review queue
@@ -283,3 +300,198 @@ def test_semantic_fallback_needs_real_token_overlap():
     index = semantic.build_semantic_index(con, "measurement", "measurements")
     assert semantic.best_match("completely unrelated gibberish zzzqx", index) is None
     assert semantic.best_match("", index) is None
+
+
+# ------------------------------------------- event semantics (docs/EVENT_SEMANTICS_SPEC.md)
+
+
+def _row(measure, time_frame=None, description=None, nct_id="NCTX", outcome_type="primary", population=None):
+    return {
+        "nct_id": nct_id, "outcome_type": outcome_type, "measure": measure,
+        "time_frame": time_frame, "description": description, "population": population,
+    }
+
+
+def test_nct01777919_pfs_row_resolves_the_progression_or_death_event(con):
+    """The regression test the incident earns: NCT01777919's primary outcome,
+    which used to project 'Time from randomisation to Tumour burden (RECIST)'
+    -- the wrong-endpoint-definition defect this whole spec exists to fix."""
+    rules = load_rules(con)
+    row = _row("Progression-free survival", time_frame="6 months", nct_id="NCT01777919")
+    result = conform_row(rules, row, ta_id=None, allocation="Randomized")
+
+    assert result.form_id == "time_to_event"
+    assert result.form_match_method == "exact"  # forms.yaml's own PFS synonym, untouched by the migration
+    assert result.measurement_id == "tumour_burden_recist"
+    assert result.measurement_match_method == "named_endpoint"
+    assert result.event_id == "disease_progression_or_death"
+    assert result.event_match_method == "named_endpoint"
+    assert result.reference_id == "randomisation"
+    assert result.reference_match_method == "named_endpoint"
+    assert result.named_endpoint_id == "pfs"
+    assert result.direction_id == "longer_is_better"
+    assert result.event_polarity_used == "harm"
+
+
+def test_nct01777919_os_row_resolves_the_death_event(con):
+    rules = load_rules(con)
+    row = _row("Overall survival", time_frame="2 years", nct_id="NCT01777919", outcome_type="secondary")
+    result = conform_row(rules, row, ta_id=None, allocation="Randomized")
+
+    assert result.form_id == "time_to_event"
+    assert result.measurement_id == "vital_status"
+    assert result.measurement_match_method == "named_endpoint"
+    assert result.event_id == "death_any_cause"
+    assert result.event_match_method == "named_endpoint"
+    assert result.reference_id == "randomisation"
+    assert result.named_endpoint_id == "os"
+    assert result.direction_id == "longer_is_better"
+
+
+def test_pfs_ttp_dor_share_measurement_but_resolve_distinct_event_reference_pairs(con):
+    """PFS, TTP and DOR all conform to tumour_burden_recist -- preserving the
+    SAME_MEASUREMENT_DIFFERENT_FORM join with ORR -- but must stop being each
+    other's twins on (event, reference)."""
+    rules = load_rules(con)
+
+    def resolve_named(measure):
+        return conform_row(rules, _row(measure), ta_id=None, allocation="Randomized")
+
+    pfs = resolve_named("Progression-free survival")
+    ttp = resolve_named("Time to progression")
+    dor = resolve_named("Duration of response")
+    orr = resolve_named("Objective response rate")
+
+    assert {pfs.measurement_id, ttp.measurement_id, dor.measurement_id, orr.measurement_id} == {"tumour_burden_recist"}
+
+    pairs = {
+        (pfs.event_id, pfs.reference_id),
+        (ttp.event_id, ttp.reference_id),
+        (dor.event_id, dor.reference_id),
+    }
+    assert len(pairs) == 3, f"PFS/TTP/DOR must not collapse to fewer than 3 distinct (event, reference) pairs: {pairs}"
+    assert (pfs.event_id, pfs.reference_id) == ("disease_progression_or_death", "randomisation")
+    assert (ttp.event_id, ttp.reference_id) == ("disease_progression", "randomisation")
+    assert (dor.event_id, dor.reference_id) == ("disease_progression_or_death", "response_onset")
+
+
+@pytest.mark.parametrize("allocation", [None, "Non-Randomized", "Single Group Assignment"])
+def test_single_arm_pfs_does_not_default_reference_to_randomisation(con, allocation):
+    """A named-endpoint definition's `reference` is applied only when
+    raw.studies.allocation says the trial is randomised -- asserting
+    "from randomisation" on a single-arm trial would be exactly the
+    unannounced-default disease docs/USDM_PROJECTION_INTEGRITY_SPEC.md exists
+    to cure."""
+    rules = load_rules(con)
+    row = _row("Progression-free survival")
+    result = conform_row(rules, row, ta_id=None, allocation=allocation)
+
+    assert result.named_endpoint_id == "pfs"
+    assert result.measurement_id == "tumour_burden_recist"  # default_measurement still fills -- unconditional
+    assert result.reference_id == "not_stated"
+    assert result.reference_match_method is None
+
+
+def test_single_arm_pfs_reference_still_resolves_from_explicit_text(con):
+    """The definition's reference only fills silence; text that itself states
+    a reference still wins, randomised or not."""
+    rules = load_rules(con)
+    row = _row("Progression-free survival", time_frame="From first dose")
+    result = conform_row(rules, row, ta_id=None, allocation="Non-Randomized")
+    assert result.reference_id == "treatment_start"
+    # time_frame is reference's PRIMARY field (matching.yaml's cascade reads it
+    # first, exact), not a secondary inference the way it is for form/measurement.
+    assert result.reference_match_method == "exact"
+
+
+def test_event_family_row_with_unresolvable_event_falls_to_not_stated_not_the_measurement(con):
+    """The defect this spec exists to kill: an event-family row whose event
+    does not resolve must carry event_id = not_stated, never silently borrow
+    the measurement into the event slot."""
+    rules = load_rules(con)
+    row = _row("Time to RECIST assessment")
+    result = conform_row(rules, row, ta_id=None, allocation=None)
+
+    assert result.form_id == "time_to_event"
+    assert result.measurement_id == "tumour_burden_recist"
+    assert result.event_id == "not_stated"
+    assert result.event_match_method is None
+    assert result.named_endpoint_id is None
+
+
+def test_event_id_is_null_not_not_stated_for_non_event_family_forms(con):
+    """change_from_baseline is not event_family: a row of that form has no
+    event, full stop -- NULL, not an unresolved 'not_stated'."""
+    rules = load_rules(con)
+    row = _row("Change from baseline in Hemoglobin A1c (HbA1c)")
+    result = conform_row(rules, row, ta_id=None, allocation=None)
+
+    assert result.form_id == "change_from_baseline"
+    assert result.event_id is None
+    assert result.event_match_method is None
+    assert result.event_confidence is None
+    assert result.event_source_field is None
+
+
+def test_measurement_implies_event_resolves_with_no_new_text_matching(con):
+    """A row whose MEASUREMENT is itself event-shaped (vital_status) resolves
+    its event via `implies_event`, with no named-endpoint or events.yaml text
+    match involved -- e.g. plain "time to death", which names no PFS/OS-style
+    literature acronym at all."""
+    rules = load_rules(con)
+    row = _row("Time to death")
+    result = conform_row(rules, row, ta_id=None, allocation="Randomized")
+
+    assert result.named_endpoint_id is None
+    assert result.measurement_id == "vital_status"
+    assert result.event_id == "death_any_cause"
+    # Matched directly via events.yaml's death_any_cause pattern (step 4b),
+    # which fires before vital_status's implies_event (step 4c) is consulted.
+    assert result.event_match_method in ("exact", "syntactic_rule")
+
+
+def test_derive_direction_prefers_resolved_event_polarity_over_cues(con):
+    """docs/EVENT_SEMANTICS_SPEC.md step 5: event polarity first. Deliberately
+    passes cue_text that WOULD read as a harm cue ("time to ... death") together
+    with a benefit-polarity event, to prove the event wins rather than merely
+    agreeing with the cues by coincidence."""
+    rules = load_rules(con)
+    result = direction_mod.derive_direction(
+        "time_to_event", "vital_status", "time to death", rules.direction_rules,
+        event_id="response_onset",
+    )
+    assert result.event_polarity_used == "benefit"
+    assert result.direction_id == "shorter_is_better"
+
+
+def test_derive_direction_falls_back_to_cues_when_event_id_is_none_or_not_stated(con):
+    """Non-event-family rows (event_id=None) and event-family rows whose event
+    itself stayed not_stated must derive direction exactly as they did before
+    this spec -- the existing cue/measurement cascade, untouched."""
+    rules = load_rules(con)
+    for event_id in (None, "not_stated"):
+        result = direction_mod.derive_direction(
+            "time_to_event", "tumour_burden_recist", "time to progression", rules.direction_rules,
+            event_id=event_id,
+        )
+        assert result.direction_id == "longer_is_better"
+        assert result.event_polarity_used == "harm"
+
+
+def test_direction_regression_across_the_full_reference_table(con):
+    """Every pre-existing fixture's direction, re-derived through the REAL
+    pipeline under event-first derivation, must be byte-identical to what it
+    was before events existed -- "direction never flips on a currently-correct
+    row" as an executable assertion, not just a hope."""
+    from tests.test_vocab_loader import REFERENCE_TABLE_FIXTURES
+
+    rows = [
+        _row(text, nct_id=f"NCTD{i:06d}")
+        for i, (text, _form, _measurement, _direction) in enumerate(REFERENCE_TABLE_FIXTURES)
+    ]
+    _insert_outcomes(con, [(r["nct_id"], r["outcome_type"], r["measure"], r["time_frame"], r["description"], r["population"]) for r in rows])
+    run_conform(con)
+
+    directions = dict(con.execute("SELECT nct_id, direction_id FROM conformed.endpoints").fetchall())
+    for i, (text, _form, _measurement, expected_direction) in enumerate(REFERENCE_TABLE_FIXTURES):
+        assert directions[f"NCTD{i:06d}"] == expected_direction, text

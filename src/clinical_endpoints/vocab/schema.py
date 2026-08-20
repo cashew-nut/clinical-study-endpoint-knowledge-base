@@ -33,7 +33,10 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         filename="forms.yaml",
         dimension="form",
         table="forms",
-        columns=("id", "label", "definition", "direction_rule", "analysable", "expects_threshold", "notes"),
+        columns=(
+            "id", "label", "definition", "direction_rule", "analysable", "expects_threshold",
+            "event_family", "notes",
+        ),
         list_references={"typical_reference": "reference", "typical_scale": "scale"},
     ),
     DimensionSpec(
@@ -42,9 +45,10 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         table="measurements",
         columns=(
             "id", "label", "inline_label", "definition", "concept", "method", "domain",
-            "default_direction", "event_polarity", "default_scale", "composite", "mcid", "notes",
+            "default_direction", "event_polarity", "default_scale", "composite", "mcid",
+            "implies_event", "notes",
         ),
-        references={"default_direction": "direction", "default_scale": "scale"},
+        references={"default_direction": "direction", "default_scale": "scale", "implies_event": "event"},
         list_references={"typical_ta": "therapeutic_area"},
     ),
     DimensionSpec(
@@ -53,6 +57,13 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         table="references",
         columns=("id", "label", "inline_label", "definition", "kind", "notes"),
         list_references={"implies_form": "form"},
+    ),
+    DimensionSpec(
+        filename="events.yaml",
+        dimension="event",
+        table="events",
+        columns=("id", "label", "inline_label", "definition", "concept", "polarity", "notes"),
+        list_references={"ascertained_by": "measurement", "components": "event"},
     ),
     DimensionSpec(
         filename="directions.yaml",
@@ -101,13 +112,25 @@ MATCHING_FILENAME = "matching.yaml"
 # rather than surface as a broken sentence in a standards-conformant document.
 USDM_TEMPLATES_FILENAME = "usdm_templates.yaml"
 
+# named_endpoints.yaml is not a dimension term list either (see that file's
+# header): it states what a literature-recognised endpoint NAME (PFS, OS,
+# DFS...) means, so that recognising the name resolves form + event +
+# reference + measurement together instead of donating the name to one
+# dimension as a synonym. `conform_row` tries it as step 0, before the
+# ordinary per-dimension cascade.
+NAMED_ENDPOINTS_FILENAME = "named_endpoints.yaml"
+
 ALL_FILENAMES: tuple[str, ...] = (
     tuple(d.filename for d in DIMENSIONS)
-    + (MAPPING_FILENAME, MATCHING_FILENAME, USDM_TEMPLATES_FILENAME)
+    + (MAPPING_FILENAME, MATCHING_FILENAME, USDM_TEMPLATES_FILENAME, NAMED_ENDPOINTS_FILENAME)
 )
 
-# Closed value sets for matching.yaml.
-MATCH_METHODS = frozenset({"exact", "syntactic_rule", "semantic"})
+# Closed value sets for matching.yaml. `named_endpoint` is step 0 of
+# conform_row (docs/EVENT_SEMANTICS_SPEC.md): identification is exact (a
+# whole-token/acronym match like any other), but the fields it fills are
+# curated-vocabulary expansion rather than text read directly off the row, so
+# it is distinguishable from -- and floored slightly below -- `exact`.
+MATCH_METHODS = frozenset({"exact", "syntactic_rule", "semantic", "named_endpoint"})
 CASCADE_FIELDS = frozenset({"measure", "description", "time_frame"})
 
 # Closed value sets checked during validation.
@@ -133,7 +156,7 @@ REFERENCE_KINDS = frozenset({"time_origin", "value_reference", "external_standar
 # its real USDM home is Estimand.analysisPopulationId, which needs the estimand
 # work. It is still projected -- as an AnalysisPopulation on the study design,
 # linked from the endpoint's decomposition -- just not rendered into the text.
-USDM_TAGS = frozenset({"measurement", "concept", "reference", "timepoint", "threshold", "scale"})
+USDM_TAGS = frozenset({"measurement", "concept", "reference", "timepoint", "threshold", "scale", "event"})
 
 # Objective templates are keyed on endpoint level, plus the fallback used when
 # no endpoint at that level resolved a measurement.

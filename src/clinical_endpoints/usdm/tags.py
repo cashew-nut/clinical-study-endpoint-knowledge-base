@@ -205,10 +205,15 @@ class TagValue:
 
 
 #: Which host each tag uses. Adding a tag means giving its value a USDM home,
-#: which is why vocab/schema.py keeps USDM_TAGS closed.
+#: which is why vocab/schema.py keeps USDM_TAGS closed. `event` follows
+#: `measurement`'s lead (docs/EVENT_SEMANTICS_SPEC.md): a
+#: BiomedicalConceptSurrogate per distinct resolved event, so a consumer can
+#: join "every trial whose PFS event is disease_progression_or_death" the same
+#: way it already joins on measurement.
 TAG_HOSTS: dict[str, str] = {
     "measurement": "surrogate",
     "concept": "surrogate",
+    "event": "surrogate",
     "reference": "extension",
     "timepoint": "extension",
     "threshold": "extension",

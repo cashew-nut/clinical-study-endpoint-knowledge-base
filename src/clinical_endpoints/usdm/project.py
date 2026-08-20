@@ -74,6 +74,8 @@ class ProjectionRules:
     definitions: dict[str, dict[str, str]]
     measurement_concept: dict[str, str]
     measurement_domain: dict[str, str]
+    event_family: dict[str, bool]
+    event_concept: dict[str, str]
     vocab_version: str | None = None
 
     def inline_label(self, dimension: str, term_id: str | None) -> str | None:
@@ -130,6 +132,12 @@ def load_projection_rules(con: duckdb.DuckDBPyConnection) -> ProjectionRules:
     measurements = con.execute(
         "SELECT id, concept, domain, definition FROM vocab.measurements"
     ).fetchall()
+    event_family = {
+        row[0]: (row[1] == "true") for row in con.execute("SELECT id, event_family FROM vocab.forms").fetchall()
+    }
+    event_concept = {
+        row[0]: row[1] for row in con.execute("SELECT id, concept FROM vocab.events").fetchall() if row[1]
+    }
 
     return ProjectionRules(
         templates=templates,
@@ -140,12 +148,15 @@ def load_projection_rules(con: duckdb.DuckDBPyConnection) -> ProjectionRules:
             "measurement": _inline_map(con, "measurements"),
             "reference": _inline_map(con, "references"),
             "scale": _inline_map(con, "scales"),
+            "event": _inline_map(con, "events"),
         },
         definitions={
             "measurement": {m[0]: m[3] for m in measurements if m[3]},
         },
         measurement_concept={m[0]: m[1] for m in measurements if m[1]},
         measurement_domain={m[0]: m[2] for m in measurements if m[2]},
+        event_family=event_family,
+        event_concept=event_concept,
         vocab_version=_vocab_version(con),
     )
 
@@ -172,6 +183,7 @@ class SourceRow:
     form_id: str | None = None
     measurement_id: str | None = None
     reference_id: str | None = None
+    event_id: str | None = None
     scale_id: str | None = None
     direction_id: str | None = None
     timepoint_pattern: str | None = None
@@ -182,6 +194,8 @@ class SourceRow:
     form_match_method: str | None = None
     measurement_match_method: str | None = None
     reference_match_method: str | None = None
+    event_match_method: str | None = None
+    named_endpoint_id: str | None = None
     analysable: bool | None = None
     review_reason: str | None = None
 
@@ -195,7 +209,8 @@ SELECT endpoint_id, outcome_type, measure_raw, description_raw, time_frame_raw, 
        form_id, measurement_id, reference_id, scale_id, direction_id,
        timepoint_pattern, timepoint_extracted,
        threshold_comparator, threshold_value, threshold_unit,
-       form_match_method, measurement_match_method, reference_match_method, analysable
+       form_match_method, measurement_match_method, reference_match_method, analysable,
+       event_id, event_match_method, named_endpoint_id
 FROM conformed.endpoints WHERE nct_id = ?
 """
 
@@ -229,6 +244,7 @@ def fetch_rows(con: duckdb.DuckDBPyConnection, nct_id: str) -> list[SourceRow]:
                 threshold_comparator=r[13], threshold_value=r[14], threshold_unit=r[15],
                 form_match_method=r[16], measurement_match_method=r[17],
                 reference_match_method=r[18], analysable=r[19],
+                event_id=r[20], event_match_method=r[21], named_endpoint_id=r[22],
             )
         )
     if _table_exists(con, "conformed", "review_queue"):
@@ -313,6 +329,7 @@ def _resolve_tags(row: SourceRow, spec: TemplateSpec, rules: ProjectionRules) ->
         "measurement": measurement,
         "concept": _humanise(concept_id) if concept_id else None,
         "reference": reference,
+        "event": rules.inline_label("event", row.event_id),
         "scale": rules.inline_label("scale", row.scale_id),
         "timepoint": render_timepoint(row.timepoint_pattern, row.timepoint_extracted, row.time_frame_raw),
         "threshold": render_threshold(row.threshold_comparator, row.threshold_value, row.threshold_unit),
@@ -381,6 +398,7 @@ def _decomposition(
         ("form", row.form_id),
         ("measurement", row.measurement_id),
         ("reference", row.reference_id),
+        ("event", row.event_id),
         ("direction", row.direction_id),
         ("scale", row.scale_id),
         ("timepointPattern", row.timepoint_pattern),
@@ -390,6 +408,8 @@ def _decomposition(
         ("formMatchMethod", row.form_match_method),
         ("measurementMatchMethod", row.measurement_match_method),
         ("referenceMatchMethod", row.reference_match_method),
+        ("eventMatchMethod", row.event_match_method),
+        ("namedEndpoint", row.named_endpoint_id),
         ("reviewReason", row.review_reason),
         ("fidelity", tier),
         ("sourceRowId", row.endpoint_id),
@@ -426,12 +446,24 @@ def _build_endpoint(
     spec = rules.templates.get(row.form_id or "")
     values = _resolve_tags(row, spec, rules) if spec else {}
     rendered = None
+    degraded = False
     if row.conformed and spec and not spec.verbatim and spec.parts:
         rendered = render(spec.parts, values)
+        if rendered is None and rules.event_family.get(row.form_id or ""):
+            # docs/EVENT_SEMANTICS_SPEC.md: an event-family row whose event (or
+            # other required tag) did not resolve must not fall all the way to
+            # raw verbatim registry text -- it degrades to the not_stated
+            # frame ({measurement}[ {timepoint}]) instead, which asserts only
+            # what actually resolved and never renders the assessment into
+            # the event's place.
+            fallback_spec = rules.templates.get("not_stated")
+            if fallback_spec and fallback_spec.parts:
+                rendered = render(fallback_spec.parts, values)
+                degraded = rendered is not None
 
     if rendered is None:
         tier = TIER_VERBATIM
-    elif rendered.dropped or row.form_id == "not_stated":
+    elif degraded or rendered.dropped or row.form_id == "not_stated":
         tier = TIER_PARTIAL
     else:
         tier = TIER_TEMPLATED
@@ -449,10 +481,13 @@ def _build_endpoint(
             host = TAG_HOSTS[tag]
             klass, attribute = HOST_REFERENCE_ATTRIBUTE[host]
             if host == "surrogate":
-                dimension = "measurement" if tag == "measurement" else "concept"
-                key = f"{dimension}:{row.measurement_id if tag == 'measurement' else values['concept']}"
-                term = row.measurement_id if tag == "measurement" else str(values["concept"]).replace(" ", "_")
-                instance = shared.surrogate(key, term, str(values[tag]), dimension)
+                if tag == "measurement":
+                    dimension, term = "measurement", row.measurement_id
+                elif tag == "event":
+                    dimension, term = "event", row.event_id
+                else:  # concept
+                    dimension, term = "concept", str(values["concept"]).replace(" ", "_")
+                instance = shared.surrogate(f"{dimension}:{term}", term, str(values[tag]), dimension)
                 target_id = instance["id"]
             else:
                 attribute_instance = _extension(ids, f"tag:{tag}", valueString=str(values[tag]))
@@ -477,6 +512,17 @@ def _build_endpoint(
             "instanceType": "SyntaxTemplateDictionary",
         }
 
+    # docs/EVENT_SEMANTICS_SPEC.md: minted for every conformed endpoint with a
+    # resolved measurement, tag-referenced or not. With event-family sentences
+    # now using {event} rather than {measurement}, PFS-shaped rows would
+    # otherwise stop carrying the tumour_burden_recist surrogate -- silently
+    # dropping the cross-study SAME_MEASUREMENT join from the document. No
+    # ParameterMap: this is presence in bcSurrogates for a consumer to join
+    # on, not something any endpoint's text points at.
+    measurement_label = values.get("measurement")
+    if row.conformed and row.measurement_id not in UNRESOLVED_TERM_IDS and measurement_label:
+        shared.surrogate(f"measurement:{row.measurement_id}", row.measurement_id, measurement_label, "measurement")
+
     population = (row.population or "").strip()
     population_id = shared.population(population)["id"] if population else None
     extensions.append(_decomposition(ids, row, tier, population_id))
@@ -499,6 +545,19 @@ def _build_endpoint(
         "instanceType": "Endpoint",
     }
     return endpoint, dictionary, tier
+
+
+def _endpoint_concept(row: SourceRow, rules: ProjectionRules) -> str:
+    """docs/EVENT_SEMANTICS_SPEC.md: an event-family endpoint's objective is
+    about the EVENT, not the assessment -- NCT01777919's primary objective
+    becomes "the effect ... on disease progression", not "on tumour burden".
+    Falls back to the measurement's concept where the form is not
+    event-family, or is but the event itself did not resolve."""
+    if rules.event_family.get(row.form_id or "") and row.event_id not in UNRESOLVED_TERM_IDS:
+        concept = rules.event_concept.get(row.event_id or "")
+        if concept:
+            return concept
+    return rules.measurement_concept.get(row.measurement_id or "", "")
 
 
 def _concept_list(concepts: Iterable[str], limit: int) -> str | None:
@@ -549,10 +608,7 @@ def project(
         if not at_level:
             continue
         index = len(projection.objectives) + 1
-        concepts = [
-            _humanise(rules.measurement_concept.get(r.measurement_id or "", ""))
-            for r, _e in at_level
-        ]
+        concepts = [_humanise(_endpoint_concept(r, rules)) for r, _e in at_level]
         concept_list = _concept_list(concepts, rules.concept_list_limit)
         template = rules.objective_templates.get(level, "")
         if concept_list and template:

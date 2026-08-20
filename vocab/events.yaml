@@ -1,0 +1,336 @@
+# Dimension: EVENT -- what occurrence ends the clock, for a time-to-event (or
+# other event-family) endpoint. Added by docs/EVENT_SEMANTICS_SPEC.md.
+#
+# THE GAP THIS FILLS. A time-to-event endpoint is defined by a time origin and
+# an event; before this file the model had dimensions for the origin
+# (`reference`) and for what is assessed (`measurement`), and none for the
+# event itself. Projecting "PFS" therefore rendered the only thing it had --
+# the assessment -- into the event slot of the sentence ("Time from
+# randomisation to Tumour burden (RECIST)"), which is confident and wrong: PFS
+# is time to *progression or death*, not time to *an assessment*. See
+# docs/EVENT_SEMANTICS_SPEC.md for the full defect and the NCT01777919 case
+# that surfaced it.
+#
+# GRAIN. Same common schema as every other dimension file (version, dimension,
+# terms, snake_case ids, whole-token synonyms, case-insensitive patterns unless
+# scoped per matching.yaml) plus two fields new to this file and one borrowed:
+#
+#   polarity        harm | benefit. Replaces the event_polarity_cues lookup
+#                    for any row whose event resolves -- directions.yaml's cue
+#                    regexes stay as the fallback for rows whose event does
+#                    NOT resolve, so the two cannot drift apart (see that
+#                    file's note).
+#   ascertained_by   measurement id(s) that typically ascertain this event.
+#                    Documentation and a validation target (ids must exist),
+#                    not a matching input -- it is what keeps the PFS<->ORR
+#                    join explicable: the PFS event's progression component is
+#                    ascertained by the same RECIST measurement ORR is a
+#                    responder proportion over.
+#   components       makes an EVENT UNION explicit: event ids only, acyclic,
+#                    same discipline as composites.yaml (curated, cited, never
+#                    inferred from text). A term carries `components` OR
+#                    `ascertained_by`+match rules, never both -- a union is
+#                    reached via a named-endpoint definition (or its own
+#                    synonyms, if it is later given any), never assembled at
+#                    match time from its parts.
+#
+# WHY NOT REGRAIN MEASUREMENT INSTEAD. measurements.yaml keeps PFS and ORR on
+# one id (`tumour_burden_recist`) on purpose -- that shared id is the
+# SAME_MEASUREMENT_DIFFERENT_FORM join. Moving "progression-free survival"
+# onto an event-grained measurement id would fix the PFS sentence by
+# destroying that join. The event is a new axis, not a better measurement.
+#
+# CROSS-FILE SYNONYM DISCIPLINE. Endpoint-NAME synonyms (PFS, OS, DFS, TTP,
+# DOR...) live in named_endpoints.yaml, not here: this file is for the EVENT
+# itself, named by the clinical occurrence, not by the literature acronym for
+# a whole endpoint bundle. Where a phrase already resolves a measurement whose
+# `implies_event` names this term (e.g. "disease progression" resolving
+# `disease_progression_event`, which implies `disease_progression`), this file
+# deliberately does NOT duplicate that phrase as its own synonym -- the
+# validator rejects a synonym claimed by two of {measurement, event,
+# named_endpoint}, and duplicating it here would only race the measurement
+# match for no gain. Synonyms/patterns below are therefore the event-specific
+# residue: wording that names the OCCURRENCE ("time to X") rather than the
+# assessment of it.
+#
+# COVERAGE. The starter set is every distinct event class named by
+# directions.yaml's `event_polarity_cues` harm/benefit regexes, plus the
+# event-shaped measurement terms (`vital_status`, `disease_recurrence`,
+# `treatment_failure`, `disease_progression_event`). Growth follows the
+# standing rule every other vocabulary file states: from a human review round
+# against real misses, never to chase coverage.
+
+version: 1
+dimension: event
+terms:
+
+  # =========================================================================
+  # ONCOLOGY / SURVIVAL
+  # =========================================================================
+  - id: death_any_cause
+    label: "Death from any cause"
+    inline_label: "death from any cause"
+    concept: survival
+    polarity: harm
+    ascertained_by: [vital_status]
+    synonyms: ["all-cause death", "death from any cause", "died"]
+    patterns:
+      - '\btime to (all[- ]cause )?death\b'
+      - '\b(all[- ]cause|overall) mortality\b'
+    notes: >-
+      The OS event. No bare "death" synonym: `vital_status` already lists it
+      as an assessment-language measurement synonym, and that measurement's
+      `implies_event` reaches this term with no duplicated text match --
+      keeping "death" here too would be the exact cross-file collision the
+      validator's ambiguous-synonym rule exists to catch.
+
+  - id: disease_progression
+    label: "Objective disease progression"
+    inline_label: "disease progression"
+    concept: disease_progression
+    polarity: harm
+    ascertained_by: [tumour_burden_recist, disease_progression_event]
+    synonyms: ["objective progression"]
+    patterns:
+      - '\btime to (disease |radiographic |objective )?progression\b'
+    notes: >-
+      Deliberately does not repeat "disease progression" / "radiographic
+      progression" / "progressive disease" here: those already resolve
+      `disease_progression_event` as a measurement (or `tumour_burden_recist`
+      via RECIST wording), and that measurement's `implies_event` reaches this
+      term with no duplicated text match. Only the residue -- "time to
+      progression" phrasing and the one synonym neither measurement lists --
+      lives here.
+
+  - id: disease_progression_or_death
+    label: "Disease progression or death from any cause"
+    inline_label: "disease progression or death"
+    concept: disease_progression
+    polarity: harm
+    components: [disease_progression, death_any_cause]
+    notes: >-
+      The PFS event. An event union: the endpoint fires on whichever
+      component occurs first. Components follow the composite spec's
+      event_union discipline -- curated, cited, never inferred from text.
+      Reached via the `pfs`/`rpfs`/`dor` named-endpoint definitions, not by
+      text matching (no synonyms/patterns of its own).
+
+  - id: disease_recurrence
+    label: "Disease recurrence or relapse"
+    inline_label: "disease recurrence"
+    concept: disease_recurrence
+    polarity: harm
+    ascertained_by: [disease_recurrence]
+    notes: >-
+      No synonyms of its own: "recurrence", "relapse" and their variants
+      already resolve the `disease_recurrence` measurement, whose
+      `implies_event` reaches this term. Kept as a plain event (not a union)
+      distinct from `disease_recurrence_or_death`, which TTP-style DFS/RFS
+      definitions use instead.
+
+  - id: disease_recurrence_or_death
+    label: "Disease recurrence or death from any cause"
+    inline_label: "disease recurrence or death"
+    concept: disease_recurrence
+    polarity: harm
+    components: [disease_recurrence, death_any_cause]
+    notes: The DFS/RFS event. Reached via the `dfs` named-endpoint definition.
+
+  - id: response_onset
+    label: "Onset of objective response"
+    inline_label: "objective response"
+    concept: tumour_response
+    polarity: benefit
+    ascertained_by: [tumour_burden_recist]
+    patterns:
+      - '\btime to (first |confirmed |objective )?response\b'
+    notes: >-
+      The TTR event, and (as a REFERENCE, a separate vocab entry of the same
+      id in references.yaml) DOR's time origin -- "duration of response"
+      counts from the moment response is first documented, not from
+      randomisation.
+
+  - id: treatment_failure
+    label: "Treatment failure / need for subsequent therapy"
+    inline_label: "treatment failure"
+    concept: treatment_failure
+    polarity: harm
+    ascertained_by: [treatment_failure]
+    notes: >-
+      No synonyms of its own: "treatment failure" bare stays an
+      assessment-language measurement synonym, whose `implies_event` reaches
+      this term. The FFS/TFST/TSST/TTNT literature names live in
+      named_endpoints.yaml.
+
+  # =========================================================================
+  # CROSS-DISEASE CLINICAL EVENTS
+  # =========================================================================
+  - id: clinical_deterioration
+    label: "Clinical deterioration or worsening"
+    inline_label: "clinical deterioration"
+    concept: global_clinical_change
+    polarity: harm
+    patterns:
+      - '\btime to (clinical )?(deterioration|worsening)\b'
+    notes: >-
+      The disease-agnostic worsening event used outside oncology (IPF, CKD,
+      heart failure, MS) where RECIST-style progression has no meaning.
+
+  - id: disease_exacerbation
+    label: "Disease exacerbation"
+    inline_label: "exacerbation"
+    concept: disease_exacerbation
+    polarity: harm
+    ascertained_by: [disease_exacerbation]
+    patterns:
+      - '\btime to (first |next )?exacerbation\b'
+    notes: >-
+      No "exacerbation" synonym of its own: the `disease_exacerbation`
+      measurement already lists it (plus "flare"/"attack") and its
+      `implies_event` reaches this term with no duplicated text match.
+
+  - id: hospitalisation_event
+    label: "Hospitalisation"
+    inline_label: "hospitalisation"
+    concept: hospitalisation
+    polarity: harm
+    patterns:
+      - '\btime to (first |next )?hospitali[sz]ation\b'
+
+  - id: rescue_medication_initiation
+    label: "Initiation of rescue medication"
+    inline_label: "initiation of rescue medication"
+    concept: rescue_medication
+    polarity: harm
+    ascertained_by: [rescue_medication_use]
+    patterns:
+      - '\btime to (initiation of )?rescue (medication|therapy|treatment)\b'
+    notes: >-
+      Needing rescue medication is the bad outcome, so later is better --
+      easy to get backwards, which is why directions.yaml wrote this one down
+      rather than leaving it to a default.
+
+  - id: treatment_discontinuation
+    label: "Treatment discontinuation or withdrawal"
+    inline_label: "treatment discontinuation"
+    concept: treatment_discontinuation
+    polarity: harm
+    patterns:
+      - '\btime to (treatment )?discontinuation\b'
+      - '\btime to withdrawal\b'
+
+  - id: amputation
+    label: "Amputation"
+    inline_label: "amputation"
+    concept: amputation
+    polarity: harm
+    patterns:
+      - '\btime to amputation\b'
+
+  - id: dialysis_initiation
+    label: "Initiation of dialysis"
+    inline_label: "initiation of dialysis"
+    concept: kidney_function
+    polarity: harm
+    patterns:
+      - '\btime to (initiation of )?dialysis\b'
+
+  - id: transplantation
+    label: "Need for transplantation"
+    inline_label: "transplantation"
+    concept: transplantation
+    polarity: harm
+    patterns:
+      - '\btime to transplant\w*\b'
+    notes: >-
+      The harm sense -- organ failure severe enough to require a transplant.
+      Distinct from `references.yaml`'s `index_event`, which covers dating a
+      trial's clock FROM a transplant already performed.
+
+  - id: bleeding_event
+    label: "Bleeding event"
+    inline_label: "a bleeding event"
+    concept: bleeding_event
+    polarity: harm
+    patterns:
+      - '\btime to (first )?bleed(ing)?\b'
+
+  - id: seizure_event
+    label: "Seizure"
+    inline_label: "a seizure"
+    concept: seizure_burden
+    polarity: harm
+    patterns:
+      - '\btime to (first )?seizure\b'
+
+  - id: fracture_event
+    label: "Fracture"
+    inline_label: "a fracture"
+    concept: fracture
+    polarity: harm
+    patterns:
+      - '\btime to (first )?fracture\b'
+
+  # =========================================================================
+  # BENEFIT EVENTS OUTSIDE ONCOLOGY
+  # =========================================================================
+  - id: virologic_response
+    label: "Virologic response or suppression"
+    inline_label: "virologic response"
+    concept: pathogen_clearance
+    polarity: benefit
+    patterns:
+      - '\btime to (sustained |confirmed )?virologic (response|suppression)\b'
+      - '\btime to (sustained |confirmed )?(microbiologic|microbiological) (response|clearance)\b'
+
+  - id: haematologic_response
+    label: "Haematologic response or remission"
+    inline_label: "haematologic response"
+    concept: haematologic_response
+    polarity: benefit
+    patterns:
+      - '\btime to (confirmed |sustained )?ha?ematologic (response|remission)\b'
+
+  - id: engraftment
+    label: "Engraftment"
+    inline_label: "engraftment"
+    concept: immune_reconstitution
+    polarity: benefit
+    synonyms: ["engraftment"]
+    patterns:
+      - '\btime to engraftment\b'
+
+  - id: clinical_remission_onset
+    label: "Onset of clinical remission"
+    inline_label: "clinical remission"
+    concept: global_clinical_change
+    polarity: benefit
+    synonyms: ["remission"]
+    patterns:
+      - '\btime to (clinical )?remission\b'
+
+  # --- unresolved ----------------------------------------------------------
+  - id: not_stated
+    label: "Event not determinable"
+    inline_label: null
+    concept: not_stated
+    definition: >-
+      The endpoint is an event-family form (forms.yaml `event_family: true`)
+      but the text does not name -- and no named-endpoint definition or
+      measurement `implies_event` resolves -- what occurrence ends the clock.
+      Kept explicit so an unresolved event is visible and countable, the same
+      way `reference.not_stated` and `direction.not_stated` are, rather than
+      leaving it a silent null.
+
+concepts_note: >-
+  `concept` here reuses measurements.yaml's concept namespace where a term
+  shares one (survival, disease_progression, disease_recurrence,
+  treatment_failure, tumour_response, disease_exacerbation, hospitalisation,
+  rescue_medication, bleeding_event, seizure_burden, haematologic_response,
+  pathogen_clearance, immune_reconstitution, global_clinical_change) and a
+  plain descriptive string elsewhere (amputation, kidney_function,
+  transplantation, treatment_discontinuation, fracture, not_stated). Not
+  cross-validated against measurements.yaml's declared `concepts:` list --
+  see vocab/README.md decision #2 and this spec's Open Question #1 on concept
+  promotion; promoting `concept` to its own vocabulary is additive, not a
+  reason to gate this file on it now.

@@ -47,6 +47,19 @@ def _primary_ta_by_nct(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
     )
 
 
+def _allocation_by_nct(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
+    if not _table_exists(con, "raw", "studies"):
+        return {}
+    return dict(con.execute("SELECT nct_id, allocation FROM raw.studies").fetchall())
+
+
+def _is_randomised(allocation: str | None) -> bool:
+    """Mirrors usdm/envelope.py's own randomisation check on this same
+    `raw.studies.allocation` column, so "is this study randomised" is
+    answered identically wherever it is asked."""
+    return (allocation or "").strip().lower().startswith("random")
+
+
 @dataclass(frozen=True)
 class ConformedEndpoint:
     endpoint_id: str
@@ -68,6 +81,11 @@ class ConformedEndpoint:
     reference_match_method: str
     reference_confidence: float
     reference_source_field: str
+    event_id: str | None
+    event_match_method: str | None
+    event_confidence: float | None
+    event_source_field: str | None
+    named_endpoint_id: str | None
     direction_id: str
     event_polarity_used: str
     scale_id: str
@@ -97,7 +115,16 @@ class ReviewQueueEntry:
     best_semantic_score: float
 
 
-def conform_row(rules: ConformRules, row: dict, *, ta_id: str | None) -> ConformedEndpoint | ReviewQueueEntry:
+def conform_row(
+    rules: ConformRules, row: dict, *, ta_id: str | None, allocation: str | None = None
+) -> ConformedEndpoint | ReviewQueueEntry:
+    """docs/EVENT_SEMANTICS_SPEC.md's six conform_row steps: 0) named-endpoint
+    match, 1) measurement, 2) reference, 3) form, 4) event, 5) direction.
+    Steps 1-3 and threshold parsing are otherwise unchanged from before this
+    spec -- a named-endpoint definition only ever FILLS a silent cascade
+    (measurement, reference) or WINS outright (form; forms.yaml's own
+    resolution still runs, so a disagreement is visible in what
+    `resolve_form` would have said, but the definition's form is what ships)."""
     nct_id, outcome_type = row["nct_id"], row["outcome_type"]
     measure_raw, description_raw, time_frame_raw, population = (
         row.get("measure"), row.get("description"), row.get("time_frame"), row.get("population"),
@@ -110,7 +137,22 @@ def conform_row(rules: ConformRules, row: dict, *, ta_id: str | None) -> Conform
         "time_frame": text.normalise(time_frame_raw, rules.normalisation_steps),
     }
 
+    # step 0: named-endpoint match. A miss is not a review-queue trigger --
+    # every dimension below still runs its own ordinary cascade regardless.
+    named_endpoint_hit = resolve.resolve_named_endpoint(rules, fields)
+    named_endpoint = (
+        rules.named_endpoint_definitions.get(named_endpoint_hit.term_id) if named_endpoint_hit else None
+    )
+    named_endpoint_id = named_endpoint.id if named_endpoint else None
+
+    # step 1: measurement. The definition's default_measurement fills ONLY
+    # when the ordinary cascade (including its semantic fallback) is silent.
     measurement = resolve.resolve_measurement(rules, fields)
+    if measurement is None and named_endpoint and named_endpoint.default_measurement_id:
+        measurement = resolve.FieldMatch(
+            named_endpoint.default_measurement_id, "named_endpoint",
+            rules.confidence_floor["named_endpoint"], None,
+        )
     if measurement is None:
         candidate = semantic.best_match(
             fields["measure"] or fields["description"], rules.measurement_semantic_index,
@@ -129,15 +171,56 @@ def conform_row(rules: ConformRules, row: dict, *, ta_id: str | None) -> Conform
             best_semantic_score=candidate.score if candidate else None,
         )
 
+    # step 2: reference. The definition's reference applies only when the
+    # ordinary cascade is silent AND the study is randomised -- asserting
+    # "from randomisation" on a single-arm trial would be exactly the
+    # unannounced-default disease docs/USDM_PROJECTION_INTEGRITY_SPEC.md
+    # exists to cure.
     reference = resolve.resolve_reference(rules, fields)
+    if (
+        reference.match_method is None
+        and named_endpoint
+        and named_endpoint.reference_id
+        and _is_randomised(allocation)
+    ):
+        reference = resolve.FieldMatch(
+            named_endpoint.reference_id, "named_endpoint", rules.confidence_floor["named_endpoint"], None
+        )
+
+    # step 3: form. The definition's form fills only when the ordinary form
+    # cascade is silent -- same rule as measurement, and deliberately NOT the
+    # unconditional "definition wins" the spec's prose describes: forms.yaml
+    # was not asked to migrate any of its own synonyms/patterns (only
+    # measurements.yaml's endpoint-name synonyms moved), so its cascade
+    # already resolves every named endpoint's typical form correctly on its
+    # own -- including "2-Year Overall Survival", which forms.yaml's
+    # match_precedence must keep routing to event_free_rate_at_timepoint
+    # (a landmark rate), not to `os`'s time_to_event. An unconditional
+    # override would silently invert that, which is exactly the kind of
+    # regression the zero-churn invariant exists to catch.
     form = resolve.resolve_form(rules, fields, measurement)
+    if form.match_method is None and named_endpoint and named_endpoint.form_id:
+        form = resolve.FieldMatch(
+            named_endpoint.form_id, "named_endpoint", rules.confidence_floor["named_endpoint"], None
+        )
 
     timepoint_result = timepoint.classify(time_frame_raw, rules.timepoint_rules)
     timepoint_result = timepoint.apply_disambiguation(timepoint_result, form.term_id, rules.timepoint_rules)
 
+    # step 4: event. Only for event-family forms (forms.yaml event_family:
+    # true) -- everything else carries event_id = NULL, not 'not_stated': a
+    # change-from-baseline endpoint does not have an unresolved event, it has
+    # no event.
+    event_result = None
+    if rules.form_event_family.get(form.term_id):
+        event_result = resolve.resolve_event(rules, fields, named_endpoint, measurement.term_id)
+
+    # step 5: direction. Event polarity (from a resolved event) first, then
+    # the free-text cues, then the measurement's own event_polarity.
     cue_text = fields["measure"] or fields["description"]
     direction_result = direction_mod.derive_direction(
-        form.term_id, measurement.term_id, cue_text, rules.direction_rules, ta_id=ta_id
+        form.term_id, measurement.term_id, cue_text, rules.direction_rules, ta_id=ta_id,
+        event_id=event_result.term_id if event_result else None,
     )
 
     threshold_result = threshold.ThresholdResult(None, None, None)
@@ -156,6 +239,11 @@ def conform_row(rules: ConformRules, row: dict, *, ta_id: str | None) -> Conform
         measurement_confidence=measurement.confidence, measurement_source_field=measurement.source_field,
         reference_id=reference.term_id, reference_match_method=reference.match_method,
         reference_confidence=reference.confidence, reference_source_field=reference.source_field,
+        event_id=event_result.term_id if event_result else None,
+        event_match_method=event_result.match_method if event_result else None,
+        event_confidence=event_result.confidence if event_result else None,
+        event_source_field=event_result.source_field if event_result else None,
+        named_endpoint_id=named_endpoint_id,
         direction_id=direction_result.direction_id, event_polarity_used=direction_result.event_polarity_used,
         scale_id=rules.measurement_default_scale.get(measurement.term_id),
         timepoint_pattern=timepoint_result.pattern_id, timepoint_raw=timepoint_result.raw,
@@ -177,6 +265,8 @@ CREATE OR REPLACE TABLE conformed.endpoints (
     measurement_source_field VARCHAR,
     reference_id VARCHAR, reference_match_method VARCHAR, reference_confidence DOUBLE,
     reference_source_field VARCHAR,
+    event_id VARCHAR, event_match_method VARCHAR, event_confidence DOUBLE, event_source_field VARCHAR,
+    named_endpoint_id VARCHAR,
     direction_id VARCHAR, event_polarity_used VARCHAR,
     scale_id VARCHAR,
     timepoint_pattern VARCHAR, timepoint_raw VARCHAR, timepoint_match_method VARCHAR,
@@ -212,6 +302,7 @@ def run_conform(con: duckdb.DuckDBPyConnection) -> dict:
 
     rules = load_rules(con)
     ta_by_nct = _primary_ta_by_nct(con)
+    allocation_by_nct = _allocation_by_nct(con)
 
     rows = con.execute(
         "SELECT nct_id, outcome_type, measure, time_frame, description, population FROM raw.design_outcomes"
@@ -222,7 +313,9 @@ def run_conform(con: duckdb.DuckDBPyConnection) -> dict:
     review_queue: list[ReviewQueueEntry] = []
     for values in rows:
         row = dict(zip(columns, values))
-        result = conform_row(rules, row, ta_id=ta_by_nct.get(row["nct_id"]))
+        result = conform_row(
+            rules, row, ta_id=ta_by_nct.get(row["nct_id"]), allocation=allocation_by_nct.get(row["nct_id"])
+        )
         if isinstance(result, ConformedEndpoint):
             endpoints.append(result)
         else:

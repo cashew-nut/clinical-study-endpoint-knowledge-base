@@ -1,0 +1,199 @@
+# NAMED ENDPOINTS -- what a literature-recognised endpoint NAME (PFS, OS, DFS,
+# TTP...) means, so that recognising the name resolves the whole bundle
+# (form + event + reference + measurement) instead of donating the name to one
+# dimension as a synonym. Added by docs/EVENT_SEMANTICS_SPEC.md.
+#
+# Not a dimension term list -- like matching.yaml and usdm_templates.yaml this
+# loads through its own path rather than through vocab/schema.py's DIMENSIONS.
+# `conform_row` tries this as step 0, before the measurement/reference/form
+# cascade: a hit resolves every field the definition states, with
+# match_method = 'named_endpoint'.
+#
+# THE RULE THAT KEEPS THIS HONEST RATHER THAN A FABRICATION ENGINE: a
+# definition carries a field only where the PUBLISHED definition of the name
+# pins it. `efs` gets no `event` because the EFS event set genuinely varies by
+# disease and protocol; a definition with no `reference` is not applied to a
+# non-randomised trial (see below). Fields a definition does not carry resolve
+# through the normal cascade exactly as they would with no named-endpoint
+# match at all.
+#
+#   form                 required on every definition.
+#   event                optional. An event id from events.yaml.
+#   reference             optional. A time-origin id from references.yaml,
+#                         applied ONLY when `raw.studies.allocation` says the
+#                         study is randomised (the ingestion extension
+#                         columns) -- asserting "from randomisation" on a
+#                         single-arm trial's PFS would be exactly the
+#                         unannounced-default disease
+#                         docs/USDM_PROJECTION_INTEGRITY_SPEC.md exists to
+#                         cure. Non-randomised or unknown allocation -> the
+#                         definition's reference is skipped, the reference
+#                         cascade decides, `not_stated` stays possible.
+#   default_measurement   optional. Fills the measurement dimension only when
+#                         the ordinary measurement cascade (measure ->
+#                         description) is silent -- if the row's own wording
+#                         independently resolves a measurement ("PFS based on
+#                         PSA progression"), that wins. Either way the
+#                         measurement id equals what the pre-this-spec synonym
+#                         tables produced, which is what keeps the zero
+#                         measurement-id-churn migration assertion checkable.
+#   citation              required whenever `form: time_to_event` and
+#                         `reference` are both present -- a defined time
+#                         origin is a specific clinical claim and needs a
+#                         source, the same discipline forms.yaml/measurements.yaml
+#                         already apply to direction and event_polarity.
+#
+# THE SYNONYM MIGRATION THIS FILE IS FOR. Endpoint-name synonyms and patterns
+# that used to live in measurements.yaml (on `tumour_burden_recist`,
+# `vital_status`, `disease_recurrence`, `treatment_failure`) move here (or to
+# events.yaml, for non-name event phrases like "time to death"). The
+# measurement terms keep only assessment-language synonyms -- RECIST, tumour
+# response, target lesion, mortality-rate phrasings that genuinely name the
+# ascertainment, not the literature name for the whole endpoint. See
+# vocab/README.md and docs/EVENT_SEMANTICS_SPEC.md for the full list and the
+# reasoning. The validator's ambiguous-synonym rule extends across
+# measurements.yaml / events.yaml / this file: a synonym claimed by two of the
+# three is an error, so the boundary drawn here cannot silently regrow.
+
+version: 1
+kind: named_endpoints
+definitions:
+
+  - id: pfs
+    label: "Progression-free survival"
+    synonyms: ["progression-free survival", "progression free survival", "PFS"]
+    form: time_to_event
+    event: disease_progression_or_death
+    reference: randomisation
+    default_measurement: tumour_burden_recist
+    citation: "FDA Clinical Trial Endpoints for the Approval of Cancer Drugs and Biologics (2018), Table 4"
+
+  - id: rpfs
+    label: "Radiographic progression-free survival"
+    synonyms: ["radiographic progression-free survival", "radiographic progression free survival", "rPFS"]
+    form: time_to_event
+    event: disease_progression_or_death
+    reference: randomisation
+    default_measurement: tumour_burden_recist
+    citation: "Scher HI et al., Prostate Cancer Clinical Trial Working Group 3 (PCWG3), J Clin Oncol 2016;34(12):1402-1418"
+    notes: >-
+      Same shape as PFS (radiographic progression or death from any cause) --
+      used in prostate cancer trials, where PSA changes alone do not define
+      progression. Kept as its own definition rather than a PFS synonym
+      because the name is independently standard in that literature, not a
+      spelling variant of it.
+
+  - id: os
+    label: "Overall survival"
+    synonyms: ["overall survival", "OS"]
+    form: time_to_event
+    event: death_any_cause
+    reference: randomisation
+    default_measurement: vital_status
+    citation: "FDA Clinical Trial Endpoints for the Approval of Cancer Drugs and Biologics (2018): time from randomization until death from any cause"
+
+  - id: ttp
+    label: "Time to progression"
+    synonyms: ["time to progression", "TTP"]
+    form: time_to_event
+    event: disease_progression
+    reference: randomisation
+    default_measurement: tumour_burden_recist
+    citation: "FDA Clinical Trial Endpoints for the Approval of Cancer Drugs and Biologics (2018), Table 4"
+    notes: Deaths are censored, not counted -- the PFS/TTP difference.
+
+  - id: dor
+    label: "Duration of response"
+    synonyms: ["duration of response", "DOR", "DoR"]
+    form: time_to_event
+    event: disease_progression_or_death
+    reference: response_onset
+    default_measurement: tumour_burden_recist
+    citation: "FDA Clinical Trial Endpoints for the Approval of Cancer Drugs and Biologics (2018), Table 4"
+    notes: >-
+      Reference is `response_onset`, NOT randomisation -- the clock starts at
+      first documented response, which is what makes DOR distinct from PFS
+      rather than a relabelling of it.
+
+  - id: ttr
+    label: "Time to response"
+    synonyms: ["time to response", "TTR"]
+    form: time_to_event
+    event: response_onset
+    reference: randomisation
+    default_measurement: tumour_burden_recist
+    citation: "FDA Clinical Trial Endpoints for the Approval of Cancer Drugs and Biologics (2018), Table 4"
+    notes: >-
+      Not to be confused with DOR: TTR clocks FROM randomisation TO response;
+      DOR clocks FROM response TO progression or death.
+
+  - id: dfs
+    label: "Disease-free survival"
+    synonyms:
+      - "disease-free survival"
+      - "disease free survival"
+      - "DFS"
+      - "relapse-free survival"
+      - "relapse free survival"
+      - "RFS"
+      - "recurrence-free survival"
+      - "recurrence free survival"
+      - "leukemia-free survival"
+      - "leukaemia-free survival"
+      - "LFS"
+      - "invasive breast cancer-free survival"
+      - "iBCFS"
+      - "graft-versus-host disease-free/failure-free survival"
+      - "GFFS"
+    form: time_to_event
+    event: disease_recurrence_or_death
+    reference: randomisation
+    default_measurement: disease_recurrence
+    citation: "FDA Clinical Trial Endpoints for the Approval of Cancer Drugs and Biologics (2018): time from randomization until recurrence or death from any cause"
+    notes: >-
+      DFS, RFS, LFS and their disease-specific spellings (iBCFS, GFFS) share
+      one definition here because disease_recurrence is already one
+      measurement id covering "disease recurrence or relapse" -- they were
+      synonyms of that single id before this spec and stay synonyms of one
+      named endpoint now, for the same reason.
+
+  - id: efs
+    label: "Event-free survival"
+    synonyms: ["event-free survival", "event free survival", "EFS"]
+    form: time_to_event
+    reference: randomisation
+    default_measurement: disease_recurrence
+    citation: "FDA Clinical Trial Endpoints for the Approval of Cancer Drugs and Biologics (2018): event-free survival is measured from randomization; the qualifying events vary by disease setting and protocol"
+    notes: >-
+      No `event` field: the EFS event set varies by disease and protocol (it
+      may include recurrence, death, treatment discontinuation, or a
+      second malignancy depending on the trial). A definition asserts only
+      what the name stably denotes -- the event falls through to the normal
+      cascade or stays not_stated.
+
+  - id: ffs
+    label: "Failure-free survival"
+    synonyms: ["failure-free survival", "failure free survival", "FFS"]
+    form: time_to_event
+    event: treatment_failure
+    reference: randomisation
+    default_measurement: treatment_failure
+    citation: "FDA Clinical Trial Endpoints for the Approval of Cancer Drugs and Biologics (2018), Table 4"
+
+  - id: tfst
+    label: "Time to next treatment"
+    synonyms:
+      - "time to first subsequent therapy"
+      - "TFST"
+      - "time to second subsequent therapy"
+      - "TSST"
+      - "time to next treatment"
+      - "TTNT"
+    form: time_to_event
+    event: treatment_failure
+    reference: randomisation
+    default_measurement: treatment_failure
+    citation: "FDA Clinical Trial Endpoints for the Approval of Cancer Drugs and Biologics (2018), Table 4"
+    notes: >-
+      TFST, TSST and TTNT are folded into one definition: they differ only in
+      which line of subsequent therapy starts the clock, not in shape.
