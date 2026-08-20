@@ -309,6 +309,48 @@ def test_run_pull_raises_clear_error_on_http_failure(tmp_path, monkeypatch):
     con.close()
 
 
+def test_run_pull_upsert_preserves_studies_from_earlier_pulls_with_different_filters(tmp_path, monkeypatch):
+    """The bug this guards against: a pull used to `CREATE OR REPLACE TABLE`
+    every raw.* table wholesale, so a second pull with different filters wiped
+    out everything the first pull landed. `pull` must upsert instead --
+    updating/inserting the newly-pulled studies without dropping studies a
+    previous, differently-filtered pull already landed."""
+    responses = [FakeResponse(200, {"studies": [_make_study("NCT001", ["PHASE3"], "2024-01-01")]})]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    run_pull(con, PullFilters(phases=("3",), limit=500))
+
+    responses.append(FakeResponse(200, {"studies": [_make_study("NCT002", ["PHASE1"], "2024-02-01")]}))
+    run_pull(con, PullFilters(phases=("1",), limit=500))
+
+    nct_ids = {r[0] for r in con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert nct_ids == {"NCT001", "NCT002"}
+    con.close()
+
+
+def test_run_pull_updates_existing_study_fields_on_rerun(tmp_path, monkeypatch):
+    """The "update existing" half of upsert: a study re-pulled with fresher
+    source data should have its raw.studies row updated in place, not left
+    stale and not duplicated."""
+    study_v1 = _make_study("NCT001", ["PHASE3"], "2024-01-01", status="RECRUITING")
+    study_v2 = _make_study("NCT001", ["PHASE3"], "2024-01-01", status="COMPLETED")
+    responses = [FakeResponse(200, {"studies": [study_v1]})]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    run_pull(con, PullFilters(phases=("3",), limit=500))
+
+    responses.append(FakeResponse(200, {"studies": [study_v2]}))
+    run_pull(con, PullFilters(phases=("3",), limit=500))
+
+    row = con.execute("SELECT overall_status FROM raw.studies WHERE nct_id = 'NCT001'").fetchone()
+    assert row[0] == "COMPLETED"
+    count = con.execute("SELECT count(*) FROM raw.studies").fetchone()[0]
+    assert count == 1  # updated in place, not duplicated
+    con.close()
+
+
 def test_run_pull_retries_transient_5xx_then_succeeds(tmp_path, monkeypatch):
     responses = [
         FakeResponse(503, text="temporarily unavailable"),

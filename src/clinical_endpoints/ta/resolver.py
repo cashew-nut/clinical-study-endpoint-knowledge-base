@@ -309,8 +309,12 @@ def resolve_therapeutic_areas(
 
 
 def write_study_therapeutic_area(con: duckdb.DuckDBPyConnection, resolved: list[ResolvedTa]) -> int:
-    """Replace conformed.study_therapeutic_area wholesale, matching how `pull`
-    refreshes raw.* and `vocab validate` refreshes vocab.*."""
+    """Replace conformed.study_therapeutic_area wholesale -- it's fully
+    recomputed from whatever `resolved` covers (by default every study
+    currently in raw.studies), matching how `vocab validate` refreshes
+    vocab.*. Unlike raw.* (which `pull` upserts, never dropping studies from
+    earlier pulls), this derived table has no "existing" state worth
+    preserving independently of its raw.* source."""
     con.execute("CREATE SCHEMA IF NOT EXISTS conformed")
     con.execute(
         """
@@ -340,21 +344,33 @@ def run_ta_resolution(
     }
 
 
-def filter_raw_tables_by_nct_ids(con: duckdb.DuckDBPyConnection, keep_nct_ids: set[str]) -> dict[str, int]:
-    """Delete rows for studies not in `keep_nct_ids` from every nct_id-keyed
-    raw.* table, plus conformed.study_therapeutic_area. Used to apply `--ta`
-    as a post-filter after landing an unfiltered pull. Returns the resulting
-    row counts for whichever tables exist."""
-    keep = list(keep_nct_ids)
+def filter_raw_tables_by_nct_ids(
+    con: duckdb.DuckDBPyConnection, pulled_nct_ids: set[str], keep_nct_ids: set[str]
+) -> dict[str, int]:
+    """Delete rows for studies that *this pull* landed (`pulled_nct_ids`) but
+    that don't match `keep_nct_ids`, from every nct_id-keyed raw.* table, plus
+    conformed.study_therapeutic_area. Used to apply `--ta` as a post-filter
+    after landing an unfiltered pull -- scoped to this pull's studies only, so
+    studies landed by earlier pulls (with different filters) are never
+    touched, even if they don't match `keep_nct_ids` either. Returns the
+    resulting row counts, among this pull's kept studies, for whichever
+    tables exist.
+    """
+    pulled = set(pulled_nct_ids)
+    kept_this_pull = list(pulled & set(keep_nct_ids))
+    drop_this_pull = list(pulled - set(keep_nct_ids))
     counts: dict[str, int] = {}
     for table in _NCT_KEYED_RAW_TABLES:
         if not _table_exists(con, "raw", table):
             continue
-        con.execute(f"DELETE FROM raw.{table} WHERE NOT (nct_id = ANY(?))", [keep])
-        counts[table] = con.execute(f"SELECT count(*) FROM raw.{table}").fetchone()[0]
-    if _table_exists(con, "conformed", "study_therapeutic_area"):
+        if drop_this_pull:
+            con.execute(f"DELETE FROM raw.{table} WHERE nct_id = ANY(?)", [drop_this_pull])
+        counts[table] = con.execute(
+            f"SELECT count(*) FROM raw.{table} WHERE nct_id = ANY(?)", [kept_this_pull]
+        ).fetchone()[0]
+    if drop_this_pull and _table_exists(con, "conformed", "study_therapeutic_area"):
         con.execute(
-            "DELETE FROM conformed.study_therapeutic_area WHERE NOT (nct_id = ANY(?))", [keep]
+            "DELETE FROM conformed.study_therapeutic_area WHERE nct_id = ANY(?)", [drop_this_pull]
         )
     return counts
 

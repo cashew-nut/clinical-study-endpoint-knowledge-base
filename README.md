@@ -134,9 +134,13 @@ Each `pull` is filtered and logged to `raw._pull_log` (pull_id, pulled_at,
 source, filters_json, source_tables, row_counts) -- `source_tables` differs by
 backend (AACT lands `mesh_terms`, the CT.gov API backend lands
 `browse_condition_branches` instead; see "Ingestion backends" below). Every
-`raw.*` table is replaced wholesale on each run, so re-running `pull` with the
-same (or different) filters, or a different `--source`, is a refresh, not a
-one-off script -- the pull history in `raw._pull_log` accumulates across runs.
+`pull` **upserts** into `raw.*`: studies (and their outcomes/conditions/browse
+rows) landed by *this* pull are updated if already present and inserted if
+new, but studies landed by an earlier pull -- with different filters, a
+different `--source`, whatever -- are left untouched. So re-running `pull`
+with the same filters refreshes those studies in place, re-running it with
+different filters accumulates alongside what's already there, and the pull
+history in `raw._pull_log` accumulates across runs either way.
 
 ```bash
 # Once vocab validate has loaded the TA mapping, pull can filter by it

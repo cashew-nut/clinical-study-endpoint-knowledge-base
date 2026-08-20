@@ -99,9 +99,53 @@ def test_run_pull_is_idempotent_refresh_not_append(fake_aact_con):
     run_pull(fake_aact_con, filters)
     run_pull(fake_aact_con, filters)
 
-    # raw.studies is replaced wholesale, not appended to, on re-run
+    # re-running with the same filters upserts (updates) the same nct_ids
+    # rather than duplicating them
     count = fake_aact_con.execute("SELECT count(*) FROM raw.studies").fetchone()[0]
     assert count == 2
+
+
+def test_run_pull_upsert_preserves_studies_from_earlier_pulls_with_different_filters(fake_aact_con):
+    """The bug this guards against: a pull used to `CREATE OR REPLACE TABLE`
+    every raw.* table wholesale, so a second pull with different filters wiped
+    out everything the first pull landed. `pull` must upsert instead --
+    updating/inserting the newly-pulled studies without dropping studies a
+    previous, differently-filtered pull already landed."""
+    run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))  # lands NCT001, NCT002
+    run_pull(fake_aact_con, PullFilters(phases=("1",), limit=500))  # lands NCT003
+
+    nct_ids = {r[0] for r in fake_aact_con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert nct_ids == {"NCT001", "NCT002", "NCT003"}
+
+    outcome_nct_ids = {
+        r[0] for r in fake_aact_con.execute("SELECT nct_id FROM raw.design_outcomes").fetchall()
+    }
+    assert outcome_nct_ids == {"NCT001", "NCT002", "NCT003"}
+
+    condition_nct_ids = {
+        r[0] for r in fake_aact_con.execute("SELECT nct_id FROM raw.conditions").fetchall()
+    }
+    assert condition_nct_ids == {"NCT001", "NCT002", "NCT003"}
+
+
+def test_run_pull_updates_existing_study_fields_on_rerun(fake_aact_con):
+    """The "update existing" half of upsert: a study re-pulled with fresher
+    source data should have its raw.studies row updated in place, not left
+    stale and not duplicated."""
+    run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
+    fake_aact_con.execute(
+        "UPDATE aact.ctgov.studies SET overall_status = 'COMPLETED' WHERE nct_id = 'NCT002'"
+    )
+    run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
+
+    row = fake_aact_con.execute(
+        "SELECT overall_status FROM raw.studies WHERE nct_id = 'NCT002'"
+    ).fetchone()
+    assert row[0] == "COMPLETED"
+    count = fake_aact_con.execute(
+        "SELECT count(*) FROM raw.studies WHERE nct_id = 'NCT002'"
+    ).fetchone()[0]
+    assert count == 1  # updated in place, not duplicated
 
 
 def test_pull_mesh_terms_picks_up_a_populated_tree_number_column(fake_aact_con):

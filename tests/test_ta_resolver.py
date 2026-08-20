@@ -271,7 +271,7 @@ def test_filter_raw_tables_by_nct_ids(con, vocab_dir):
         _insert_condition(con, nct_id, condition)
     run_ta_resolution(con, vocab_dir=vocab_dir)
 
-    counts = filter_raw_tables_by_nct_ids(con, {"NCT001"})
+    counts = filter_raw_tables_by_nct_ids(con, {"NCT001", "NCT002"}, {"NCT001"})
 
     assert counts["studies"] == 1
     assert counts["browse_conditions"] == 1
@@ -279,6 +279,31 @@ def test_filter_raw_tables_by_nct_ids(con, vocab_dir):
     assert remaining == [("NCT001",)]
     ta_rows = con.execute("SELECT nct_id FROM conformed.study_therapeutic_area").fetchall()
     assert ta_rows == [("NCT001",)]
+
+
+def test_filter_raw_tables_by_nct_ids_never_touches_studies_outside_this_pull(con, vocab_dir):
+    """A `--ta` filter must only drop studies landed by *this* pull -- studies
+    from an earlier, unrelated pull that also fail to match must survive."""
+    _insert_study(con, "NCT001")
+    _insert_condition(con, "NCT001", "Lung Neoplasms")
+    run_ta_resolution(con, vocab_dir=vocab_dir)
+
+    # A later pull lands NCT002 (asthma -- won't match a hypothetical oncology
+    # filter) and NCT003 (lung cancer -- matches). NCT001 was never part of
+    # this pull at all.
+    _insert_study(con, "NCT002")
+    _insert_condition(con, "NCT002", "Asthma")
+    _insert_study(con, "NCT003")
+    _insert_condition(con, "NCT003", "Lung Neoplasms")
+    run_ta_resolution(con, vocab_dir=vocab_dir)
+
+    counts = filter_raw_tables_by_nct_ids(con, {"NCT002", "NCT003"}, {"NCT003"})
+
+    assert counts["studies"] == 1  # just NCT003, this pull's kept count
+    remaining = {r[0] for r in con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert remaining == {"NCT001", "NCT003"}  # NCT001 untouched, NCT002 dropped
+    ta_rows = {r[0] for r in con.execute("SELECT nct_id FROM conformed.study_therapeutic_area").fetchall()}
+    assert ta_rows == {"NCT001", "NCT003"}
 
 
 # --------------------------------------------------------------- diff_tree_vs_pattern

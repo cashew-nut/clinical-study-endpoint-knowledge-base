@@ -31,6 +31,7 @@ import requests
 
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
 from clinical_endpoints.ingest.pull_log import write_pull_log
+from clinical_endpoints.ingest.upsert import ensure_table, replace_children, upsert_rows
 
 API_BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
 SOURCE = "ctgov_api"
@@ -217,6 +218,11 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     start_date desc before truncating to `limit` -- this way "most recent N"
     stays correct even if the server-side `sort` param turns out to be wrong
     or unsupported.
+
+    Upserts rather than replaces: raw.studies is updated/inserted per nct_id,
+    and every child table (design_outcomes, conditions, browse_*) has its rows
+    for *this pull's* nct_ids replaced -- studies landed by earlier pulls with
+    different filters are never touched.
     """
     aact_phases = normalize_phases(list(filters.phases))
     query_term = _build_query_term(aact_phases, filters.since)
@@ -278,101 +284,115 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         b for nct_id in kept_nct_ids for b in condition_branches_by_nct.get(nct_id, [])
     ]
 
-    con.execute(
+    ensure_table(
+        con,
+        "studies",
         """
-        CREATE OR REPLACE TABLE raw.studies (
-            nct_id VARCHAR, phase VARCHAR, overall_status VARCHAR, study_type VARCHAR,
-            start_date DATE, primary_completion_date DATE,
-            brief_title VARCHAR, official_title VARCHAR
-        )
-        """
+        nct_id VARCHAR PRIMARY KEY, phase VARCHAR, overall_status VARCHAR, study_type VARCHAR,
+        start_date DATE, primary_completion_date DATE,
+        brief_title VARCHAR, official_title VARCHAR
+        """,
     )
-    if studies:
-        con.executemany(
-            "INSERT INTO raw.studies VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    s["nct_id"],
-                    s["phase"],
-                    s["overall_status"],
-                    s["study_type"],
-                    s["start_date"],
-                    s["primary_completion_date"],
-                    s["brief_title"],
-                    s["official_title"],
-                )
-                for s in studies
-            ],
-        )
-
-    con.execute(
-        """
-        CREATE OR REPLACE TABLE raw.design_outcomes (
-            nct_id VARCHAR, outcome_type VARCHAR, measure VARCHAR,
-            time_frame VARCHAR, description VARCHAR, population VARCHAR
-        )
-        """
+    upsert_rows(
+        con,
+        "studies",
+        [
+            "nct_id", "phase", "overall_status", "study_type",
+            "start_date", "primary_completion_date", "brief_title", "official_title",
+        ],
+        ["nct_id"],
+        [
+            (
+                s["nct_id"],
+                s["phase"],
+                s["overall_status"],
+                s["study_type"],
+                s["start_date"],
+                s["primary_completion_date"],
+                s["brief_title"],
+                s["official_title"],
+            )
+            for s in studies
+        ],
     )
-    if outcomes:
-        con.executemany(
-            "INSERT INTO raw.design_outcomes VALUES (?, ?, ?, ?, ?, ?)",
-            [
-                (o["nct_id"], o["outcome_type"], o["measure"], o["time_frame"], o["description"], o["population"])
-                for o in outcomes
-            ],
-        )
 
-    con.execute("CREATE OR REPLACE TABLE raw.conditions (nct_id VARCHAR, name VARCHAR)")
-    if conditions:
-        con.executemany(
-            "INSERT INTO raw.conditions VALUES (?, ?)",
-            [(c["nct_id"], c["name"]) for c in conditions],
-        )
-
-    con.execute(
+    ensure_table(
+        con,
+        "design_outcomes",
         """
-        CREATE OR REPLACE TABLE raw.browse_conditions (
-            nct_id VARCHAR, mesh_term VARCHAR, mesh_term_normalised VARCHAR, mesh_type VARCHAR
-        )
-        """
+        nct_id VARCHAR, outcome_type VARCHAR, measure VARCHAR,
+        time_frame VARCHAR, description VARCHAR, population VARCHAR
+        """,
     )
-    if browse_conditions:
-        con.executemany(
-            "INSERT INTO raw.browse_conditions VALUES (?, ?, ?, ?)",
-            [
-                (m["nct_id"], m["mesh_term"], m["mesh_term_normalised"], m["mesh_type"])
-                for m in browse_conditions
-            ],
-        )
-
-    con.execute(
-        """
-        CREATE OR REPLACE TABLE raw.browse_interventions (
-            nct_id VARCHAR, mesh_term VARCHAR, mesh_term_normalised VARCHAR, mesh_type VARCHAR
-        )
-        """
+    replace_children(
+        con,
+        "design_outcomes",
+        ["nct_id", "outcome_type", "measure", "time_frame", "description", "population"],
+        "nct_id",
+        kept_nct_ids,
+        [
+            (o["nct_id"], o["outcome_type"], o["measure"], o["time_frame"], o["description"], o["population"])
+            for o in outcomes
+        ],
     )
-    if browse_interventions:
-        con.executemany(
-            "INSERT INTO raw.browse_interventions VALUES (?, ?, ?, ?)",
-            [
-                (m["nct_id"], m["mesh_term"], m["mesh_term_normalised"], m["mesh_type"])
-                for m in browse_interventions
-            ],
-        )
 
-    con.execute(
-        """
-        CREATE OR REPLACE TABLE raw.browse_condition_branches (
-            nct_id VARCHAR, branch_abbrev VARCHAR, branch_name VARCHAR
-        )
-        """
+    ensure_table(con, "conditions", "nct_id VARCHAR, name VARCHAR")
+    replace_children(
+        con,
+        "conditions",
+        ["nct_id", "name"],
+        "nct_id",
+        kept_nct_ids,
+        [(c["nct_id"], c["name"]) for c in conditions],
     )
-    if condition_branches:
-        con.executemany(
-            "INSERT INTO raw.browse_condition_branches VALUES (?, ?, ?)",
-            [(b["nct_id"], b["branch_abbrev"], b["branch_name"]) for b in condition_branches],
-        )
+
+    ensure_table(
+        con,
+        "browse_conditions",
+        "nct_id VARCHAR, mesh_term VARCHAR, mesh_term_normalised VARCHAR, mesh_type VARCHAR",
+    )
+    replace_children(
+        con,
+        "browse_conditions",
+        ["nct_id", "mesh_term", "mesh_term_normalised", "mesh_type"],
+        "nct_id",
+        kept_nct_ids,
+        [
+            (m["nct_id"], m["mesh_term"], m["mesh_term_normalised"], m["mesh_type"])
+            for m in browse_conditions
+        ],
+    )
+
+    ensure_table(
+        con,
+        "browse_interventions",
+        "nct_id VARCHAR, mesh_term VARCHAR, mesh_term_normalised VARCHAR, mesh_type VARCHAR",
+    )
+    replace_children(
+        con,
+        "browse_interventions",
+        ["nct_id", "mesh_term", "mesh_term_normalised", "mesh_type"],
+        "nct_id",
+        kept_nct_ids,
+        [
+            (m["nct_id"], m["mesh_term"], m["mesh_term_normalised"], m["mesh_type"])
+            for m in browse_interventions
+        ],
+    )
+
+    ensure_table(
+        con,
+        "browse_condition_branches",
+        "nct_id VARCHAR, branch_abbrev VARCHAR, branch_name VARCHAR",
+    )
+    replace_children(
+        con,
+        "browse_condition_branches",
+        ["nct_id", "branch_abbrev", "branch_name"],
+        "nct_id",
+        kept_nct_ids,
+        [(b["nct_id"], b["branch_abbrev"], b["branch_name"]) for b in condition_branches],
+    )
 
     row_counts = {
         "studies": len(studies),
@@ -385,4 +405,4 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     log_entry = write_pull_log(
         con, source=SOURCE, filters=filters.as_dict(), row_counts=row_counts, source_tables=SOURCE_TABLES
     )
-    return {**log_entry, "row_counts": row_counts}
+    return {**log_entry, "row_counts": row_counts, "nct_ids": kept_nct_ids}

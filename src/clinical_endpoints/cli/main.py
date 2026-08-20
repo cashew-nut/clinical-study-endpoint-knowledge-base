@@ -175,7 +175,7 @@ def pull(
                         [list(ta_ids)],
                     ).fetchall()
                 }
-                result["row_counts"] = filter_raw_tables_by_nct_ids(con, keep)
+                result["row_counts"] = filter_raw_tables_by_nct_ids(con, set(result["nct_ids"]), keep)
                 ta_summary = run_ta_resolution(con)  # re-derive the distribution for the kept studies only
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
