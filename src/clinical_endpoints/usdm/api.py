@@ -40,6 +40,7 @@ VOCAB_DIMENSIONS = {
     "form": "forms",
     "direction": "directions",
     "therapeutic_area": "therapeutic_areas",
+    "event": "events",
 }
 
 

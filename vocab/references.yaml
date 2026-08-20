@@ -102,6 +102,23 @@ terms:
       - '\bperiprocedural\b'
       - '\bfrom (spinal |general )?an(a)?esthesia\b'
 
+  - id: response_onset
+    label: "First documented response"
+    inline_label: "first documented response"
+    kind: time_origin
+    definition: >-
+      The date objective response is first documented. The time origin for
+      duration of response (DOR), which clocks from response to progression
+      or death rather than from randomisation -- added by
+      docs/EVENT_SEMANTICS_SPEC.md, which needed a real time origin the
+      reference vocabulary could not previously state.
+    synonyms:
+      - "from first response"
+      - "from response"
+      - "date of response"
+    patterns:
+      - '\bfrom (first |the date of )?(documented |confirmed )?response\b'
+
   # --- value references ----------------------------------------------------
   - id: patient_baseline
     label: "Participant's own baseline"
@@ -325,6 +342,7 @@ match_precedence:
   - pre_dose
   - screening
   - patient_baseline
+  - response_onset
   - randomisation
   - treatment_start
   - index_event

@@ -310,6 +310,135 @@ def test_provenance_carries_the_pull_it_came_from(usdm_con):
     assert parsed.isoformat() == pulled_at
 
 
+# ------------------------------------------------- event semantics (Phase C)
+
+
+@pytest.fixture(scope="module")
+def nct01777919_con():
+    """A standalone warehouse carrying exactly the two NCT01777919 outcomes
+    the spec's incident and worked example are built from, isolated from the
+    shared `usdm_con` fixture so this test pins its own expectations without
+    perturbing every other test that relies on the shared one."""
+    from clinical_endpoints.conform.pipeline import run_conform
+    from clinical_endpoints.db import SCHEMAS
+    from clinical_endpoints.ingest.design import DESIGN_GROUPS_DDL, STUDIES_DDL
+    from clinical_endpoints.ingest.pull_log import write_pull_log
+    from clinical_endpoints.vocab.loader import default_vocab_dir, load_vocab, write_vocab_tables
+
+    con = duckdb.connect(":memory:")
+    for schema in SCHEMAS:
+        con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+    vocab_dir = default_vocab_dir(Path(__file__).parent)
+    write_vocab_tables(con, load_vocab(vocab_dir), vocab_dir=vocab_dir)
+
+    con.execute(f"CREATE TABLE raw.studies ({STUDIES_DDL})")
+    con.execute(
+        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 19) + ")",
+        [
+            "NCT01777919", "PHASE3", "COMPLETED", "INTERVENTIONAL", "2013-01-01", "2016-01-01",
+            "A trial of tumour-targeted therapy", "A trial of tumour-targeted therapy, officially",
+            "Parallel Assignment", "Treatment", "Randomized", "Double", 480, "Actual",
+            False, "All", "18 Years", "75 Years", "Adults with advanced solid tumours",
+        ],
+    )
+    con.execute(f"CREATE TABLE raw.design_groups ({DESIGN_GROUPS_DDL})")
+    con.execute(
+        "CREATE TABLE raw.design_outcomes (nct_id VARCHAR, outcome_type VARCHAR, measure VARCHAR, "
+        "time_frame VARCHAR, description VARCHAR, population VARCHAR)"
+    )
+    con.executemany(
+        "INSERT INTO raw.design_outcomes VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("NCT01777919", "primary", "Progression-free survival", "6 months", None, None),
+            ("NCT01777919", "secondary", "Overall survival", "2 years", None, None),
+            # A third, synthetic row: event-family (time_to_event) but names no
+            # recognisable event -- exercises the degraded not_stated frame.
+            ("NCT01777919", "other", "Time to RECIST assessment", None, None, None),
+        ],
+    )
+    write_pull_log(
+        con, source="ctgov_api", filters={}, row_counts={"studies": 1, "design_outcomes": 3},
+        source_tables=("studies", "design_outcomes", "design_groups"),
+    )
+    run_conform(con)
+    yield con
+    con.close()
+
+
+def test_nct01777919_pfs_row_projects_the_worked_example(nct01777919_con):
+    """The regression test the incident earns, at the projection layer: PFS no
+    longer renders 'Time from randomisation to Tumour burden (RECIST)' -- the
+    wrong-endpoint-definition defect this whole spec exists to fix."""
+    projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
+    pfs = next(e for e in projection.endpoints() if e["description"] == "Progression-free survival")
+
+    assert pfs["label"] == "Time from randomisation to disease progression or death over 6 months"
+    assert pfs["text"] == (
+        '<p>Time from <usdm:tag name="reference"/> to <usdm:tag name="event"/> '
+        '<usdm:tag name="timepoint"/></p>'
+    )
+    deco = {
+        ext["url"].rsplit(":", 1)[-1]: ext.get("valueString")
+        for ext in next(
+            e for e in pfs["extensionAttributes"] if e["url"].endswith(":decomposition")
+        )["valueExtensionClass"]["extensionAttributes"]
+    }
+    assert deco["reference"] == "randomisation"
+    assert deco["event"] == "disease_progression_or_death"
+    assert deco["measurement"] == "tumour_burden_recist"
+    assert deco["namedEndpoint"] == "pfs"
+    assert deco["eventMatchMethod"] == "named_endpoint"
+    assert deco["fidelity"] == "templated"
+
+    # The measurement surrogate still carries the ORR join, even though the
+    # template renders {event} rather than {measurement}.
+    surrogates_by_name = {s["name"]: s for s in projection.bc_surrogates}
+    assert "tumour_burden_recist" in surrogates_by_name
+    assert surrogates_by_name["tumour_burden_recist"]["reference"] == "/v4/vocab/measurement/tumour_burden_recist"
+    assert "disease_progression_or_death" in surrogates_by_name
+    assert surrogates_by_name["disease_progression_or_death"]["reference"] == "/v4/vocab/event/disease_progression_or_death"
+
+    dictionary = next(d for d in projection.dictionaries if d["id"] == pfs["dictionaryId"])
+    tags_used = {pm["tag"] for pm in dictionary["parameterMaps"]}
+    assert tags_used == {"reference", "event", "timepoint"}
+    assert "measurement" not in tags_used  # present in bcSurrogates, not referenced by this dictionary
+
+
+def test_nct01777919_os_row_projects_the_worked_example(nct01777919_con):
+    projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
+    os_endpoint = next(e for e in projection.endpoints() if e["description"] == "Overall survival")
+    assert os_endpoint["label"] == "Time from randomisation to death from any cause over 2 years"
+
+
+def test_nct01777919_primary_objective_is_about_progression_not_tumour_burden(nct01777919_con):
+    """"To evaluate the effect of the study intervention on tumour burden" was
+    the defect (point 4 in the spec's "defect, shown on the first live trial"
+    section) -- the objective must now name the event's concept."""
+    projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
+    primary = next(o for o in projection.objectives if o["level"]["decode"] == "Primary Objective")
+    assert primary["label"] == "To evaluate the effect of the study intervention on disease progression"
+
+
+def test_event_family_row_with_unresolvable_event_degrades_to_the_not_stated_frame(nct01777919_con):
+    """An event-family row whose event does not resolve must not render the
+    assessment into the event's slot -- it degrades to {measurement}[
+    {timepoint}] at partial tier instead of falling to raw verbatim text."""
+    projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
+    degraded = next(e for e in projection.endpoints() if e["description"] == "Time to RECIST assessment")
+
+    assert degraded["label"] == "Tumour burden (RECIST)"
+    assert degraded["text"] == '<p><usdm:tag name="measurement"/></p>'
+    deco = {
+        ext["url"].rsplit(":", 1)[-1]: ext.get("valueString")
+        for ext in next(
+            e for e in degraded["extensionAttributes"] if e["url"].endswith(":decomposition")
+        )["valueExtensionClass"]["extensionAttributes"]
+    }
+    assert deco["fidelity"] == "partial"
+    assert deco["event"] == "not_stated"
+    assert deco["measurement"] == "tumour_burden_recist"
+
+
 def test_provenance_survives_a_warehouse_with_no_pull_log(usdm_warehouse_path, tmp_path):
     """A warehouse built by hand, or one whose log predates the table."""
     import shutil

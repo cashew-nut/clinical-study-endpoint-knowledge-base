@@ -47,9 +47,23 @@ def test_shipped_vocabulary_validates_clean(docs):
     assert result.errors == [], "shipped vocabulary has validation errors"
 
 
+#: docs/EVENT_SEMANTICS_SPEC.md's own worked example of why `event_family` is
+#: an explicit forms.yaml flag rather than derived from `direction_rule`:
+#: shift_from_baseline is `inherit_event_polarity` (its direction depends on
+#: an event's polarity) yet names no event, so it deliberately stays outside
+#: `event_family`. That is precisely the case the validator's warning exists
+#: to flag, so it is expected on the shipped vocabulary rather than a defect
+#: to clear -- unlike every other warning, which this test still catches.
+_EXPECTED_SHIPPED_WARNINGS = [
+    "forms.yaml: shift_from_baseline: direction_rule 'inherit_event_polarity' "
+    "implies an event but `event_family` is not true -- the two properties "
+    "can drift apart unnoticed",
+]
+
+
 def test_shipped_vocabulary_has_no_warnings(docs):
     result = validate_vocab(docs)
-    assert result.warnings == [], "shipped vocabulary has validation warnings"
+    assert result.warnings == _EXPECTED_SHIPPED_WARNINGS, "shipped vocabulary has validation warnings"
 
 
 def test_every_dimension_file_is_present_and_declares_itself(docs):
@@ -140,6 +154,140 @@ def test_ta_mesh_mapping_to_unknown_area_is_an_error(docs):
     broken = copy.deepcopy(docs)
     broken["ta_mesh_mapping"]["term_overrides"]["Asthma"] = "pulmonology"
     assert any("unknown therapeutic area" in e for e in validate_vocab(broken).errors)
+
+
+# ------------------------------------- event semantics (docs/EVENT_SEMANTICS_SPEC.md)
+
+
+def test_event_duplicate_term_id_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    broken["event"]["terms"].append(dict(broken["event"]["terms"][0]))
+    assert any("duplicate term id" in e for e in validate_vocab(broken).errors)
+
+
+def test_event_synonym_claimed_by_two_events_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    terms = [t for t in broken["event"]["terms"] if t.get("synonyms")]
+    terms[1].setdefault("synonyms", []).append(terms[0]["synonyms"][0])
+    assert any("claimed by both" in e for e in validate_vocab(broken).errors)
+
+
+def test_event_polarity_outside_closed_set_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    broken["event"]["terms"][0]["polarity"] = "vibes"
+    assert any("polarity" in e and "vibes" in e for e in validate_vocab(broken).errors)
+
+
+def test_event_ascertained_by_naming_unknown_measurement_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    broken["event"]["terms"][0]["ascertained_by"] = ["not_a_real_measurement"]
+    assert any("not a measurement id" in e for e in validate_vocab(broken).errors)
+
+
+def test_event_components_naming_unknown_event_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    union = next(t for t in broken["event"]["terms"] if t.get("components"))
+    union["components"] = ["not_a_real_event"]
+    assert any("not a event id" in e or "not an event id" in e for e in validate_vocab(broken).errors)
+
+
+def test_event_components_cycle_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    broken["event"]["terms"].append({"id": "cycle_a", "label": "Cycle A", "components": ["cycle_b"]})
+    broken["event"]["terms"].append({"id": "cycle_b", "label": "Cycle B", "components": ["cycle_a"]})
+    assert any("forms a cycle" in e for e in validate_vocab(broken).errors)
+
+
+def test_event_components_with_synonyms_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    union = next(t for t in broken["event"]["terms"] if t.get("components"))
+    union["synonyms"] = ["should not coexist with components"]
+    assert any("both `components` and synonyms/patterns" in e for e in validate_vocab(broken).errors)
+
+
+def test_measurement_implies_event_naming_unknown_event_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    broken["measurement"]["terms"][0]["implies_event"] = "not_a_real_event"
+    assert any("implies_event" in e and "not a event id" in e for e in validate_vocab(broken).errors)
+
+
+def test_named_endpoint_missing_form_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    del broken["named_endpoints"]["definitions"][0]["form"]
+    assert any("missing `form`" in e for e in validate_vocab(broken).errors)
+
+
+def test_named_endpoint_form_naming_unknown_form_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    broken["named_endpoints"]["definitions"][0]["form"] = "not_a_real_form"
+    assert any(".form = " in e and "is not a form id" in e for e in validate_vocab(broken).errors)
+
+
+def test_named_endpoint_event_naming_unknown_event_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    broken["named_endpoints"]["definitions"][0]["event"] = "not_a_real_event"
+    assert any(".event = " in e and "is not an event id" in e for e in validate_vocab(broken).errors)
+
+
+def test_named_endpoint_reference_naming_unknown_reference_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    broken["named_endpoints"]["definitions"][0]["reference"] = "not_a_real_reference"
+    assert any(".reference = " in e and "is not a reference id" in e for e in validate_vocab(broken).errors)
+
+
+def test_named_endpoint_default_measurement_naming_unknown_measurement_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    broken["named_endpoints"]["definitions"][0]["default_measurement"] = "not_a_real_measurement"
+    assert any(".default_measurement = " in e and "is not a measurement id" in e for e in validate_vocab(broken).errors)
+
+
+def test_named_endpoint_synonym_claimed_by_two_definitions_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    definitions = broken["named_endpoints"]["definitions"]
+    definitions[1].setdefault("synonyms", []).append(definitions[0]["synonyms"][0])
+    assert any("claimed by both" in e for e in validate_vocab(broken).errors)
+
+
+def test_named_endpoint_tte_definition_with_reference_needs_a_citation(docs):
+    broken = copy.deepcopy(docs)
+    pfs = next(d for d in broken["named_endpoints"]["definitions"] if d["id"] == "pfs")
+    pfs.pop("citation", None)
+    assert any("no `citation`" in e for e in validate_vocab(broken).errors)
+
+
+def test_synonym_claimed_by_both_measurement_and_event_is_an_error(docs):
+    """docs/EVENT_SEMANTICS_SPEC.md: the ambiguous-synonym rule extends across
+    measurement/event/named_endpoint, so the endpoint-name migration cannot
+    silently regrow."""
+    broken = copy.deepcopy(docs)
+    measurement_term = next(t for t in broken["measurement"]["terms"] if t.get("synonyms"))
+    event_term = next(t for t in broken["event"]["terms"] if t.get("synonyms"))
+    event_term["synonyms"].append(measurement_term["synonyms"][0])
+    errors = validate_vocab(broken).errors
+    assert any("claimed by both measurement" in e and "event" in e for e in errors)
+
+
+def test_synonym_claimed_by_both_named_endpoint_and_measurement_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    measurement_term = next(t for t in broken["measurement"]["terms"] if t.get("synonyms"))
+    broken["named_endpoints"]["definitions"][0]["synonyms"].append(measurement_term["synonyms"][0])
+    errors = validate_vocab(broken).errors
+    assert any("named_endpoint" in e and "measurement" in e for e in errors)
+
+
+def test_form_event_family_must_be_boolean(docs):
+    broken = copy.deepcopy(docs)
+    broken["form"]["terms"][0]["event_family"] = "yes please"
+    assert any("event_family must be a boolean" in e for e in validate_vocab(broken).errors)
+
+
+def test_form_direction_rule_implying_event_without_event_family_warns(docs):
+    broken = copy.deepcopy(docs)
+    change_from_baseline = next(t for t in broken["form"]["terms"] if t["id"] == "change_from_baseline")
+    change_from_baseline["direction_rule"] = "inherit_event_polarity"
+    assert any(
+        "implies an event but `event_family` is not true" in w for w in validate_vocab(broken).warnings
+    )
 
 
 # ------------------------------------------------------- the matching contract
@@ -245,14 +393,17 @@ def test_every_synonym_lands_in_the_synonyms_table(docs, vocab_dir):
         for spec in DIMENSIONS
         for term in docs[spec.dimension]["terms"]
     )
+    # named_endpoints.yaml is not a DimensionSpec (see its own header), but its
+    # synonyms land in this same shared table, tagged dimension='named_endpoint'.
+    expected += sum(len(e.get("synonyms") or []) for e in docs["named_endpoints"]["definitions"])
     assert con.execute("SELECT count(*) FROM vocab.synonyms").fetchone()[0] == expected
 
 
 # ----------------------------------------------- the vocabularies themselves
 
 
-def _matcher(doc, order_key="match_precedence"):
-    by_id = {t["id"]: t for t in doc["terms"]}
+def _matcher(doc, order_key="match_precedence", terms_key="terms"):
+    by_id = {t["id"]: t for t in doc[terms_key]}
     order = doc.get(order_key) or list(by_id)
     compiled = []
     for term_id in order:
@@ -266,6 +417,24 @@ def _matcher(doc, order_key="match_precedence"):
             ],
         ))
     return compiled
+
+
+def _match_measurement_with_named_endpoint_fallback(docs, normalised):
+    """Simulates conform_row step 0 + step 1 for this file's plain fixture
+    checks: a direct measurement match wins; failing that, a named-endpoint
+    hit's `default_measurement` fills the silence -- docs/EVENT_SEMANTICS_SPEC.md's
+    "PFS/OS/TTR" case, since their endpoint-NAME synonyms moved out of
+    measurements.yaml and into named_endpoints.yaml."""
+    measurements = _matcher(docs["measurement"], order_key="_none")
+    direct = _match(measurements, normalised)
+    if direct:
+        return direct
+    named_endpoints = _matcher(docs["named_endpoints"], order_key="_none", terms_key="definitions")
+    hit = _match_longest(named_endpoints, normalised)
+    if hit:
+        by_id = {e["id"]: e for e in docs["named_endpoints"]["definitions"]}
+        return by_id[hit].get("default_measurement")
+    return None
 
 
 def _match(compiled, text):
@@ -347,9 +516,8 @@ REFERENCE_TABLE_FIXTURES = [
 def test_reference_table_fixtures_conform(docs, text, form_id, measurement_id, direction_id):
     normalised = normalise(text)
     forms = _matcher(docs["form"])
-    measurements = _matcher(docs["measurement"], order_key="_none")
     got_form = _match(forms, normalised) or docs["form"]["default_when_unmatched"]
-    got_measurement = _match(measurements, normalised)
+    got_measurement = _match_measurement_with_named_endpoint_fallback(docs, normalised)
     got_direction = _derive_direction(docs, got_form, got_measurement, normalised)
     assert (got_form, got_measurement, got_direction) == (form_id, measurement_id, direction_id)
 

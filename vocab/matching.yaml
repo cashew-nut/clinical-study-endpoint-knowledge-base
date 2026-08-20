@@ -108,6 +108,20 @@ cascade:
   # That is why there is no lexical rule mapping a bare safety title to
   # incidence_proportion: the registry usually answers the question itself, and
   # where it does not, `not_stated` is the honest result.
+  #
+  # named_endpoint is `conform_row` step 0 (docs/EVENT_SEMANTICS_SPEC.md): a
+  # literature name (PFS, OS, DFS...) resolves the whole bundle -- form,
+  # event, reference, default_measurement -- at once. Tried before every other
+  # dimension's own cascade; those still run regardless, and a definition's
+  # fields only fill where that dimension's own cascade stays silent. A miss
+  # here is not a review-queue trigger -- it is simply "no named endpoint
+  # matched", so the fallback is a sentinel, not a term id.
+  named_endpoint:
+    - field: measure
+      match_method: named_endpoint
+    - field: description
+      match_method: named_endpoint
+    - fallback: not_matched
   form:
     - field: measure
       match_method: exact
@@ -139,13 +153,37 @@ cascade:
     - field: description
       match_method: syntactic_rule
     - fallback: not_stated
+  event:
+    # Run only for event-family forms (forms.yaml `event_family: true`), and
+    # only as step 4(b) -- after a named-endpoint definition's own `event`
+    # (4a) and before a resolved measurement's `implies_event` (4c). Text here
+    # is deliberately thin: most event resolution comes from 4a/4c, per
+    # events.yaml's note that it does not duplicate synonyms a measurement's
+    # `implies_event` already reaches.
+    - field: measure
+      match_method: exact
+    - field: description
+      match_method: syntactic_rule
+    - fallback: not_stated
 
 provenance:
   # Every conformed row carries how it was matched. A cascade hit from
   # `description` or `time_frame` is NEVER recorded as `exact` -- the whole point
   # of keeping the cascade is that a downstream query can exclude inferred forms.
-  match_method: [exact, syntactic_rule, semantic]
+  match_method: [exact, syntactic_rule, semantic, named_endpoint]
   confidence_floor:
     exact: 1.0
+    named_endpoint: 0.9   # identification is exact; the expansion is curated
+                          # vocabulary, not text -- distinguishable and
+                          # slightly below exact on purpose
     syntactic_rule: 0.7
+    implied: 0.8          # event resolved via a measurement's `implies_event`
+                          # (docs/EVENT_SEMANTICS_SPEC.md step 4c) -- not a
+                          # text match at all, so not one of the `match_method`
+                          # values above, but still a floor worth recording
+                          # centrally rather than as a magic number in code.
+                          # Above syntactic_rule (it follows from an already
+                          # -resolved measurement, not an inferred field read)
+                          # and below named_endpoint (no curated event-level
+                          # citation backs it).
     semantic: 0.5

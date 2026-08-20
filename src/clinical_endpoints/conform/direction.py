@@ -25,6 +25,7 @@ class DirectionRules:
     measurement_event_polarity: dict[str, Optional[str]]
     measurement_domain: dict[str, Optional[str]]
     direction_by_ta: dict[tuple[str, str], str]  # (measurement_id, ta_id) -> direction_id
+    event_polarity: dict[str, Optional[str]]  # event_id -> polarity (events.yaml)
 
 
 def load_direction_rules(con: duckdb.DuckDBPyConnection) -> DirectionRules:
@@ -44,6 +45,7 @@ def load_direction_rules(con: duckdb.DuckDBPyConnection) -> DirectionRules:
             "SELECT measurement_id, ta_id, direction_id FROM vocab.measurement_direction_by_ta"
         ).fetchall()
     }
+    event_polarity = dict(con.execute("SELECT id, polarity FROM vocab.events").fetchall())
 
     return DirectionRules(
         event_polarity_cues={k: tuple(v) for k, v in cues.items()},
@@ -53,6 +55,7 @@ def load_direction_rules(con: duckdb.DuckDBPyConnection) -> DirectionRules:
         measurement_event_polarity={m[0]: m[2] for m in measurements},
         measurement_domain={m[0]: m[3] for m in measurements},
         direction_by_ta=direction_by_ta,
+        event_polarity=event_polarity,
     )
 
 
@@ -79,8 +82,21 @@ def derive_direction(
     rules: DirectionRules,
     *,
     ta_id: Optional[str] = None,
+    event_id: Optional[str] = None,
 ) -> DirectionResult:
-    polarity = _event_polarity_from_cues(cue_text, rules.event_polarity_cues)
+    """docs/EVENT_SEMANTICS_SPEC.md step 5: event polarity first (from a
+    RESOLVED event -- `event_id` not None/'not_stated'), then the free-text
+    event_polarity_cues, then the matched measurement's own event_polarity,
+    then not_stated. `event_id` is None for a non-event-family form (there is
+    no event to have a polarity) and for an event-family form whose event
+    itself resolved to 'not_stated' -- either way this cascades to the cues,
+    exactly as it did before events existed, so direction never flips on a
+    row this dimension does not change."""
+    polarity = None
+    if event_id and event_id != "not_stated":
+        polarity = rules.event_polarity.get(event_id)
+    if polarity is None:
+        polarity = _event_polarity_from_cues(cue_text, rules.event_polarity_cues)
     if polarity is None and measurement_id:
         polarity = rules.measurement_event_polarity.get(measurement_id)
 

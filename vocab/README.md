@@ -8,13 +8,15 @@ the judgment calls, and the things a reviewer should push back on.
 ```
 forms.yaml               18 terms   what kind of number the endpoint is
 measurements.yaml       165 terms   what quantity or event it is about
-references.yaml          16 terms   what it is measured against
+references.yaml          17 terms   what it is measured against
 directions.yaml           7 terms   which way is better (derived, not matched)
+events.yaml               23 terms  what occurrence ends the clock, for a time-to-event endpoint
 scales.yaml              59 terms   the unit
 therapeutic_areas.yaml   24 terms   the TA, derived from MeSH
 timepoint_patterns.yaml  11 terms   time_frame categories + extraction regexes
 ta_mesh_mapping.yaml                MeSH condition/intervention -> TA
 matching.yaml                       HOW all of the above are matched
+named_endpoints.yaml                what a literature endpoint NAME (PFS, OS, DFS...) means
 ```
 
 `matching.yaml` is not a term list. It is the contract the conforming pipeline
@@ -317,6 +319,18 @@ not the title, so the reference cascade reads `time_frame` first.
   Everything below the vocabulary layer (`pull --ta`, the TA resolver,
   `endpoints ta diff-tree`) is implemented and unit-tested against fakes, but has
   never run against a real pull.
+* **The event-semantics work (`events.yaml`, `named_endpoints.yaml`, event
+  resolution, the `{event}` template flip) has the same limitation, one
+  measurement short.** `docs/EVENT_SEMANTICS_SPEC.md` gates the template flip
+  on event coverage measured from a real pull -- unmeasurable from this
+  sandbox, so it shipped on the strength of unit fixtures (including the
+  NCT01777919 regression case) rather than a corpus-wide number. Run
+  `endpoints usdm coverage` and a per-resolution-path event-coverage query
+  against `conformed.endpoints` (`event_id`, `event_match_method`) the first
+  time a real pull is possible, and expect `templated` to drop slightly even
+  at good coverage -- rows that were templated only because the old
+  `reference_fallback` filled the hole become honest partials, which is the
+  metric working, not regressing.
 * **The TA tree-vs-pattern diff was run against a hand-built truth set, not a
   live pull.** 80 real MeSH descriptors whose tree placement is known; 12
   disagreements, 9 of them defects now fixed (the three interstitial pneumonias
@@ -411,3 +425,85 @@ reference (absolute quantity) in FEV1" is worse than dropping the phrase.
 parenthetical that is not a bare abbreviation. `Glycated haemoglobin (HbA1c)`
 passes; `Ratio (dimensionless)` does not. That check found 50 terms on its
 first run, all now curated.
+
+---
+
+## `events.yaml` and `named_endpoints.yaml`: the event axis
+
+Added by `docs/EVENT_SEMANTICS_SPEC.md`, after a live-pull validation
+(NCT01777919) showed the USDM projection rendering "Time from randomisation to
+Tumour burden (RECIST)" for a Progression-Free Survival endpoint -- a
+confident, standards-conformant, and clinically wrong sentence. The model had
+dimensions for the time origin (`reference`) and for what is assessed
+(`measurement`), and none for the EVENT a time-to-event endpoint actually
+counts down to. `event` is the new ninth dimension; `named_endpoints.yaml` is
+what makes recognising a literature name (PFS, OS, DFS...) resolve the whole
+bundle -- form, event, reference, measurement -- at once, rather than donating
+the name to one dimension as a synonym.
+
+**`measurements.yaml` is unchanged in grain.** PFS and ORR still share
+`tumour_burden_recist` -- that shared id is the SAME_MEASUREMENT_DIFFERENT_FORM
+join this project exists to build, and regraining it to event level would fix
+one sentence by destroying that join. Instead, endpoint-NAME synonyms that used
+to live on `tumour_burden_recist` / `vital_status` / `disease_recurrence` /
+`treatment_failure` ("progression-free survival", "PFS", "overall survival",
+"OS", "disease-free survival", "DFS"...) moved to `named_endpoints.yaml`; each
+measurement kept only its assessment-language synonyms (RECIST, tumour
+response, mortality-rate phrasings that genuinely name the ascertainment). A
+handful of event-shaped measurements (`vital_status`, `disease_recurrence`,
+`disease_progression_event`, `treatment_failure`, `disease_exacerbation`) gained
+`implies_event`, so a row whose measurement IS the event resolves it with no
+duplicated text match -- `events.yaml` deliberately does not repeat a synonym
+a measurement's `implies_event` already reaches, since the validator now
+rejects a synonym claimed by two of {measurement, event, named_endpoint}.
+
+**Event resolution is a `conform_row` step (0), run before the ordinary
+per-dimension cascade**, not a projection-time inference:
+`named_endpoints.yaml` match -> `events.yaml` match over `measure` ->
+`description` -> the resolved measurement's `implies_event` -> `not_stated`.
+It only runs for the six **event-family** forms (`forms.yaml`
+`event_family: true`: `time_to_event`, `event_free_rate_at_timepoint`,
+`event_free_days`, `incidence_proportion`, `event_count`, `event_rate`) --
+declared explicitly rather than derived from `direction_rule`, because
+direction does not carve this joint (`event_free_rate_at_timepoint` is
+`higher_count_better` yet is entirely about an event; `shift_from_baseline` is
+`inherit_event_polarity` yet names none, and stays outside `event_family` on
+purpose -- `vocab validate` warns rather than errors on that one case, so it
+does not read as a defect).
+
+A `named_endpoints.yaml` definition **fills** the measurement and reference
+dimensions only when their own ordinary cascade is silent, and **fills** form
+the same way (not an unconditional override -- forms.yaml's own cascade
+already resolves a named endpoint's typical form on its own, e.g.
+"progression-free survival" via `time_to_event`'s own synonym, and must stay
+free to route a *landmark* phrasing like "2-Year Overall Survival" to
+`event_free_rate_at_timepoint` instead). A definition's `reference` applies
+only when `raw.studies.allocation` says the study is randomised -- asserting
+"from randomisation" on a single-arm trial's PFS would be exactly the
+unannounced-default disease `docs/USDM_PROJECTION_INTEGRITY_SPEC.md` exists to
+cure.
+
+**Direction is event-first.** `directions.yaml`'s `event_polarity_cues`
+free-text regexes are now the fallback layer for rows whose event does not
+resolve, not the primary evidence: resolution order is the resolved event's
+own `polarity`, then the cues, then the matched measurement's
+`event_polarity`, then `not_stated`.
+
+**The USDM projection** (`docs/USDM_ENDPOINTS_API_SPEC.md`) gained `{event}`
+as an eighth tag -- a `BiomedicalConceptSurrogate` per distinct resolved event,
+served at `/v4/vocab/event/{id}`, same shape as `{measurement}`. Three
+consequences: `time_to_event` / `event_free_rate_at_timepoint` /
+`event_free_days` now render `{event}` instead of `{measurement}`, with
+`{reference}` optional rather than defaulted (`reference_fallback` deleted --
+a form-keyed fallback asserted randomisation on DoR rows, whose origin is
+`response_onset`, and on single-arm trials alike); an event-family row whose
+event does not resolve degrades to the `{measurement}[ {timepoint}]` frame at
+`partial` tier rather than rendering the assessment into the event's place;
+and the measurement surrogate is now minted for every conformed endpoint with
+a resolved measurement, tag-referenced or not, so the PFS<->ORR join does not
+silently disappear from the document just because the sentence stopped
+mentioning `{measurement}` directly. `incidence_proportion` / `event_count` /
+`event_rate` deliberately keep `{measurement}` for now -- their corpus is
+AE-dominated, where the measurement *is* the event and the current rendering
+already reads correctly; switching them waits on measured event coverage
+(`docs/EVENT_SEMANTICS_SPEC.md` phase D).

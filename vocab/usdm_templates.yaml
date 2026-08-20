@@ -80,21 +80,29 @@ concept_list_limit: 3
 templates:
 
   # --- time-to-event -------------------------------------------------------
+  # docs/EVENT_SEMANTICS_SPEC.md phase C: these three event-family forms name
+  # the EVENT, not the assessment. {reference} became optional (a stated or
+  # named-endpoint-resolved origin still renders "Time from randomisation to
+  # ..."; a genuinely unresolved one renders "Time to ..." rather than
+  # asserting randomisation nobody stated) and reference_fallback was deleted
+  # -- a form-keyed fallback would assert randomisation on DoR rows (whose
+  # origin is response_onset) and on single-arm trials alike, silently. The
+  # definitional path in named_endpoints.yaml asserts randomisation only
+  # where a citation backs it and the study is actually randomised.
+  # {event} is required: an event-family row whose event does not resolve
+  # must not render the assessment in the event slot ("Time from
+  # randomisation to Tumour burden (RECIST)" -- the confident-and-wrong
+  # rendering this spec exists to kill). It degrades to the not_stated frame
+  # at partial tier instead -- see usdm/project.py's `_render_endpoint`.
   - form: time_to_event
-    template: "Time from {reference} to {measurement}[ {timepoint}]"
-    reference_fallback: randomisation
-    notes: >-
-      The reference is a time origin for this form, so a fallback is safe:
-      forms.yaml lists randomisation first in typical_reference, and a
-      time-to-event endpoint with no stated origin is measured from
-      randomisation by convention in a randomised trial.
+    template: "Time[ from {reference}] to {event}[ {timepoint}]"
 
   - form: event_free_rate_at_timepoint
-    template: "Proportion of participants free of {measurement} {timepoint}[, measured from {reference}]"
+    template: "Proportion of participants free of {event} {timepoint}[, measured from {reference}]"
     notes: >-
       {timepoint} is required: a landmark rate with no landmark is not this
-      form. Where the timepoint does not resolve the endpoint falls to partial
-      tier under the not_stated template instead.
+      form. Where the timepoint or the event does not resolve the endpoint
+      falls to partial tier under the not_stated template instead.
 
   # --- proportions ---------------------------------------------------------
   - form: responder_proportion
@@ -152,7 +160,7 @@ templates:
     template: "Annualised rate of change in {measurement}[ from {reference}][ {timepoint}]"
 
   - form: event_free_days
-    template: "Days free of {measurement}[ {timepoint}]"
+    template: "Days free of {event}[ {timepoint}]"
 
   # --- the awkward ones ----------------------------------------------------
   - form: correlation

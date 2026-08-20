@@ -10,19 +10,61 @@ from dataclasses import dataclass
 from typing import Optional
 
 from clinical_endpoints.conform import semantic
-from clinical_endpoints.conform.rules import ConformRules
+from clinical_endpoints.conform.rules import ConformRules, NamedEndpointDefinition
 
 
 @dataclass(frozen=True)
 class FieldMatch:
     term_id: str
-    match_method: Optional[str]  # 'exact' | 'syntactic_rule' | 'semantic' | None (fallback, unmatched)
+    # 'exact' | 'syntactic_rule' | 'semantic' | 'named_endpoint' | 'implied' |
+    # None (fallback, unmatched)
+    match_method: Optional[str]
     confidence: float
     source_field: Optional[str]
 
 
 def _field_text(fields: dict[str, str], field: str) -> str:
     return fields.get(field) or ""
+
+
+def resolve_named_endpoint(rules: ConformRules, fields: dict[str, str]) -> Optional[FieldMatch]:
+    """docs/EVENT_SEMANTICS_SPEC.md conform_row step 0: measure -> description,
+    whole-token/acronym rules exactly as any other dimension. None means no
+    named endpoint matched -- not a review-queue trigger, just "step 0 has
+    nothing to contribute"."""
+    for step in rules.named_endpoint_cascade.steps:
+        text = _field_text(fields, step.field)
+        hit = rules.named_endpoint_matcher.match(text)
+        if hit:
+            return FieldMatch(hit.term_id, step.match_method, rules.confidence_floor[step.match_method], step.field)
+    return None
+
+
+def resolve_event(
+    rules: ConformRules,
+    fields: dict[str, str],
+    named_endpoint: Optional[NamedEndpointDefinition],
+    measurement_id: Optional[str],
+) -> FieldMatch:
+    """docs/EVENT_SEMANTICS_SPEC.md step 4, in order: (a) the named-endpoint
+    definition's own `event`; (b) events.yaml matched directly over
+    measure -> description; (c) the resolved measurement's `implies_event`;
+    (d) not_stated. Only called for event-family forms -- the caller leaves
+    event_id NULL (not 'not_stated') for every other form."""
+    if named_endpoint is not None and named_endpoint.event_id:
+        return FieldMatch(named_endpoint.event_id, "named_endpoint", rules.confidence_floor["named_endpoint"], None)
+
+    for step in rules.event_cascade.steps:
+        text = _field_text(fields, step.field)
+        hit = rules.event_matcher.match(text)
+        if hit:
+            return FieldMatch(hit.term_id, step.match_method, rules.confidence_floor[step.match_method], step.field)
+
+    implied = rules.measurement_implies_event.get(measurement_id or "")
+    if implied:
+        return FieldMatch(implied, "implied", rules.confidence_floor.get("implied", 0.8), None)
+
+    return FieldMatch("not_stated", None, 0.0, None)
 
 
 def resolve_reference(rules: ConformRules, fields: dict[str, str]) -> FieldMatch:

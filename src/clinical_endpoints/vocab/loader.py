@@ -38,6 +38,7 @@ from clinical_endpoints.vocab.schema import (
     MATCH_METHODS,
     CASCADE_FIELDS,
     MEASUREMENT_DOMAINS,
+    NAMED_ENDPOINTS_FILENAME,
     REFERENCE_KINDS,
     USDM_OBJECTIVE_KEYS,
     USDM_TAGS,
@@ -93,6 +94,7 @@ def load_vocab(vocab_dir: Path | str) -> dict[str, Any]:
     docs["ta_mesh_mapping"] = _read_yaml(vocab_dir / MAPPING_FILENAME)
     docs["matching"] = _read_yaml(vocab_dir / MATCHING_FILENAME)
     docs["usdm_templates"] = _read_yaml(vocab_dir / USDM_TEMPLATES_FILENAME)
+    docs["named_endpoints"] = _read_yaml(vocab_dir / NAMED_ENDPOINTS_FILENAME)
     return docs
 
 
@@ -132,6 +134,10 @@ def validate_vocab(docs: dict[str, Any]) -> ValidationResult:
     _validate_timepoints(docs["timepoint_pattern"], ids, result)
     _validate_ta_mesh_mapping(docs["ta_mesh_mapping"], ids, result)
     _validate_matching(docs["matching"], ids, result)
+    _validate_events(docs["event"], result)
+    if docs.get("named_endpoints") is not None:
+        _validate_named_endpoints(docs["named_endpoints"], ids, result)
+        _validate_cross_dimension_synonyms(docs, result)
     if docs.get("usdm_templates") is not None:
         _validate_usdm_templates(docs["usdm_templates"], docs["form"], ids, result)
         _warn_missing_inline_labels(docs, result)
@@ -234,6 +240,16 @@ def _validate_precedence(
         result.error(where, f"`{key}` names unknown ids {sorted(extra)}")
 
 
+#: The six forms whose statistic is about a defined occurrence
+#: (docs/EVENT_SEMANTICS_SPEC.md). Declared explicitly in forms.yaml rather
+#: than derived from direction_rule, because direction_rule does not carve
+#: this joint: event_free_rate_at_timepoint is higher_count_better (a
+#: free-rate's direction is fixed whatever the event's polarity) yet is
+#: entirely about an event, while shift_from_baseline is
+#: inherit_event_polarity yet names no event.
+EVENT_FAMILY_DIRECTION_RULES = frozenset({"time_polarity", "inherit_event_polarity"})
+
+
 def _validate_forms(doc: dict, ids: dict[str, set[str]], result: ValidationResult) -> None:
     where = "forms.yaml"
     form_ids = ids["form"]
@@ -241,6 +257,15 @@ def _validate_forms(doc: dict, ids: dict[str, set[str]], result: ValidationResul
         rule = term.get("direction_rule")
         if rule not in DIRECTION_RULES:
             result.error(where, f"{term.get('id')}: direction_rule {rule!r} not in {sorted(DIRECTION_RULES)}")
+        event_family = term.get("event_family", False)
+        if not isinstance(event_family, bool):
+            result.error(where, f"{term.get('id')}: event_family must be a boolean, got {event_family!r}")
+        elif rule in EVENT_FAMILY_DIRECTION_RULES and not event_family:
+            result.warn(
+                where,
+                f"{term.get('id')}: direction_rule {rule!r} implies an event but `event_family` "
+                "is not true -- the two properties can drift apart unnoticed",
+            )
     _validate_precedence(where, "match_precedence", doc.get("match_precedence"), form_ids, result)
 
     fallback = doc.get("default_when_unmatched")
@@ -300,6 +325,171 @@ def _validate_measurements(doc: dict, ids: dict[str, set[str]], result: Validati
 
     if doc.get("on_unmatched") != "review_queue":
         result.error(where, "`on_unmatched` must be `review_queue` -- an unmatched measurement must never auto-conform")
+
+
+def _validate_events(doc: dict, result: ValidationResult) -> None:
+    """events.yaml, beyond the generic file-shape/cross-reference checks every
+    DimensionSpec already gets: `polarity` is a closed set, a term carries
+    `components` (an event union) XOR synonyms/patterns -- a union is reached
+    via a named-endpoint definition, never assembled from its parts at match
+    time -- and `components` edges must be acyclic."""
+    where = "events.yaml"
+    terms = [t for t in doc.get("terms") or [] if isinstance(t, dict) and t.get("id")]
+    by_id = {t["id"]: t for t in terms}
+
+    for term in terms:
+        term_id = term["id"]
+        polarity = term.get("polarity")
+        if polarity is not None and polarity not in EVENT_POLARITIES:
+            result.error(where, f"{term_id}: polarity {polarity!r} not in {sorted(EVENT_POLARITIES)}")
+        if term.get("components") and (term.get("synonyms") or term.get("patterns")):
+            result.error(
+                where,
+                f"{term_id}: has both `components` and synonyms/patterns -- an event union is "
+                "reached via a named-endpoint definition (or its own synonyms if it is later "
+                "given any), never assembled from its parts at match time",
+            )
+        if term_id != "not_stated" and polarity is None:
+            result.warn(
+                where,
+                f"{term_id}: no `polarity` -- direction will not derive from this event when it resolves",
+            )
+
+    cycle_at = _find_cycle(by_id, "components")
+    if cycle_at:
+        result.error(where, f"{cycle_at}: `components` forms a cycle")
+
+
+def _find_cycle(by_id: dict, edge_field: str) -> str | None:
+    """Standard three-colour DFS cycle check over `by_id[x][edge_field]` as a
+    list of ids into the same `by_id` mapping. Returns one id on a cycle, or
+    None."""
+    WHITE, GREY, BLACK = 0, 1, 2
+    color = {term_id: WHITE for term_id in by_id}
+
+    def visit(term_id: str) -> bool:
+        color[term_id] = GREY
+        for child in (by_id.get(term_id, {}).get(edge_field) or []):
+            if child not in by_id:
+                continue  # not a valid id -- reported separately by the reference check
+            if color.get(child) == GREY:
+                return True
+            if color.get(child, WHITE) == WHITE and visit(child):
+                return True
+        color[term_id] = BLACK
+        return False
+
+    for term_id in by_id:
+        if color[term_id] == WHITE and visit(term_id):
+            return term_id
+    return None
+
+
+def _validate_named_endpoints(doc: dict, ids: dict[str, set[str]], result: ValidationResult) -> None:
+    """named_endpoints.yaml: not a DimensionSpec, so it gets none of the
+    generic file-shape checks for free -- id/label/synonym shape, cross-file
+    id references (form/event/reference/default_measurement), and the
+    TTE-definitions-with-a-reference-need-a-citation rule are all checked
+    here."""
+    where = NAMED_ENDPOINTS_FILENAME
+    if not isinstance(doc.get("version"), int):
+        result.error(where, "`version` must be an integer")
+
+    definitions = doc.get("definitions")
+    if not isinstance(definitions, list) or not definitions:
+        result.error(where, "`definitions` must be a non-empty list")
+        return
+
+    seen: set[str] = set()
+    synonym_owner: dict[str, str] = {}
+    for entry in definitions:
+        if not isinstance(entry, dict):
+            result.error(where, "definition is not a mapping")
+            continue
+        def_id = entry.get("id")
+        if not isinstance(def_id, str) or not ID_RE.match(def_id):
+            result.error(where, f"definition has an invalid id {def_id!r} (expected snake_case)")
+            continue
+        if def_id in seen:
+            result.error(where, f"duplicate definition id {def_id!r}")
+        seen.add(def_id)
+        if not entry.get("label"):
+            result.error(where, f"{def_id}: missing `label`")
+
+        form_id = entry.get("form")
+        if not form_id:
+            result.error(where, f"{def_id}: missing `form`")
+        elif form_id not in ids.get("form", set()):
+            result.error(where, f"{def_id}.form = {form_id!r} is not a form id")
+
+        event_id = entry.get("event")
+        if event_id is not None and event_id not in ids.get("event", set()):
+            result.error(where, f"{def_id}.event = {event_id!r} is not an event id")
+
+        reference_id = entry.get("reference")
+        if reference_id is not None and reference_id not in ids.get("reference", set()):
+            result.error(where, f"{def_id}.reference = {reference_id!r} is not a reference id")
+
+        measurement_id = entry.get("default_measurement")
+        if measurement_id is not None and measurement_id not in ids.get("measurement", set()):
+            result.error(
+                where, f"{def_id}.default_measurement = {measurement_id!r} is not a measurement id"
+            )
+
+        if form_id == "time_to_event" and reference_id is not None and not entry.get("citation"):
+            result.error(
+                where,
+                f"{def_id}: carries `reference` on a time_to_event definition but no `citation` -- "
+                "a defined time origin is a specific clinical claim and needs a source",
+            )
+
+        for synonym in entry.get("synonyms") or []:
+            if not isinstance(synonym, str) or not synonym.strip():
+                result.error(where, f"{def_id}: empty or non-string synonym")
+                continue
+            key = synonym.strip().lower()
+            owner = synonym_owner.get(key)
+            if owner and owner != def_id:
+                result.error(
+                    where,
+                    f"synonym {synonym!r} is claimed by both {owner!r} and {def_id!r} -- match "
+                    "order would silently decide which wins",
+                )
+            synonym_owner[key] = def_id
+        for pattern in entry.get("patterns") or []:
+            _check_regex(where, f"{def_id} pattern", pattern, result)
+
+
+def _validate_cross_dimension_synonyms(docs: dict[str, Any], result: ValidationResult) -> None:
+    """docs/EVENT_SEMANTICS_SPEC.md: "a synonym claimed by any two of
+    {measurement, event, named-endpoint} is an error, so the boundary cannot
+    silently regrow." Each file's own within-file collision is already
+    checked (generically for measurement/event, in _validate_named_endpoints
+    for named endpoints); this only flags a synonym shared ACROSS the three."""
+    where = "measurements.yaml / events.yaml / named_endpoints.yaml"
+    owners: dict[str, tuple[str, str]] = {}
+
+    def collect(dimension: str, term_id: str, synonyms) -> None:
+        for synonym in synonyms or []:
+            if not isinstance(synonym, str) or not synonym.strip():
+                continue
+            key = synonym.strip().lower()
+            owner = owners.get(key)
+            if owner and owner[0] != dimension:
+                result.error(
+                    where,
+                    f"synonym {synonym!r} is claimed by both {owner[0]} {owner[1]!r} and "
+                    f"{dimension} {term_id!r} -- move it out of one",
+                )
+            elif not owner:
+                owners[key] = (dimension, term_id)
+
+    for term in docs.get("measurement", {}).get("terms") or []:
+        collect("measurement", term.get("id", "?"), term.get("synonyms"))
+    for term in docs.get("event", {}).get("terms") or []:
+        collect("event", term.get("id", "?"), term.get("synonyms"))
+    for entry in docs.get("named_endpoints", {}).get("definitions") or []:
+        collect("named_endpoint", entry.get("id", "?"), entry.get("synonyms"))
 
 
 def _validate_references_file(doc: dict, result: ValidationResult) -> None:
@@ -397,7 +587,12 @@ def _validate_matching(doc: dict, ids: dict[str, set[str]], result: ValidationRe
         )
 
     for dimension, steps in (doc.get("cascade") or {}).items():
-        if dimension not in ids and dimension not in {"form", "measurement", "timepoint", "reference"}:
+        # "timepoint" and "named_endpoint" are cascade-only pseudo-dimensions:
+        # the first has no vocab file of its own (timepoint_patterns.yaml is
+        # dimension `timepoint_pattern`), the second is not a DimensionSpec at
+        # all (named_endpoints.yaml loads through its own path -- see
+        # NAMED_ENDPOINTS_FILENAME).
+        if dimension not in ids and dimension not in {"form", "measurement", "timepoint", "reference", "named_endpoint"}:
             result.errors.append(f"{where}: cascade names unknown dimension `{dimension}`")
         for step in steps:
             field = step.get("field")
@@ -484,6 +679,7 @@ def _validate_usdm_templates(
     expects_threshold = {
         t["id"]: bool(t.get("expects_threshold")) for t in forms_doc.get("terms") or [] if t.get("id")
     }
+    event_family = {t["id"]: bool(t.get("event_family")) for t in forms_doc.get("terms") or [] if t.get("id")}
     reference_ids = ids.get("reference", set())
 
     seen: set[str] = set()
@@ -533,6 +729,23 @@ def _validate_usdm_templates(
                 where,
                 f"{form_id}: forms.yaml marks it expects_threshold, but the template has no "
                 "{threshold} tag",
+            )
+        # docs/EVENT_SEMANTICS_SPEC.md phase C: {event} only makes sense where
+        # forms.yaml says there is an event to name, and -- now that phase C
+        # is enabled -- time_to_event must render it rather than falling back
+        # to naming the assessment in the event's place.
+        if "event" in tags and not event_family.get(form_id):
+            result.error(
+                where,
+                f"{form_id}: template uses {{event}}, but forms.yaml does not mark it "
+                "event_family -- this form has no event to name",
+            )
+        if form_id == "time_to_event" and "measurement" in tags:
+            result.error(
+                where,
+                f"{form_id}: template still renders {{measurement}} -- phase C is enabled, so "
+                "this form must render {event} instead (the confident-and-wrong rendering "
+                "docs/EVENT_SEMANTICS_SPEC.md exists to kill)",
             )
         if len(template) > 200:
             result.warn(where, f"{form_id}: template is {len(template)} characters")
@@ -632,6 +845,18 @@ _LONG_TABLES = (
     ("measurement_direction_by_ta", "measurement_id VARCHAR, ta_id VARCHAR, direction_id VARCHAR"),
     ("measurement_score_range", "measurement_id VARCHAR, score_min DOUBLE, score_max DOUBLE"),
     ("event_polarity_cues", "polarity VARCHAR, pattern VARCHAR"),
+    # events.yaml's list_references -- ascertained_by is documentation (which
+    # measurement(s) typically ascertain this event) and a validation target,
+    # not a matching input; components is the acyclic event_union expansion.
+    ("event_ascertained_by", "event_id VARCHAR, measurement_id VARCHAR"),
+    ("event_components", "event_id VARCHAR, component_event_id VARCHAR, ordinal INTEGER"),
+    # named_endpoints.yaml -- not a dimension, so its own table rather than one
+    # of the per-DimensionSpec ones above. Its synonyms/patterns/term_order
+    # still land in the generic vocab.synonyms/patterns/term_order tables
+    # below, tagged dimension='named_endpoint', so conform/matcher.py's
+    # TermMatcher works over it exactly as it does over any other dimension.
+    ("named_endpoints", "id VARCHAR, label VARCHAR, form_id VARCHAR, event_id VARCHAR, "
+                        "reference_id VARCHAR, default_measurement_id VARCHAR, citation VARCHAR"),
     ("ta_mesh_term_overrides", "mesh_term VARCHAR, mesh_term_normalised VARCHAR, ta_id VARCHAR"),
     ("ta_mesh_tree_prefixes", "tree_prefix VARCHAR, ta_id VARCHAR, prefix_length INTEGER"),
     ("ta_mesh_term_patterns", "ta_id VARCHAR, pattern VARCHAR, applies_to VARCHAR, ordinal INTEGER"),
@@ -694,7 +919,7 @@ _NUMERIC_COLUMNS = frozenset({"sign", "precedence", "priority", "factor_to_si", 
 
 # Boolean term flags, with the value assumed when a term omits them. Written out
 # explicitly so `WHERE analysable = 'true'` works without a COALESCE.
-_BOOLEAN_DEFAULTS = {"analysable": True, "expects_threshold": False, "composite": False}
+_BOOLEAN_DEFAULTS = {"analysable": True, "expects_threshold": False, "composite": False, "event_family": False}
 
 
 def _scalar(value: Any) -> Any:
@@ -787,6 +1012,17 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
     _insert(con, "vocab.event_polarity_cues", 2, cues)
     counts["event_polarity_cues"] = len(cues)
 
+    events_doc = docs["event"]
+    eab = [(t["id"], m) for t in events_doc["terms"] for m in t.get("ascertained_by") or []]
+    ecomp = [
+        (t["id"], component, i)
+        for t in events_doc["terms"]
+        for i, component in enumerate(t.get("components") or [])
+    ]
+    _insert(con, "vocab.event_ascertained_by", 2, eab)
+    _insert(con, "vocab.event_components", 3, ecomp)
+    counts.update(event_ascertained_by=len(eab), event_components=len(ecomp))
+
     tp = docs["timepoint_pattern"]
     tokens = [(k, v) for k, v in (tp.get("unit_tokens") or {}).items()]
     numerals = [(k, int(v)) for k, v in (tp.get("numeral_words") or {}).items()]
@@ -843,7 +1079,46 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
     counts.update(_write_matching_tables(con, docs["matching"]))
     if docs.get("usdm_templates") is not None:
         counts.update(_write_usdm_tables(con, docs["usdm_templates"]))
+    if docs.get("named_endpoints") is not None:
+        counts.update(_write_named_endpoints_tables(con, docs["named_endpoints"]))
     return counts
+
+
+def _write_named_endpoints_tables(con: duckdb.DuckDBPyConnection, doc: dict[str, Any]) -> dict[str, int]:
+    """Persist named_endpoints.yaml. Its scalar fields go to vocab.named_endpoints;
+    its synonyms/patterns/file-order go into the SAME generic
+    vocab.synonyms/patterns/term_order tables every dimension uses, tagged
+    dimension='named_endpoint' -- conform/matcher.py's TermMatcher then builds
+    over it via `build_matcher(con, "named_endpoint", "named_endpoints", ...)`
+    with no dimension-specific code, exactly like form/measurement/reference.
+    """
+    rows: list[tuple] = []
+    synonyms: list[tuple] = []
+    patterns: list[tuple] = []
+    term_order: list[tuple] = []
+    for i, entry in enumerate(doc.get("definitions") or []):
+        def_id = entry["id"]
+        rows.append(
+            (
+                def_id, entry.get("label"), entry.get("form"), entry.get("event"),
+                entry.get("reference"), entry.get("default_measurement"), entry.get("citation"),
+            )
+        )
+        term_order.append(("named_endpoint", def_id, i))
+        for synonym in entry.get("synonyms") or []:
+            synonyms.append(("named_endpoint", def_id, synonym, normalise(synonym)))
+        for j, pattern in enumerate(entry.get("patterns") or []):
+            patterns.append(("named_endpoint", def_id, pattern, "match", j))
+
+    _insert(con, "vocab.named_endpoints", 7, rows)
+    _insert(con, "vocab.synonyms", 4, synonyms)
+    _insert(con, "vocab.patterns", 5, patterns)
+    _insert(con, "vocab.term_order", 3, term_order)
+    return {
+        "named_endpoints": len(rows),
+        "named_endpoint_synonyms": len(synonyms),
+        "named_endpoint_patterns": len(patterns),
+    }
 
 
 def _write_usdm_tables(con: duckdb.DuckDBPyConnection, doc: dict[str, Any]) -> dict[str, int]:
