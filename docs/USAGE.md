@@ -47,6 +47,9 @@ uv run endpoints pull --phase 3 --limit 500 --source aact
 
 Deliberately thin: fetch, filter, upsert. Everything downstream is
 source-agnostic, which is what lets the two backends be interchangeable.
+Shows a progress bar while it runs -- per API page for `--source ctgov_api`
+(the eventual study count isn't known until pagination stops), per landed
+table for `--source aact`.
 
 ### The two backends
 
@@ -220,6 +223,11 @@ the next review round can diff it against this one. The reasoning is in
 ```bash
 uv run endpoints conform
 ```
+
+Shows a progress bar while it runs. Each row is conformed independently, so on
+a large pull the row-conforming step is parallelized across worker processes
+by default once there's enough work to be worth it (`--jobs N` to pick the
+worker count yourself, `--jobs 1` to force serial).
 
 Reads `raw.design_outcomes` and the `vocab.*` tables -- never the YAML directly
 -- and, for every outcome row:

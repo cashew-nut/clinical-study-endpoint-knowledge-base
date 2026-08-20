@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import time
 from datetime import date
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import duckdb
 import requests
@@ -251,7 +251,11 @@ def _extract_condition_branch_rows(study: dict) -> list[dict]:
     return rows
 
 
-def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
+def run_pull(
+    con: duckdb.DuckDBPyConnection,
+    filters: PullFilters,
+    on_page: Optional[Callable[[int, int], None]] = None,
+) -> dict:
     """Pull filtered studies + their outcome measures from the CT.gov API into raw.*.
 
     Paginates the API, filtering server-side (query.term) and re-checking
@@ -264,6 +268,12 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     and every child table (design_outcomes, conditions, browse_*) has its rows
     for *this pull's* nct_ids replaced -- studies landed by earlier pulls with
     different filters are never touched.
+
+    `on_page`, if given, is called as `on_page(page_index, studies_collected)`
+    after each page is fetched and filtered -- the eventual `limit` isn't known
+    until pagination stops (a page can contain studies later dropped by
+    `since`/phase re-checks), so this reports pre-truncation progress rather
+    than a percentage of an unknowable total.
     """
     aact_phases = normalize_phases(list(filters.phases))
     query_term = _build_query_term(aact_phases, filters.since)
@@ -280,7 +290,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     target = max(filters.limit * 3, filters.limit + 50)
 
     page_token: Optional[str] = None
-    for _ in range(MAX_PAGES):
+    for page_index in range(1, MAX_PAGES + 1):
         payload = _fetch_page(query_term, page_token)
         page_studies = payload.get("studies") or []
         if not page_studies:
@@ -307,6 +317,9 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
                 study, module="interventionBrowseModule", mesh_type="intervention"
             )
             condition_branches_by_nct[nct_id] = _extract_condition_branch_rows(study)
+
+        if on_page:
+            on_page(page_index, len(studies))
 
         page_token = payload.get("nextPageToken")
         if not page_token or len(studies) >= target:

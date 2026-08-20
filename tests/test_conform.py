@@ -160,6 +160,67 @@ def test_run_conform_is_idempotent_on_unchanged_rows(con):
     assert first_id == second_id
 
 
+def test_run_conform_parallel_matches_serial(con):
+    """conform_row is a pure function of (rules, one row), so forcing the
+    parallel path with --jobs must land byte-for-byte the same
+    conformed.endpoints/review_queue as the serial path -- splitting the row
+    list across processes may change how long this takes, never what it
+    produces."""
+    rows = [
+        (f"NCT{i:06d}", "primary", text, None, None, None)
+        for i, (text, _form, _measurement, _direction) in enumerate(REFERENCE_TABLE_FIXTURES)
+    ] + [("NCT999999", "primary", "Zzqxv Wibble Frotz Blorpington", None, None, None)]
+    _insert_outcomes(con, rows)
+
+    serial = run_conform(con, jobs=1)
+    serial_endpoints = con.execute(
+        "SELECT endpoint_id, form_id, measurement_id, direction_id, timepoint_pattern "
+        "FROM conformed.endpoints ORDER BY endpoint_id"
+    ).fetchall()
+    serial_queue = con.execute("SELECT review_id FROM conformed.review_queue ORDER BY review_id").fetchall()
+
+    parallel = run_conform(con, jobs=2)
+    parallel_endpoints = con.execute(
+        "SELECT endpoint_id, form_id, measurement_id, direction_id, timepoint_pattern "
+        "FROM conformed.endpoints ORDER BY endpoint_id"
+    ).fetchall()
+    parallel_queue = con.execute("SELECT review_id FROM conformed.review_queue ORDER BY review_id").fetchall()
+
+    assert parallel["workers"] == 2
+    assert serial["rows_conformed"] == parallel["rows_conformed"]
+    assert serial["rows_queued"] == parallel["rows_queued"]
+    assert serial_endpoints == parallel_endpoints
+    assert serial_queue == parallel_queue
+
+
+def test_run_conform_reports_progress(con):
+    rows = [(f"NCT{i:06d}", "primary", "Progression-Free Survival (PFS)", None, None, None) for i in range(3)]
+    _insert_outcomes(con, rows)
+
+    calls = []
+    run_conform(con, on_progress=lambda done, total: calls.append((done, total)))
+
+    assert calls[0] == (0, 3)
+    assert calls[-1] == (3, 3)
+    assert [done for done, _total in calls] == sorted(done for done, _total in calls)
+
+
+@pytest.mark.parametrize(
+    "jobs,row_count,expected",
+    [
+        (0, 0, 1),
+        (0, 5, 1),  # below _MIN_ROWS_FOR_PARALLEL: not worth spawning workers
+        (1, 5000, 1),  # explicit --jobs 1 always forces serial
+        (3, 5, 3),  # an explicit --jobs wins even under the auto threshold
+        (3, 2, 2),  # ...but never more workers than there are rows
+    ],
+)
+def test_resolve_worker_count(jobs, row_count, expected):
+    from clinical_endpoints.conform.pipeline import _resolve_worker_count
+
+    assert _resolve_worker_count(jobs, row_count) == expected
+
+
 def test_conform_requires_pull_and_vocab_validate_first():
     empty_con = duckdb.connect(":memory:")
     for schema in ("raw", "vocab", "conformed"):

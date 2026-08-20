@@ -4,6 +4,7 @@ plus the condition/intervention MeSH tables the TA resolver needs (step 2 gap 2)
 from __future__ import annotations
 
 import re
+from typing import Callable, Optional
 
 import duckdb
 
@@ -59,8 +60,26 @@ MESH_TERMS_DDL = (
     "PRIMARY KEY (mesh_term, tree_number)"
 )
 
+# The major landing steps `run_pull` reports progress against, in the order it
+# performs them -- everything here is a single (fast, DuckDB-side) SQL
+# statement, so this is a coarse "which table are we on" indicator rather than
+# a fine-grained percentage.
+PULL_STEPS = (
+    "studies",
+    "design_outcomes",
+    "design_groups",
+    "conditions",
+    "browse_conditions",
+    "browse_interventions",
+    "mesh_terms",
+)
 
-def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
+
+def run_pull(
+    con: duckdb.DuckDBPyConnection,
+    filters: PullFilters,
+    on_step: Optional[Callable[[str, int, int], None]] = None,
+) -> dict:
     """Pull filtered studies + their design_outcomes/conditions from AACT into raw.*, log the pull.
 
     Upserts rather than replaces: raw.studies is updated/inserted per nct_id,
@@ -69,7 +88,15 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     studies landed by earlier pulls with different filters are never touched.
     raw._pull_log accumulates one row per invocation regardless, so the pull
     history stays auditable.
+
+    `on_step`, if given, is called as `on_step(step_name, index, total)` right
+    after each of PULL_STEPS lands.
     """
+
+    def _step(name: str) -> None:
+        if on_step:
+            on_step(name, PULL_STEPS.index(name) + 1, len(PULL_STEPS))
+
     aact_phases = normalize_phases(list(filters.phases))
 
     schema = SchemaReconciler(con)
@@ -129,6 +156,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
             f"{column} = excluded.{column}" for column in STUDY_COLUMNS if column != "nct_id"
         )
     )
+    _step("studies")
 
     con.execute(
         """
@@ -140,6 +168,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     )
     con.execute("DELETE FROM raw.design_outcomes WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)")
     con.execute(_insert_pulled("design_outcomes", DESIGN_OUTCOMES_COLUMNS))
+    _step("design_outcomes")
 
     con.execute(
         """
@@ -151,6 +180,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     )
     con.execute("DELETE FROM raw.design_groups WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)")
     con.execute(_insert_pulled("design_groups", DESIGN_GROUPS_COLUMNS))
+    _step("design_groups")
 
     con.execute(
         """
@@ -162,6 +192,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     )
     con.execute("DELETE FROM raw.conditions WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)")
     con.execute(_insert_pulled("conditions", CONDITIONS_COLUMNS))
+    _step("conditions")
 
     con.execute(
         """
@@ -176,6 +207,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         "DELETE FROM raw.browse_conditions WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)"
     )
     con.execute(_insert_pulled("browse_conditions", BROWSE_COLUMNS))
+    _step("browse_conditions")
 
     con.execute(
         """
@@ -190,8 +222,10 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         "DELETE FROM raw.browse_interventions WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)"
     )
     con.execute(_insert_pulled("browse_interventions", BROWSE_COLUMNS))
+    _step("browse_interventions")
 
     has_tree_numbers, mesh_terms_count = _pull_mesh_terms(con)
+    _step("mesh_terms")
 
     pulled_nct_ids = [row[0] for row in con.execute("SELECT nct_id FROM _pulled_studies").fetchall()]
     row_counts = {

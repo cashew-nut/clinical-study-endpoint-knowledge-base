@@ -10,13 +10,18 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import multiprocessing
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from typing import Callable, Optional
 
 import duckdb
 
 from clinical_endpoints.conform import direction as direction_mod
 from clinical_endpoints.conform import resolve, semantic, text, threshold, timepoint
 from clinical_endpoints.conform.rules import ConformRules, load_rules
+from clinical_endpoints.db import bulk_insert
 
 
 def _table_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str) -> bool:
@@ -291,10 +296,72 @@ CREATE OR REPLACE TABLE conformed.review_queue (
 """
 
 
-def run_conform(con: duckdb.DuckDBPyConnection) -> dict:
+# conform_row is a pure function of (rules, one row) -- rules is read-only and
+# every field on it (compiled regexes, dicts, tuples of frozen dataclasses) is
+# picklable, so splitting the row list across worker processes changes
+# nothing about the result, only how long it takes to get there. Below this
+# row count, ProcessPoolExecutor's own start-up cost (spawning interpreters,
+# pickling `rules` once per worker) isn't worth paying.
+_MIN_ROWS_FOR_PARALLEL = 200
+
+# Spawn rather than fork: the caller already holds an open DuckDB connection,
+# which may have its own background threads, and forking a multi-threaded
+# process is a classic way to hand a child a half-locked mutex. Workers here
+# never touch `con` -- they only run pure-Python regex/matching code -- but
+# spawn sidesteps the question entirely by starting each worker from a clean
+# interpreter instead of copying the parent's memory.
+_MP_CONTEXT = multiprocessing.get_context("spawn")
+
+# Set once per worker process by _init_worker, so `pool.map` only has to
+# pickle one row per task instead of the whole rule set on every call.
+_worker_rules: Optional[ConformRules] = None
+_worker_ta_by_nct: dict = {}
+_worker_allocation_by_nct: dict = {}
+
+
+def _init_worker(rules: ConformRules, ta_by_nct: dict, allocation_by_nct: dict) -> None:
+    global _worker_rules, _worker_ta_by_nct, _worker_allocation_by_nct
+    _worker_rules = rules
+    _worker_ta_by_nct = ta_by_nct
+    _worker_allocation_by_nct = allocation_by_nct
+
+
+def _conform_row_worker(row: dict) -> "ConformedEndpoint | ReviewQueueEntry":
+    nct_id = row["nct_id"]
+    return conform_row(
+        _worker_rules, row,
+        ta_id=_worker_ta_by_nct.get(nct_id),
+        allocation=_worker_allocation_by_nct.get(nct_id),
+    )
+
+
+def _resolve_worker_count(jobs: int, row_count: int) -> int:
+    """0 (the default) = auto: parallelize across CPUs once there's enough
+    work to amortize process start-up, otherwise run serially. A positive
+    --jobs always wins, including forcing serial with --jobs 1."""
+    if row_count == 0:
+        return 1
+    if jobs > 0:
+        return max(1, min(jobs, row_count))
+    if row_count < _MIN_ROWS_FOR_PARALLEL:
+        return 1
+    return max(1, min(os.cpu_count() or 1, row_count))
+
+
+def run_conform(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    jobs: int = 0,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> dict:
     """Conform every raw.design_outcomes row, wholesale-replacing
     conformed.endpoints and conformed.review_queue (a refresh, like `pull` and
-    `vocab validate`, not an append)."""
+    `vocab validate`, not an append).
+
+    `jobs` controls how many worker processes conform rows in parallel (see
+    _resolve_worker_count for the default policy). `on_progress`, if given, is
+    called as `on_progress(done, total)` -- once with done=0 before work
+    starts (so callers learn `total` even when it's 0), then once per row."""
     if not _table_exists(con, "raw", "design_outcomes"):
         raise ValueError("raw.design_outcomes is empty -- run `endpoints pull` first")
     if not _table_exists(con, "vocab", "matching_cascade"):
@@ -308,18 +375,38 @@ def run_conform(con: duckdb.DuckDBPyConnection) -> dict:
         "SELECT nct_id, outcome_type, measure, time_frame, description, population FROM raw.design_outcomes"
     ).fetchall()
     columns = ("nct_id", "outcome_type", "measure", "time_frame", "description", "population")
+    row_dicts = [dict(zip(columns, values)) for values in rows]
 
     endpoints: list[ConformedEndpoint] = []
     review_queue: list[ReviewQueueEntry] = []
-    for values in rows:
-        row = dict(zip(columns, values))
-        result = conform_row(
-            rules, row, ta_id=ta_by_nct.get(row["nct_id"]), allocation=allocation_by_nct.get(row["nct_id"])
-        )
-        if isinstance(result, ConformedEndpoint):
-            endpoints.append(result)
-        else:
-            review_queue.append(result)
+
+    worker_count = _resolve_worker_count(jobs, len(row_dicts))
+    if on_progress:
+        on_progress(0, len(row_dicts))
+
+    def _collect(i: int, result) -> None:
+        (endpoints if isinstance(result, ConformedEndpoint) else review_queue).append(result)
+        if on_progress:
+            on_progress(i, len(row_dicts))
+
+    if worker_count <= 1:
+        for i, row in enumerate(row_dicts, start=1):
+            result = conform_row(
+                rules, row, ta_id=ta_by_nct.get(row["nct_id"]), allocation=allocation_by_nct.get(row["nct_id"])
+            )
+            _collect(i, result)
+    else:
+        # A handful of chunks per worker keeps IPC round-trips cheap without
+        # making progress updates too bursty.
+        chunksize = max(1, len(row_dicts) // (worker_count * 4))
+        with ProcessPoolExecutor(
+            max_workers=worker_count,
+            mp_context=_MP_CONTEXT,
+            initializer=_init_worker,
+            initargs=(rules, ta_by_nct, allocation_by_nct),
+        ) as pool:
+            for i, result in enumerate(pool.map(_conform_row_worker, row_dicts, chunksize=chunksize), start=1):
+                _collect(i, result)
 
     con.execute("CREATE SCHEMA IF NOT EXISTS conformed")
     con.execute(_ENDPOINTS_DDL)
@@ -327,13 +414,15 @@ def run_conform(con: duckdb.DuckDBPyConnection) -> dict:
 
     now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
     if endpoints:
-        con.executemany(
-            f"INSERT INTO conformed.endpoints VALUES ({', '.join(['?'] * (len(ConformedEndpoint.__dataclass_fields__) + 1))})",
+        bulk_insert(
+            con, "conformed.endpoints",
+            list(ConformedEndpoint.__dataclass_fields__) + ["conformed_at"],
             [(*_astuple(e), now) for e in endpoints],
         )
     if review_queue:
-        con.executemany(
-            f"INSERT INTO conformed.review_queue VALUES ({', '.join(['?'] * (len(ReviewQueueEntry.__dataclass_fields__) + 2))})",
+        bulk_insert(
+            con, "conformed.review_queue",
+            list(ReviewQueueEntry.__dataclass_fields__) + ["status", "queued_at"],
             [(*_astuple(e), "pending", now) for e in review_queue],
         )
 
@@ -341,6 +430,7 @@ def run_conform(con: duckdb.DuckDBPyConnection) -> dict:
         "rows_conformed": len(endpoints),
         "rows_queued": len(review_queue),
         "total_rows": len(rows),
+        "workers": worker_count,
     }
 
 
