@@ -76,6 +76,18 @@ uv run endpoints review list          # what landed in the review queue, and why
 
 `graph build`, `query`, and `export` are stubbed pending step 4.
 
+**Proposed, not implemented.** Two design specs are written but unscheduled --
+decide against them or schedule them, but nothing in the tree implements
+either:
+
+* [`docs/COMPOSITE_ENDPOINTS_SPEC.md`](docs/COMPOSITE_ENDPOINTS_SPEC.md) --
+  decomposing composite endpoints into their components, and why that is the
+  one structure worth a recursive relation.
+* [`docs/USDM_ENDPOINTS_API_SPEC.md`](docs/USDM_ENDPOINTS_API_SPEC.md) -- a
+  read-only CDISC USDM 4.0 projection of the endpoints module, keyed on NCT
+  id, in which each form supplies a syntax template and the vocabularies fill
+  its tags through a `SyntaxTemplateDictionary`.
+
 ## Setup
 
 Requires [`uv`](https://docs.astral.sh/uv/).
