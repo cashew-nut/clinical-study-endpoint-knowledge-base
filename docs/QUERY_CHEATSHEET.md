@@ -105,13 +105,139 @@ FROM conformed.endpoints WHERE measurement_id = 'vital_status'
 GROUP BY 1, 2, 3 ORDER BY 4 DESC;
 ```
 
-**"Same measurement, different form" -- the graph layer's reason to exist**
+## Cross-study comparability
+
+The reason the warehouse exists: which studies measured the same thing a
+different way. These were the motivating questions for a separate graph
+projection (implementation plan §6); they are all joins on `conformed.endpoints`
+and its foreign keys, so they live here as SQL rather than as a node/edge
+encoding of the same facts. See
+[`docs/COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) for the one
+relation in this domain that a graph *would* serve better, and why it is not
+built yet.
+
+**Read the caveat below first.** These comparisons only see rows that conformed,
+which is a biased subset.
+
+**Same measurement, different form**
+
+Same underlying quantity, different kind of number derived from it -- overall
+survival as a survival distribution vs. a 2-year landmark rate vs. 30-day
+mortality. The first query finds the measurements worth looking at; the second
+opens one up.
 
 ```sql
-SELECT measurement_id, string_agg(DISTINCT form_id, ', ') AS forms_seen, count(*) AS n
+-- which measurements were expressed as more than one form, in more than one study
+SELECT measurement_id,
+       count(DISTINCT form_id) AS forms,
+       count(DISTINCT nct_id)  AS studies,
+       string_agg(DISTINCT form_id, ', ') AS forms_seen
 FROM conformed.endpoints
-GROUP BY 1 HAVING count(DISTINCT form_id) > 1
-ORDER BY n DESC LIMIT 15;
+GROUP BY 1
+HAVING count(DISTINCT form_id) > 1 AND count(DISTINCT nct_id) > 1
+ORDER BY forms DESC, studies DESC
+LIMIT 15;
+
+-- then the study-level pairs behind one of them.
+-- `b.form_id > a.form_id` both forces the forms to differ and keeps each pair
+-- once instead of twice; keep the measurement_id filter, since without it this
+-- is a self-join that is quadratic in the largest measurement group.
+SELECT a.measurement_id,
+       a.form_id AS form_a, a.nct_id AS study_a, a.direction_id AS direction_a,
+       b.form_id AS form_b, b.nct_id AS study_b, b.direction_id AS direction_b
+FROM conformed.endpoints a
+JOIN conformed.endpoints b
+  ON b.measurement_id = a.measurement_id
+ AND b.form_id > a.form_id
+ AND b.nct_id <> a.nct_id
+WHERE a.measurement_id = 'vital_status'
+ORDER BY form_a, form_b
+LIMIT 50;
+```
+
+Differing `direction_id` down those pairs is the point, not a bug: the same
+measurement under a different form genuinely reverses which way is better (see
+`vocab/README.md`, "Direction is derived").
+
+**Same concept, different instrument**
+
+The harder question, and the one the form comparison above can't reach: two
+trials both measured psoriasis severity, one with PASI and one with sPGA.
+`measurements.yaml` names instruments at instrument level and carries a
+`concept` for exactly this.
+
+```sql
+-- concepts measured with more than one instrument across the corpus
+SELECT m.concept,
+       count(DISTINCT e.measurement_id) AS instruments,
+       count(DISTINCT e.nct_id)         AS studies,
+       string_agg(DISTINCT e.measurement_id, ', ') AS instruments_seen
+FROM conformed.endpoints e
+JOIN vocab.measurements m ON m.id = e.measurement_id
+WHERE m.concept IS NOT NULL
+GROUP BY 1
+HAVING count(DISTINCT e.measurement_id) > 1
+ORDER BY instruments DESC, studies DESC
+LIMIT 15;
+
+-- study-level pairs within one concept (same bounding rule as above)
+SELECT ma.concept,
+       a.measurement_id AS instrument_a, a.form_id AS form_a, a.nct_id AS study_a,
+       b.measurement_id AS instrument_b, b.form_id AS form_b, b.nct_id AS study_b
+FROM conformed.endpoints a
+JOIN vocab.measurements ma ON ma.id = a.measurement_id
+JOIN conformed.endpoints b  ON b.nct_id <> a.nct_id
+JOIN vocab.measurements mb  ON mb.id = b.measurement_id AND mb.concept = ma.concept
+WHERE ma.concept = 'psoriasis_severity'
+  AND b.measurement_id > a.measurement_id
+ORDER BY study_a, study_b
+LIMIT 50;
+```
+
+**Thresholds: convention or one-off**
+
+A `>= 30%` decrease that recurs identically across many oncology studies, every
+one an `exact` match, is RECIST -- a convention. A threshold appearing in one
+study behind a `semantic` match is not. `measurement_match_method` is what
+separates them.
+
+```sql
+SELECT e.measurement_id, e.form_id,
+       e.threshold_comparator, e.threshold_value, e.threshold_unit,
+       count(DISTINCT e.nct_id) AS studies,
+       count(*) FILTER (WHERE e.measurement_match_method = 'exact') AS exact_matches,
+       round(avg(e.measurement_confidence), 2) AS mean_confidence
+FROM conformed.endpoints e
+WHERE e.threshold_value IS NOT NULL
+GROUP BY 1, 2, 3, 4, 5
+ORDER BY studies DESC, exact_matches DESC
+LIMIT 25;
+```
+
+**The caveat: what these comparisons cannot see**
+
+A row whose measurement doesn't resolve goes to `conformed.review_queue` and
+never becomes comparable to anything. Round-two measurement coverage was 64.5%,
+and 77% of `measure` strings occur exactly once -- so the queries above are
+weighted toward the head of the corpus (OS, PFS, ORR, adverse events), and an
+unusual instrument used in two trials is disproportionately likely to be missing
+altogether. Absence of a link is not evidence that no link exists. Check the
+denominator before drawing a conclusion from any of the above:
+
+```sql
+SELECT (SELECT count(*) FROM conformed.endpoints)    AS linkable_rows,
+       (SELECT count(*) FROM conformed.review_queue) AS invisible_rows,
+       round(100.0 * (SELECT count(*) FROM conformed.review_queue) /
+             nullif((SELECT count(*) FROM raw.design_outcomes), 0), 1) AS pct_unlinkable;
+
+-- queued rows whose best near-miss points at a measurement already in the
+-- warehouse: each one is a link that resolving the review queue would create
+SELECT best_semantic_candidate AS would_join,
+       count(*) AS queued_rows,
+       round(max(best_semantic_score), 2) AS best_score
+FROM conformed.review_queue
+WHERE status = 'pending' AND best_semantic_candidate IS NOT NULL
+GROUP BY 1 ORDER BY queued_rows DESC LIMIT 20;
 ```
 
 **Timepoints**
