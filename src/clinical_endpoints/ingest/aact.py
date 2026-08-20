@@ -4,6 +4,7 @@ plus the condition/intervention MeSH tables the TA resolver needs (step 2 gap 2)
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from typing import Callable, Optional
 
 import duckdb
@@ -17,6 +18,7 @@ from clinical_endpoints.ingest.design import STUDIES_DDL as SHARED_STUDIES_DDL
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
 from clinical_endpoints.ingest.pull_log import write_pull_log
 from clinical_endpoints.ingest.upsert import SchemaReconciler
+from clinical_endpoints.ta.resolver import TaMapping, load_ta_mapping, resolve_study_ta_matches
 
 SOURCE = "aact"
 
@@ -74,6 +76,40 @@ PULL_STEPS = (
     "mesh_terms",
 )
 
+# AACT has no server-side notion of this project's therapeutic areas either
+# (see ingest/ctgov_api.py's MAX_PAGES_TA_FILTERED docstring for why --ta
+# can't just be another SQL predicate alongside phase/since): `--ta` is
+# resolved the same layered way `ta/resolver.py` does, batch by batch, most
+# recent first, until `filters.limit` matches are found. TA_BATCH_SIZE is the
+# candidate page size per round-trip; TA_MAX_SCANNED bounds how many
+# phase/since-matching candidates get scanned in total before giving up.
+TA_BATCH_SIZE = 500
+TA_MAX_SCANNED = 30000
+
+_PULLED_STUDIES_SELECT = """
+    SELECT
+        s.nct_id, s.phase, s.overall_status, s.study_type,
+        s.start_date, s.primary_completion_date,
+        s.brief_title, s.official_title,
+        d.intervention_model, d.primary_purpose, d.allocation, d.masking,
+        TRY_CAST(s.enrollment AS INTEGER) AS enrollment_count,
+        s.enrollment_type,
+        -- AACT stores this as free text ("Accepts Healthy Volunteers" / "No");
+        -- anything else stays NULL rather than guessing, because a wrong
+        -- includesHealthySubjects is a clinical claim, not a formatting slip.
+        CASE lower(trim(e.healthy_volunteers))
+            WHEN 'accepts healthy volunteers' THEN TRUE
+            WHEN 'yes' THEN TRUE
+            WHEN 'no' THEN FALSE
+            ELSE NULL
+        END AS healthy_volunteers,
+        e.gender, e.minimum_age, e.maximum_age,
+        e.population AS population_description
+    FROM aact.ctgov.studies s
+    LEFT JOIN aact.ctgov.designs d ON d.nct_id = s.nct_id
+    LEFT JOIN aact.ctgov.eligibilities e ON e.nct_id = s.nct_id
+"""
+
 
 def run_pull(
     con: duckdb.DuckDBPyConnection,
@@ -108,43 +144,38 @@ def run_pull(
     schema.ensure("browse_interventions", BROWSE_INTERVENTIONS_DDL)
     schema.ensure("mesh_terms", MESH_TERMS_DDL)
 
-    since_clause = "AND s.start_date >= ?" if filters.since else ""
-    params: list = [aact_phases]
-    if filters.since:
-        params.append(filters.since)
-    params.append(filters.limit)
+    ta_scanned: Optional[int] = None
+    ta_hit_scan_cap = False
 
-    con.execute(
-        f"""
-        CREATE OR REPLACE TEMP TABLE _pulled_studies AS
-        SELECT
-            s.nct_id, s.phase, s.overall_status, s.study_type,
-            s.start_date, s.primary_completion_date,
-            s.brief_title, s.official_title,
-            d.intervention_model, d.primary_purpose, d.allocation, d.masking,
-            TRY_CAST(s.enrollment AS INTEGER) AS enrollment_count,
-            s.enrollment_type,
-            -- AACT stores this as free text ("Accepts Healthy Volunteers" / "No");
-            -- anything else stays NULL rather than guessing, because a wrong
-            -- includesHealthySubjects is a clinical claim, not a formatting slip.
-            CASE lower(trim(e.healthy_volunteers))
-                WHEN 'accepts healthy volunteers' THEN TRUE
-                WHEN 'yes' THEN TRUE
-                WHEN 'no' THEN FALSE
-                ELSE NULL
-            END AS healthy_volunteers,
-            e.gender, e.minimum_age, e.maximum_age,
-            e.population AS population_description
-        FROM aact.ctgov.studies s
-        LEFT JOIN aact.ctgov.designs d ON d.nct_id = s.nct_id
-        LEFT JOIN aact.ctgov.eligibilities e ON e.nct_id = s.nct_id
-        WHERE s.phase = ANY(?)
-        {since_clause}
-        ORDER BY s.start_date DESC
-        LIMIT ?
-        """,
-        params,
-    )
+    if filters.ta:
+        matched_nct_ids, ta_scanned, ta_hit_scan_cap = _ta_filtered_nct_ids(con, aact_phases, filters)
+        con.execute(
+            f"""
+            CREATE OR REPLACE TEMP TABLE _pulled_studies AS
+            {_PULLED_STUDIES_SELECT}
+            WHERE s.nct_id = ANY(?)
+            ORDER BY s.start_date DESC
+            """,
+            [matched_nct_ids],
+        )
+    else:
+        since_clause = "AND s.start_date >= ?" if filters.since else ""
+        params: list = [aact_phases]
+        if filters.since:
+            params.append(filters.since)
+        params.append(filters.limit)
+
+        con.execute(
+            f"""
+            CREATE OR REPLACE TEMP TABLE _pulled_studies AS
+            {_PULLED_STUDIES_SELECT}
+            WHERE s.phase = ANY(?)
+            {since_clause}
+            ORDER BY s.start_date DESC
+            LIMIT ?
+            """,
+            params,
+        )
 
     con.execute(
         """
@@ -255,6 +286,8 @@ def run_pull(
         "has_mesh_tree_numbers": has_tree_numbers,
         "nct_ids": pulled_nct_ids,
         "migrations": schema.changes,
+        "studies_scanned": ta_scanned,
+        "hit_scan_cap": ta_hit_scan_cap,
     }
 
 
@@ -264,6 +297,25 @@ def _insert_pulled(table: str, columns: tuple[str, ...]) -> str:
 
 
 _TREE_NUMBER_COLUMN_RE = re.compile(r"tree.?number", re.IGNORECASE)
+
+
+def _mesh_terms_columns(con: duckdb.DuckDBPyConnection) -> tuple[Optional[str], Optional[str]]:
+    """(tree_number_column, term_column) actually present on `ctgov.mesh_terms`,
+    introspected rather than hardcoded (see `_pull_mesh_terms`) -- or (None,
+    None) if it doesn't carry a usable pair. Shared by `_pull_mesh_terms` and
+    `_ta_matches_in_batch`, which both need the same tree-number join."""
+    columns = {
+        row[0]
+        for row in con.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_catalog = 'aact' AND table_schema = 'ctgov' AND table_name = 'mesh_terms'
+            """
+        ).fetchall()
+    }
+    tree_col = next((c for c in columns if _TREE_NUMBER_COLUMN_RE.search(c)), None)
+    term_col = next((c for c in ("mesh_term", "term", "heading", "name") if c in columns), None)
+    return tree_col, term_col
 
 
 def _pull_mesh_terms(con: duckdb.DuckDBPyConnection) -> tuple[bool, int]:
@@ -285,19 +337,7 @@ def _pull_mesh_terms(con: duckdb.DuckDBPyConnection) -> tuple[bool, int]:
     AACT database today regardless of its column names -- see
     vocab/ta_mesh_mapping.yaml's `caveats` block.
     """
-    columns = {
-        row[0]
-        for row in con.execute(
-            """
-            SELECT column_name FROM information_schema.columns
-            WHERE table_catalog = 'aact' AND table_schema = 'ctgov' AND table_name = 'mesh_terms'
-            """
-        ).fetchall()
-    }
-
-    tree_col = next((c for c in columns if _TREE_NUMBER_COLUMN_RE.search(c)), None)
-    term_col = next((c for c in ("mesh_term", "term", "heading", "name") if c in columns), None)
-
+    tree_col, term_col = _mesh_terms_columns(con)
     if not tree_col or not term_col:
         return False, 0
 
@@ -320,3 +360,114 @@ def _pull_mesh_terms(con: duckdb.DuckDBPyConnection) -> tuple[bool, int]:
     )
     count = con.execute("SELECT count(*) FROM _pulled_mesh_terms").fetchone()[0]
     return count > 0, count
+
+
+def _ta_matches_in_batch(
+    con: duckdb.DuckDBPyConnection, mapping: TaMapping, wanted_ta_ids: set[str], nct_ids: list[str]
+) -> set[str]:
+    """Which of `nct_ids` match one of `wanted_ta_ids`, judged by the exact
+    layered rules `ta/resolver.py` uses to write conformed.study_therapeutic_area
+    (via `resolve_study_ta_matches`), so a pull-time match always agrees with
+    the truth `pull` resolves afterward."""
+    conditions_by_nct: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for nct_id, mesh_term in con.execute(
+        "SELECT nct_id, mesh_term FROM aact.ctgov.browse_conditions WHERE nct_id = ANY(?)",
+        [nct_ids],
+    ).fetchall():
+        conditions_by_nct[nct_id].append((mesh_term, mesh_term.strip().lower()))
+
+    interventions_by_nct: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for nct_id, mesh_term in con.execute(
+        "SELECT nct_id, mesh_term FROM aact.ctgov.browse_interventions WHERE nct_id = ANY(?)",
+        [nct_ids],
+    ).fetchall():
+        interventions_by_nct[nct_id].append((mesh_term, mesh_term.strip().lower()))
+
+    tree_by_nct: dict[str, dict[str, str]] = defaultdict(dict)
+    tree_col, term_col = _mesh_terms_columns(con)
+    if tree_col and term_col:
+        rows = con.execute(
+            f"""
+            SELECT bc.nct_id, lower(trim(bc.mesh_term)), mt.{tree_col}
+            FROM aact.ctgov.browse_conditions bc
+            JOIN aact.ctgov.mesh_terms mt ON lower(trim(mt.{term_col})) = lower(trim(bc.mesh_term))
+            WHERE bc.nct_id = ANY(?) AND mt.{tree_col} IS NOT NULL
+            """,
+            [nct_ids],
+        ).fetchall()
+        for nct_id, mesh_term_normalised, tree_number in rows:
+            tree_by_nct[nct_id][mesh_term_normalised] = tree_number
+
+    matched: set[str] = set()
+    for nct_id in nct_ids:
+        matches = resolve_study_ta_matches(
+            conditions=conditions_by_nct.get(nct_id, []),
+            interventions=interventions_by_nct.get(nct_id, []),
+            tree_numbers=tree_by_nct.get(nct_id, {}),
+            branch_tree_prefixes=[],  # AACT has no CT.gov-style coarse browse branches
+            mapping=mapping,
+        )
+        if set(matches) & wanted_ta_ids:
+            matched.add(nct_id)
+    return matched
+
+
+def _ta_filtered_nct_ids(
+    con: duckdb.DuckDBPyConnection, aact_phases: list[str], filters: PullFilters
+) -> tuple[list[str], int, bool]:
+    """Which AACT studies (phase/since-matching, most-recent-first) also match
+    one of `filters.ta` -- (matched_nct_ids, studies_scanned, hit_scan_cap).
+
+    AACT has no server-side way to express this project's therapeutic areas
+    either, so this fetches phase/since-matching candidates in batches, most
+    recent first, and keeps only the ones `_ta_matches_in_batch` confirms,
+    continuing until `filters.limit` matches are found, the candidates run
+    out, or `TA_MAX_SCANNED` is hit -- the same reasoning as
+    ingest/ctgov_api.py's `MAX_PAGES_TA_FILTERED`: recency alone skews toward
+    whichever conditions dominate trial registrations generally, so `--ta`
+    has to keep scanning past non-matching studies rather than filtering only
+    the first `filters.limit` studies of any area.
+    """
+    mapping = load_ta_mapping(con)
+    wanted_ta_ids = set(filters.ta)
+    since_clause = "AND start_date >= ?" if filters.since else ""
+
+    matched: list[str] = []
+    scanned = 0
+    offset = 0
+    exhausted = False  # every phase/since-matching candidate has been scanned
+    while len(matched) < filters.limit and scanned < TA_MAX_SCANNED:
+        params: list = [aact_phases]
+        if filters.since:
+            params.append(filters.since)
+        params += [TA_BATCH_SIZE, offset]
+        batch = con.execute(
+            f"""
+            SELECT nct_id FROM aact.ctgov.studies
+            WHERE phase = ANY(?)
+            {since_clause}
+            ORDER BY start_date DESC, nct_id
+            LIMIT ? OFFSET ?
+            """,
+            params,
+        ).fetchall()
+        if not batch:
+            exhausted = True
+            break
+
+        batch_nct_ids = [row[0] for row in batch]
+        scanned += len(batch_nct_ids)
+        offset += len(batch_nct_ids)
+
+        matching = _ta_matches_in_batch(con, mapping, wanted_ta_ids, batch_nct_ids)
+        matched.extend(nct_id for nct_id in batch_nct_ids if nct_id in matching)
+
+        if len(batch_nct_ids) < TA_BATCH_SIZE:
+            exhausted = True
+            break
+
+    # A cap hit only means something if candidates were actually cut off by
+    # it -- if scanning simply ran out of phase/since-matching studies to
+    # look at, that's not the scan cap's doing, however few matches it found.
+    hit_scan_cap = len(matched) < filters.limit and not exhausted
+    return matched[: filters.limit], scanned, hit_scan_cap

@@ -40,6 +40,11 @@ from clinical_endpoints.ingest.design import (
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
 from clinical_endpoints.ingest.pull_log import write_pull_log
 from clinical_endpoints.ingest.upsert import SchemaReconciler, replace_children, upsert_rows
+from clinical_endpoints.ta.resolver import (
+    branch_abbrev_to_tree_prefix,
+    load_ta_mapping,
+    resolve_study_ta_matches,
+)
 
 API_BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
 SOURCE = "ctgov_api"
@@ -62,6 +67,17 @@ PAGE_SIZE = 200
 REQUEST_TIMEOUT_S = 30
 MAX_RETRIES = 3
 MAX_PAGES = 25  # safety cap: at PAGE_SIZE=200 this scans up to 5000 studies
+
+# `--ta` isn't a CT.gov API search parameter -- there's no server-side way to
+# ask for "respiratory" the way this project defines it, so filtering has to
+# happen client-side against the pages the phase/since query returns, and
+# recent registrations skew heavily toward whichever conditions dominate
+# trial activity generally (oncology). Without a much deeper scan, a niche
+# `--ta` would starve on the first `MAX_PAGES` pages before ever accumulating
+# `--limit` matches -- see the bug this constant fixes: `--ta respiratory`
+# landing only a handful of studies because 500 non-respiratory studies filled
+# the pull first. This cap only applies when `--ta` is given.
+MAX_PAGES_TA_FILTERED = 150  # up to 30,000 studies scanned
 
 
 class CtgovApiError(RuntimeError):
@@ -264,6 +280,18 @@ def run_pull(
     stays correct even if the server-side `sort` param turns out to be wrong
     or unsupported.
 
+    `filters.ta`, if given, is also applied client-side, *before* a study
+    counts toward `limit` -- CT.gov's API has no server-side way to ask for
+    this project's therapeutic areas, and recent registrations skew heavily
+    toward whichever conditions dominate trial activity generally (oncology),
+    so filtering only *after* collecting the most recent `limit` studies of
+    any area would starve a smaller area of matches it actually has. Pulling
+    "the 500 most recent respiratory studies" therefore has to keep scanning
+    past non-matching studies -- see `MAX_PAGES_TA_FILTERED`. A study is
+    judged by the exact same layered rules `ta/resolver.py` uses to write
+    conformed.study_therapeutic_area, via `resolve_study_ta_matches`, so a
+    pull-time match always agrees with the truth `pull` resolves afterward.
+
     Upserts rather than replaces: raw.studies is updated/inserted per nct_id,
     and every child table (design_outcomes, conditions, browse_*) has its rows
     for *this pull's* nct_ids replaced -- studies landed by earlier pulls with
@@ -272,12 +300,16 @@ def run_pull(
     `on_page`, if given, is called as `on_page(page_index, studies_collected)`
     after each page is fetched and filtered -- the eventual `limit` isn't known
     until pagination stops (a page can contain studies later dropped by
-    `since`/phase re-checks), so this reports pre-truncation progress rather
-    than a percentage of an unknowable total.
+    `since`/phase/`ta` re-checks), so this reports pre-truncation progress
+    rather than a percentage of an unknowable total.
     """
     aact_phases = normalize_phases(list(filters.phases))
     query_term = _build_query_term(aact_phases, filters.since)
     since_iso = filters.since.isoformat() if filters.since else None
+
+    wanted_ta_ids: Optional[set[str]] = set(filters.ta) if filters.ta else None
+    ta_mapping = load_ta_mapping(con) if wanted_ta_ids else None
+    max_pages = MAX_PAGES_TA_FILTERED if wanted_ta_ids else MAX_PAGES
 
     studies: list[dict] = []
     outcomes_by_nct: dict[str, list[dict]] = {}
@@ -288,9 +320,11 @@ def run_pull(
     condition_branches_by_nct: dict[str, list[dict]] = {}
     seen_nct_ids: set[str] = set()
     target = max(filters.limit * 3, filters.limit + 50)
+    studies_scanned = 0
 
     page_token: Optional[str] = None
-    for page_index in range(1, MAX_PAGES + 1):
+    hit_scan_cap = False
+    for page_index in range(1, max_pages + 1):
         payload = _fetch_page(query_term, page_token)
         page_studies = payload.get("studies") or []
         if not page_studies:
@@ -305,18 +339,42 @@ def run_pull(
                 continue
             if since_iso and (not row["start_date"] or row["start_date"] < since_iso):
                 continue
+            studies_scanned += 1
+
+            browse_conditions = _extract_mesh_rows(
+                study, module="conditionBrowseModule", mesh_type="condition"
+            )
+            browse_interventions = _extract_mesh_rows(
+                study, module="interventionBrowseModule", mesh_type="intervention"
+            )
+            condition_branches = _extract_condition_branch_rows(study)
+
+            if wanted_ta_ids is not None:
+                branch_tree_prefixes = [
+                    (prefix, b["branch_name"])
+                    for b in condition_branches
+                    if (prefix := branch_abbrev_to_tree_prefix(b["branch_abbrev"]))
+                ]
+                matches = resolve_study_ta_matches(
+                    conditions=[(m["mesh_term"], m["mesh_term_normalised"]) for m in browse_conditions],
+                    interventions=[
+                        (m["mesh_term"], m["mesh_term_normalised"]) for m in browse_interventions
+                    ],
+                    tree_numbers={},
+                    branch_tree_prefixes=branch_tree_prefixes,
+                    mapping=ta_mapping,
+                )
+                if not (set(matches) & wanted_ta_ids):
+                    continue
+
             seen_nct_ids.add(nct_id)
             studies.append(row)
             outcomes_by_nct[nct_id] = _extract_outcome_rows(study)
             arms_by_nct[nct_id] = _extract_arm_rows(study)
             conditions_by_nct[nct_id] = _extract_condition_rows(study)
-            browse_conditions_by_nct[nct_id] = _extract_mesh_rows(
-                study, module="conditionBrowseModule", mesh_type="condition"
-            )
-            browse_interventions_by_nct[nct_id] = _extract_mesh_rows(
-                study, module="interventionBrowseModule", mesh_type="intervention"
-            )
-            condition_branches_by_nct[nct_id] = _extract_condition_branch_rows(study)
+            browse_conditions_by_nct[nct_id] = browse_conditions
+            browse_interventions_by_nct[nct_id] = browse_interventions
+            condition_branches_by_nct[nct_id] = condition_branches
 
         if on_page:
             on_page(page_index, len(studies))
@@ -324,6 +382,8 @@ def run_pull(
         page_token = payload.get("nextPageToken")
         if not page_token or len(studies) >= target:
             break
+        if page_index == max_pages:
+            hit_scan_cap = len(studies) < filters.limit
 
     studies.sort(key=lambda r: r["start_date"] or "", reverse=True)
     studies = studies[: filters.limit]
@@ -452,4 +512,6 @@ def run_pull(
         "row_counts": row_counts,
         "nct_ids": kept_nct_ids,
         "migrations": schema.changes,
+        "studies_scanned": studies_scanned,
+        "hit_scan_cap": hit_scan_cap,
     }

@@ -151,9 +151,25 @@ uv run endpoints pull --phase 3 --limit 500 --ta oncology,cardiovascular
 ```
 
 `--ta` additionally *filters* the pull down to studies matching one of the
-requested areas. It requires `vocab validate` to have run against this
-warehouse first, since it filters against the loaded mapping rather than the
-YAML.
+requested areas -- *before* `--limit` is applied, not after. Neither backend's
+source (the CT.gov API's `query.term`, AACT's SQL) can express this project's
+therapeutic areas directly, so `pull` fetches phase/since-matching studies
+most-recent-first and keeps scanning past ones that don't match, rather than
+truncating to the most recent `--limit` studies of *any* area and only then
+discarding what doesn't match -- the latter would starve a smaller area
+(respiratory, say) of matches it actually has, because registrations skew
+heavily toward whichever conditions dominate trial activity generally
+(oncology). The scan is capped (`ingest/ctgov_api.py`'s `MAX_PAGES_TA_FILTERED`,
+`ingest/aact.py`'s `TA_MAX_SCANNED`); a `--ta` for a niche area combined with a
+wide `--phase`/`--since` can still land fewer than `--limit` studies, and
+`pull` says so when that happens. `--ta` requires `vocab validate` to have run
+against this warehouse first, since it filters against the loaded mapping
+rather than the YAML.
+
+`--ta` only ever affects studies *this* pull lands: a study an earlier pull
+with different filters already landed is never removed just because it
+doesn't match this pull's `--ta` (the same upsert invariant every pull
+honours -- see "The warehouse" above).
 
 The mapping is layered -- intervention rules, exact descriptor overrides, MeSH
 tree prefixes, descriptor regexes, defaults -- and the layers can disagree.

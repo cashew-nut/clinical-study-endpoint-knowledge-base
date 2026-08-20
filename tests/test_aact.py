@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 from datetime import date
 
+import pytest
+
+from clinical_endpoints.ingest import aact as aact_backend
 from clinical_endpoints.ingest.aact import run_pull
 from clinical_endpoints.ingest.filters import PullFilters
+from clinical_endpoints.vocab.loader import default_vocab_dir, load_vocab, write_vocab_tables
 
 
 def test_run_pull_lands_filtered_studies_and_outcomes(fake_aact_con):
@@ -245,3 +249,96 @@ def test_run_pull_migrates_a_warehouse_left_by_the_pre_upsert_release(fake_aact_
 def test_run_pull_needs_no_migration_on_a_warehouse_it_built_itself(fake_aact_con):
     run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
     assert run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))["migrations"] == []
+
+
+# --------------------------------------------------------------- --ta filtering
+#
+# Mirrors ingest/ctgov_api.py's --ta tests: --ta must filter *before* `limit`
+# is applied, scanning past non-matching studies rather than truncating to
+# the most recent `limit` studies of any therapeutic area and only then
+# discarding the ones that don't match.
+
+
+@pytest.fixture
+def ta_fake_aact_con(fake_aact_con):
+    """`fake_aact_con` plus the real shipped MeSH -> TA mapping loaded, the
+    precondition `--ta` filtering requires (the CLI enforces the same thing
+    before ever calling `run_pull`). NCT001/NCT002 (both PHASE3, in the base
+    fixture) resolve to oncology; NCT003 is PHASE1 and never in scope here."""
+    vocab_dir = default_vocab_dir(__file__)
+    write_vocab_tables(fake_aact_con, load_vocab(vocab_dir), vocab_dir=vocab_dir)
+    return fake_aact_con
+
+
+def test_run_pull_ta_filter_excludes_non_matching_area(ta_fake_aact_con):
+    result = run_pull(ta_fake_aact_con, PullFilters(phases=("3",), limit=500, ta=("respiratory",)))
+
+    assert result["nct_ids"] == []
+    assert ta_fake_aact_con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 0
+
+
+def test_run_pull_ta_filter_keeps_matching_studies(ta_fake_aact_con):
+    result = run_pull(ta_fake_aact_con, PullFilters(phases=("3",), limit=500, ta=("oncology",)))
+
+    assert set(result["nct_ids"]) == {"NCT001", "NCT002"}
+    landed = {r[0] for r in ta_fake_aact_con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert landed == {"NCT001", "NCT002"}
+
+
+def test_run_pull_ta_filter_scans_past_non_matching_batches(ta_fake_aact_con, monkeypatch):
+    """NCT001/NCT002 (most recent) are both oncology; the one respiratory
+    study is added last, so it's the oldest. A batch size of 1 forces
+    multiple round-trips -- `run_pull` must keep scanning past the
+    non-matching batches to find it, the same way ctgov_api paginates past
+    non-matching pages."""
+    monkeypatch.setattr(aact_backend, "TA_BATCH_SIZE", 1)
+
+    ta_fake_aact_con.execute(
+        "INSERT INTO aact.ctgov.studies VALUES "
+        "('NCT004', 'PHASE3', 'RECRUITING', 'INTERVENTIONAL', '2022-01-01', NULL, "
+        "'Trial D', 'Trial D official', NULL, NULL)"
+    )
+    ta_fake_aact_con.execute("INSERT INTO aact.ctgov.browse_conditions VALUES ('NCT004', 'Asthma')")
+
+    result = run_pull(ta_fake_aact_con, PullFilters(phases=("3",), limit=1, ta=("respiratory",)))
+
+    assert result["nct_ids"] == ["NCT004"]
+    landed = {r[0] for r in ta_fake_aact_con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert landed == {"NCT004"}  # NCT001/NCT002 (oncology) were scanned but never landed
+    assert result["studies_scanned"] == 3
+    assert result["hit_scan_cap"] is False
+
+
+def test_run_pull_ta_filter_reports_hit_scan_cap_when_capped_before_a_match(ta_fake_aact_con, monkeypatch):
+    monkeypatch.setattr(aact_backend, "TA_BATCH_SIZE", 1)
+    monkeypatch.setattr(aact_backend, "TA_MAX_SCANNED", 1)
+
+    result = run_pull(ta_fake_aact_con, PullFilters(phases=("3",), limit=1, ta=("respiratory",)))
+
+    assert result["nct_ids"] == []
+    assert result["studies_scanned"] == 1  # only the most recent candidate (NCT001) was scanned
+    assert result["hit_scan_cap"] is True
+
+
+def test_run_pull_ta_filter_since_still_applies(ta_fake_aact_con):
+    """--since must still narrow the candidate pool --ta scans, exactly as it
+    does without --ta."""
+    result = run_pull(
+        ta_fake_aact_con,
+        PullFilters(phases=("3",), limit=500, since=date(2024, 1, 1), ta=("oncology",)),
+    )
+
+    # NCT002 starts 2023-01-01, excluded by --since before --ta even applies.
+    assert result["nct_ids"] == ["NCT001"]
+
+
+def test_run_pull_ta_filter_preserves_earlier_pulls_with_different_filters(ta_fake_aact_con):
+    """The same upsert invariant every other pull honours: a study another
+    pull landed with different filters is never touched, even if it doesn't
+    match this pull's --ta."""
+    run_pull(ta_fake_aact_con, PullFilters(phases=("3",), limit=500))  # lands NCT001, NCT002, no --ta
+
+    run_pull(ta_fake_aact_con, PullFilters(phases=("3",), limit=500, ta=("respiratory",)))  # matches neither
+
+    nct_ids = {r[0] for r in ta_fake_aact_con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert nct_ids == {"NCT001", "NCT002"}  # untouched by the second, non-matching pull

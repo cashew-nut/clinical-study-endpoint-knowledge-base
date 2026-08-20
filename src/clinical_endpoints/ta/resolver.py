@@ -23,7 +23,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import duckdb
 
@@ -141,7 +141,7 @@ def _table_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str) -> bo
     )
 
 
-def _branch_abbrev_to_tree_prefix(abbrev: Optional[str]) -> Optional[str]:
+def branch_abbrev_to_tree_prefix(abbrev: Optional[str]) -> Optional[str]:
     m = _BRANCH_ABBREV_RE.match(abbrev or "")
     return m.group(1) if m else None
 
@@ -206,10 +206,83 @@ def _condition_branch_tree_candidates(
     ).fetchall()
     out: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for nct_id, branch_abbrev, branch_name in rows:
-        prefix = _branch_abbrev_to_tree_prefix(branch_abbrev)
+        prefix = branch_abbrev_to_tree_prefix(branch_abbrev)
         if prefix:
             out[nct_id].append((prefix, branch_name or branch_abbrev))
     return out
+
+
+def resolve_study_ta_matches(
+    *,
+    conditions: list[tuple[str, str]],
+    interventions: list[tuple[str, str]],
+    tree_numbers: dict[str, str],
+    branch_tree_prefixes: list[tuple[str, str]],
+    mapping: TaMapping,
+    on_condition_or_branch_match: Optional[Callable[[str], None]] = None,
+) -> dict[str, tuple[str, Optional[str]]]:
+    """The layered match for *one* study: ta_id -> (rule_layer, matched_on).
+
+    This is the single place the layer order (intervention_rules ->
+    term_overrides -> tree_prefixes -> term_patterns -> defaults) is applied
+    per condition/intervention -- factored out of `resolve_therapeutic_areas`
+    so pull-time `--ta` filtering (ingest/ctgov_api.py, ingest/aact.py) judges
+    a study by *exactly* the same rules the bulk resolver later writes to
+    conformed.study_therapeutic_area, rather than an approximation that could
+    disagree with it.
+
+    `conditions`/`interventions` are (mesh_term, mesh_term_normalised) pairs.
+    `tree_numbers` maps a condition's mesh_term_normalised -> tree_number
+    (AACT only; empty on the CT.gov API backend, which has no per-condition
+    tree number). `branch_tree_prefixes` are (tree_prefix, branch_name) pairs
+    already derived from CT.gov's coarse browseBranches (empty on AACT).
+    `on_condition_or_branch_match`, if given, is called with each ta_id a
+    condition or branch match records -- `resolve_therapeutic_areas` uses
+    this to keep its own per-ta_id condition-match tally for the primary tie
+    break; callers that only need the match set (pull-time filtering) can
+    leave it unset.
+    """
+    matches: dict[str, tuple[str, Optional[str]]] = {}
+
+    def record(ta_id: str, rule_layer: str, matched_on: Optional[str]) -> None:
+        existing = matches.get(ta_id)
+        if existing is None or _LAYER_RANK[rule_layer] < _LAYER_RANK[existing[0]]:
+            matches[ta_id] = (rule_layer, matched_on)
+
+    for mesh_term, mesh_term_normalised in interventions:
+        ta_id = match_pattern(mesh_term_normalised, mapping.intervention_patterns)
+        if ta_id:
+            record(ta_id, "intervention_rule", mesh_term)
+
+    for mesh_term, mesh_term_normalised in conditions:
+        ta_id = mapping.term_overrides.get(mesh_term_normalised)
+        rule_layer = "term_override"
+        if not ta_id:
+            tree_number = tree_numbers.get(mesh_term_normalised)
+            ta_id = match_tree(tree_number, mapping)
+            rule_layer = "tree_prefix"
+        if not ta_id:
+            ta_id = match_pattern(mesh_term_normalised, mapping.condition_patterns)
+            rule_layer = "term_pattern"
+        if ta_id:
+            record(ta_id, rule_layer, mesh_term)
+            if on_condition_or_branch_match:
+                on_condition_or_branch_match(ta_id)
+
+    for tree_prefix, branch_name in branch_tree_prefixes:
+        ta_id = match_tree(tree_prefix, mapping)
+        if ta_id:
+            record(ta_id, "tree_prefix", branch_name)
+            if on_condition_or_branch_match:
+                on_condition_or_branch_match(ta_id)
+
+    if not matches:
+        if conditions:
+            record(mapping.no_pattern_matched, "default", None)
+        else:
+            record(mapping.no_mesh_terms_on_study, "default", None)
+
+    return matches
 
 
 def resolve_therapeutic_areas(
@@ -247,44 +320,21 @@ def resolve_therapeutic_areas(
 
     resolved: list[ResolvedTa] = []
     for nct_id in study_nct_ids:
-        matches: dict[str, tuple[str, Optional[str]]] = {}  # ta_id -> (rule_layer, matched_on)
+        conditions = conditions_by_nct.get(nct_id, [])
         condition_match_counts: Counter = Counter()  # ta_id -> matching-condition count, for tie_break
 
-        def record(ta_id: str, rule_layer: str, matched_on: Optional[str]) -> None:
-            existing = matches.get(ta_id)
-            if existing is None or _LAYER_RANK[rule_layer] < _LAYER_RANK[existing[0]]:
-                matches[ta_id] = (rule_layer, matched_on)
-
-        for mesh_term, mesh_term_normalised in interventions_by_nct.get(nct_id, []):
-            ta_id = match_pattern(mesh_term_normalised, mapping.intervention_patterns)
-            if ta_id:
-                record(ta_id, "intervention_rule", mesh_term)
-
-        for mesh_term, mesh_term_normalised in conditions_by_nct.get(nct_id, []):
-            ta_id = mapping.term_overrides.get(mesh_term_normalised)
-            rule_layer = "term_override"
-            if not ta_id:
-                tree_number = tree_by_condition.get((nct_id, mesh_term_normalised))
-                ta_id = match_tree(tree_number, mapping)
-                rule_layer = "tree_prefix"
-            if not ta_id:
-                ta_id = match_pattern(mesh_term_normalised, mapping.condition_patterns)
-                rule_layer = "term_pattern"
-            if ta_id:
-                record(ta_id, rule_layer, mesh_term)
-                condition_match_counts[ta_id] += 1
-
-        for tree_prefix, branch_name in branch_tree_candidates.get(nct_id, []):
-            ta_id = match_tree(tree_prefix, mapping)
-            if ta_id:
-                record(ta_id, "tree_prefix", branch_name)
-                condition_match_counts[ta_id] += 1
-
-        if not matches:
-            if conditions_by_nct.get(nct_id):
-                record(mapping.no_pattern_matched, "default", None)
-            else:
-                record(mapping.no_mesh_terms_on_study, "default", None)
+        matches = resolve_study_ta_matches(
+            conditions=conditions,
+            interventions=interventions_by_nct.get(nct_id, []),
+            tree_numbers={
+                mesh_term_normalised: tree_by_condition[(nct_id, mesh_term_normalised)]
+                for _mesh_term, mesh_term_normalised in conditions
+                if (nct_id, mesh_term_normalised) in tree_by_condition
+            },
+            branch_tree_prefixes=branch_tree_candidates.get(nct_id, []),
+            mapping=mapping,
+            on_condition_or_branch_match=lambda ta_id: condition_match_counts.update({ta_id: 1}),
+        )
 
         primary_ta = min(
             matches,

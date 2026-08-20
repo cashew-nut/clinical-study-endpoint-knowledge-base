@@ -133,8 +133,15 @@ is oncology *and* respiratory -- with `is_primary` set by
 `therapeutic_areas.yaml` precedence, lowest wins, tie-broken by number of
 matching conditions per `resolution.tie_break`.
 
-**`pull --ta`** filters at pull time on both backends, and `pull` resolves
-therapeutic areas for every pulled study whether or not `--ta` is given.
+**`pull --ta`** filters at pull time on both backends -- *before* `--limit`
+truncates, not after, since truncating first would starve a smaller area of
+matches it actually has (registrations skew toward whichever conditions
+dominate trial activity generally). Both backends resolve each candidate
+study with `resolve_study_ta_matches` (the same per-study match `ta/resolver.py`
+uses to write `conformed.study_therapeutic_area`) while scanning, up to a cap
+(`MAX_PAGES_TA_FILTERED` / `TA_MAX_SCANNED`) -- see `docs/USAGE.md`'s
+"Therapeutic areas" section. `pull` resolves therapeutic areas for every
+pulled study whether or not `--ta` is given.
 
 ## 3. Validating the tree prefixes against real data
 

@@ -9,6 +9,7 @@ from clinical_endpoints.db import connect
 from clinical_endpoints.ingest import ctgov_api
 from clinical_endpoints.ingest.ctgov_api import CtgovApiError, run_pull
 from clinical_endpoints.ingest.filters import PullFilters
+from clinical_endpoints.vocab.loader import default_vocab_dir, load_vocab, write_vocab_tables
 
 
 def _make_study(
@@ -67,6 +68,21 @@ class FakeResponse:
 @pytest.fixture(autouse=True)
 def no_sleep(monkeypatch):
     monkeypatch.setattr(ctgov_api.time, "sleep", lambda _s: None)
+
+
+@pytest.fixture
+def vocab_dir():
+    return default_vocab_dir(__file__)
+
+
+@pytest.fixture
+def ta_con(tmp_path, vocab_dir):
+    """A warehouse with the real shipped MeSH -> TA mapping loaded, the
+    precondition `--ta` filtering requires (the CLI enforces the same thing
+    before ever calling `run_pull`)."""
+    con = connect(tmp_path / "warehouse.duckdb")
+    write_vocab_tables(con, load_vocab(vocab_dir), vocab_dir=vocab_dir)
+    return con
 
 
 def test_build_query_term_single_and_multi_phase_with_since():
@@ -407,4 +423,125 @@ def test_run_pull_migrates_a_warehouse_left_by_the_pre_upsert_release(tmp_path, 
     assert con.execute(
         "SELECT brief_title FROM raw.studies WHERE nct_id = 'NCT_OLD'"
     ).fetchone() == ("landed by an earlier pull",)
+    con.close()
+
+
+# --------------------------------------------------------------- --ta filtering
+#
+# The bug this guards against: `--ta` used to be applied *after* `run_pull`
+# had already truncated to the most recent `--limit` studies of *any*
+# therapeutic area. Since CT.gov registrations skew heavily toward oncology,
+# a niche `--ta` (e.g. respiratory) would see most/all of that top-`--limit`
+# window filtered away by the CLI's post-hoc delete, landing far fewer
+# studies than requested even though many more matching studies existed
+# further back in the API's result set. `run_pull` must keep paginating past
+# non-matching studies until it finds `--limit` matches (or exhausts the API
+# / a scan cap), the same way `--phase`/`--since` already filter before the
+# limit is applied.
+
+
+def _oncology_study(nct_id: str, start_date: str) -> dict:
+    return _make_study(
+        nct_id, ["PHASE3"], start_date, condition_meshes=[{"id": "D1", "term": "Lung Neoplasms"}]
+    )
+
+
+def _respiratory_study(nct_id: str, start_date: str) -> dict:
+    return _make_study(nct_id, ["PHASE3"], start_date, condition_meshes=[{"id": "D2", "term": "Asthma"}])
+
+
+def test_run_pull_ta_filter_paginates_past_non_matching_studies(ta_con, monkeypatch):
+    """Page 1 is all oncology (no match for --ta respiratory); the one
+    respiratory study is on page 2. A pull limited to 1 study must not stop
+    after page 1 empty-handed -- it has to keep going to find the match."""
+    page1 = FakeResponse(
+        200,
+        {
+            "studies": [_oncology_study("NCT001", "2024-02-01"), _oncology_study("NCT002", "2024-01-15")],
+            "nextPageToken": "tok2",
+        },
+    )
+    page2 = FakeResponse(200, {"studies": [_respiratory_study("NCT003", "2024-01-01")]})
+    responses = [page1, page2]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    result = run_pull(ta_con, PullFilters(phases=("3",), limit=1, ta=("respiratory",)))
+
+    assert result["nct_ids"] == ["NCT003"]
+    landed = {r[0] for r in ta_con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert landed == {"NCT003"}  # the oncology studies were never landed at all
+    assert result["studies_scanned"] == 3
+    assert result["hit_scan_cap"] is False
+    ta_con.close()
+
+
+def test_run_pull_ta_filter_keeps_studies_matching_any_requested_area(ta_con, monkeypatch):
+    responses = [
+        FakeResponse(
+            200,
+            {"studies": [_oncology_study("NCT001", "2024-02-01"), _respiratory_study("NCT002", "2024-01-01")]},
+        )
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    result = run_pull(ta_con, PullFilters(phases=("3",), limit=500, ta=("oncology", "respiratory")))
+
+    assert set(result["nct_ids"]) == {"NCT001", "NCT002"}
+    ta_con.close()
+
+
+def test_run_pull_ta_filter_excludes_non_matching_area(ta_con, monkeypatch):
+    responses = [FakeResponse(200, {"studies": [_oncology_study("NCT001", "2024-01-01")]})]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    result = run_pull(ta_con, PullFilters(phases=("3",), limit=500, ta=("respiratory",)))
+
+    assert result["nct_ids"] == []
+    assert ta_con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 0
+    ta_con.close()
+
+
+def test_run_pull_ta_filter_reports_hit_scan_cap_when_exhausted_without_enough_matches(ta_con, monkeypatch):
+    monkeypatch.setattr(ctgov_api, "MAX_PAGES_TA_FILTERED", 2)
+    pages = [
+        FakeResponse(
+            200,
+            {"studies": [_oncology_study("NCT001", "2024-03-01")], "nextPageToken": "tok2"},
+        ),
+        FakeResponse(
+            200,
+            {"studies": [_oncology_study("NCT002", "2024-02-01")], "nextPageToken": "tok3"},
+        ),
+        # Never fetched -- the scan cap (patched to 2 pages) stops pagination first.
+        FakeResponse(200, {"studies": [_respiratory_study("NCT003", "2024-01-01")]}),
+    ]
+    fetched_tokens = []
+
+    def fake_get(url, params=None, timeout=None):
+        fetched_tokens.append(params.get("pageToken"))
+        return pages.pop(0)
+
+    monkeypatch.setattr(ctgov_api.requests, "get", fake_get)
+
+    result = run_pull(ta_con, PullFilters(phases=("3",), limit=1, ta=("respiratory",)))
+
+    assert fetched_tokens == [None, "tok2"]  # the 3rd page (with the actual match) was never fetched
+    assert result["nct_ids"] == []
+    assert result["hit_scan_cap"] is True
+    assert result["studies_scanned"] == 2
+    ta_con.close()
+
+
+def test_run_pull_ta_filter_does_not_widen_scan_cap_without_ta(tmp_path, monkeypatch):
+    """Without --ta, the original (smaller) MAX_PAGES cap still applies --
+    there's no reason to scan deeper when nothing is being filtered out."""
+    assert ctgov_api.MAX_PAGES < ctgov_api.MAX_PAGES_TA_FILTERED
+
+    responses = [FakeResponse(200, {"studies": [_oncology_study("NCT001", "2024-01-01")]})]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    result = run_pull(con, PullFilters(phases=("3",), limit=500))
+
+    assert result["nct_ids"] == ["NCT001"]
     con.close()
