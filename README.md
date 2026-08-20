@@ -87,10 +87,24 @@ auditable. See [`docs/USDM_ENDPOINTS_API_SPEC.md`](docs/USDM_ENDPOINTS_API_SPEC.
 for the design and [Projecting to USDM 4.0](#projecting-to-usdm-40) below for
 how to run it.
 
-**Proposed, not implemented.** One design spec is written but unscheduled --
-[`docs/COMPOSITE_ENDPOINTS_SPEC.md`](docs/COMPOSITE_ENDPOINTS_SPEC.md),
-decomposing composite endpoints into their components, and why that is the one
-structure worth a recursive relation. Nothing in the tree implements it.
+**Proposed, not implemented.** Three design specs are written but not built:
+
+* [`docs/EVENT_SEMANTICS_SPEC.md`](docs/EVENT_SEMANTICS_SPEC.md) — **priority.**
+  The first live validation of the USDM projection (NCT01777919) rendered PFS
+  as "Time from randomisation to Tumour burden (RECIST)" and OS as "Time from
+  randomisation to vital status": time-to-event endpoints have no `event` axis,
+  so the assessment gets rendered in the event slot, and PFS/TTP/DoR collapse
+  to one identity. The spec adds `events.yaml`, `named_endpoints.yaml`, and
+  event resolution in `conform` — preserving the PFS↔ORR same-measurement join.
+* [`docs/USDM_PROJECTION_INTEGRITY_SPEC.md`](docs/USDM_PROJECTION_INTEGRITY_SPEC.md)
+  — companion, from the same validation: announced defaults (the projection
+  rendered a `reference_fallback` into the label while the decomposition said
+  `not_stated`, with no flag), per-attribute `derived` flags, timepoint
+  roles (a bare "6 months" is an observation window, not a timepoint), the
+  v2 extension profile, and the module-envelope boundary.
+* [`docs/COMPOSITE_ENDPOINTS_SPEC.md`](docs/COMPOSITE_ENDPOINTS_SPEC.md) —
+  decomposing composite endpoints into their components, and why that is the
+  one structure worth a recursive relation.
 
 ## Setup
 
