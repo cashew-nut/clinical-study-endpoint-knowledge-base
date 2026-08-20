@@ -158,6 +158,13 @@ with the same filters refreshes those studies in place, re-running it with
 different filters accumulates alongside what's already there, and the pull
 history in `raw._pull_log` accumulates across runs either way.
 
+`raw._pull_log.pulled_at` is a `TIMESTAMPTZ`. DuckDB's Python client can only
+materialise one as a `datetime` if `pytz` is importable, and it does not itself
+depend on `pytz`, so a query of your own that selects that column may fail with
+`Required module 'pytz' failed to import` on an install that hasn't got it.
+Select it as text (`CAST(pulled_at AS VARCHAR)`) or `pip install pytz`. Nothing
+in this project needs it: the one place that reads the column renders it in SQL.
+
 A warehouse outlives the release that built it, so `pull` also reconciles each
 `raw.*` table against the schema the current code declares, and reports what it
 had to do:

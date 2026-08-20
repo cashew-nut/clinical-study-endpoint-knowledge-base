@@ -86,16 +86,27 @@ def _quantity(ids: IdFactory, value: float | int | None) -> dict | None:
     }
 
 
+#: raw._pull_log.pulled_at is TIMESTAMPTZ, and duckdb's Python client needs pytz
+#: -- which it does not itself depend on -- to materialise one as a datetime.
+#: Only the ISO string is wanted here, so DuckDB renders it: converting to UTC
+#: explicitly (rather than trusting the session's TimeZone setting) and pinning
+#: the offset reproduces exactly what `datetime.isoformat()` used to return.
+_PULLED_AT_ISO = (
+    "CASE WHEN pulled_at IS NULL THEN NULL ELSE "
+    "strftime(pulled_at AT TIME ZONE 'UTC', '%Y-%m-%dT%H:%M:%S.%f') || '+00:00' END"
+)
+
+
 def provenance(
     con: duckdb.DuckDBPyConnection, projection: Projection, *, vocab_version: str | None = None
 ) -> dict:
     source = pulled_at = conformed_at = None
     if _has(con, "raw", "_pull_log"):
         row = con.execute(
-            "SELECT source, pulled_at FROM raw._pull_log ORDER BY pulled_at DESC LIMIT 1"
+            f"SELECT source, {_PULLED_AT_ISO} FROM raw._pull_log ORDER BY pulled_at DESC LIMIT 1"
         ).fetchone()
         if row:
-            source, pulled_at = row[0], row[1].isoformat() if row[1] else None
+            source, pulled_at = row[0], row[1]
     if _has(con, "conformed", "endpoints"):
         row = con.execute(
             "SELECT max(conformed_at) FROM conformed.endpoints WHERE nct_id = ?",

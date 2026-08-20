@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
+import duckdb
 import pytest
 from jsonschema import Draft202012Validator
 
@@ -289,3 +291,37 @@ def test_a_concept_tag_resolves_to_a_shared_surrogate(usdm_con):
     dictionary = next(d for d in p.dictionaries if d["id"] == endpoint["dictionaryId"])
     concept_map = next(pm for pm in dictionary["parameterMaps"] if pm["tag"] == "concept")
     assert by_name["glycaemic_control"]["id"] in concept_map["reference"]
+
+
+def test_provenance_carries_the_pull_it_came_from(usdm_con):
+    """raw._pull_log.pulled_at is a TIMESTAMPTZ, which duckdb's Python client can
+    only hand back as a datetime when pytz is importable -- and it does not
+    depend on pytz. Reading it as text keeps the projection working on an
+    install that hasn't got it."""
+    body = module_envelope(usdm_con, project(usdm_con, "NCT00000001"), vocab_version="test")
+
+    assert body["provenance"]["source"] == "ctgov_api"
+    pulled_at = body["provenance"]["pulledAt"]
+    assert pulled_at.endswith("+00:00")
+    parsed = datetime.fromisoformat(pulled_at)
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() == timedelta(0)
+    # Same shape datetime.isoformat() produced before it was rendered in SQL.
+    assert parsed.isoformat() == pulled_at
+
+
+def test_provenance_survives_a_warehouse_with_no_pull_log(usdm_warehouse_path, tmp_path):
+    """A warehouse built by hand, or one whose log predates the table."""
+    import shutil
+
+    copy = tmp_path / "no_log.duckdb"
+    shutil.copy(usdm_warehouse_path, copy)
+    con = duckdb.connect(str(copy))
+    try:
+        con.execute("DROP TABLE raw._pull_log")
+        body = module_envelope(con, project(con, "NCT00000001"), vocab_version="test")
+    finally:
+        con.close()
+
+    assert body["provenance"]["source"] is None
+    assert body["provenance"]["pulledAt"] is None

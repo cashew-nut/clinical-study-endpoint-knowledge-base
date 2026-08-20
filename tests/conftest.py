@@ -191,6 +191,7 @@ def usdm_warehouse_path(tmp_path_factory) -> str:
     run -- the state every USDM projection assumes."""
     from clinical_endpoints.conform.pipeline import run_conform
     from clinical_endpoints.ingest.design import DESIGN_GROUPS_DDL, STUDIES_DDL
+    from clinical_endpoints.ingest.pull_log import write_pull_log
     from clinical_endpoints.vocab.loader import default_vocab_dir, load_vocab, write_vocab_tables
 
     path = tmp_path_factory.mktemp("usdm") / "warehouse.duckdb"
@@ -223,6 +224,17 @@ def usdm_warehouse_path(tmp_path_factory) -> str:
         """
     )
     con.executemany("INSERT INTO raw.design_outcomes VALUES (?, ?, ?, ?, ?, ?)", USDM_OUTCOMES)
+    # A warehouse only ever gets raw.* through a pull, so it always has the pull
+    # log too. Without it the provenance path that reads raw._pull_log.pulled_at
+    # -- a TIMESTAMPTZ, which duckdb can only hand back as a datetime if pytz is
+    # importable -- never ran under test.
+    write_pull_log(
+        con,
+        source="ctgov_api",
+        filters={"phases": ["3"], "limit": 10},
+        row_counts={"studies": len(USDM_STUDIES), "design_outcomes": len(USDM_OUTCOMES)},
+        source_tables=("studies", "design_outcomes", "design_groups"),
+    )
     run_conform(con)
     con.close()
     return str(path)
