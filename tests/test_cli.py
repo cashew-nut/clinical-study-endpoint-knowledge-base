@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import duckdb
 from typer.testing import CliRunner
 
@@ -299,3 +301,54 @@ def test_conform_writes_conformed_tables_and_review_list_shows_the_queue(tmp_pat
     assert review.exit_code == 0, review.output
     assert "NCT001" in review.output
     assert "Showing 1 row(s) with status='pending'" in review.output
+
+
+# ------------------------------------------------------------- `endpoints usdm`
+
+
+def test_usdm_show_writes_a_usdm_document(usdm_warehouse_path, tmp_path):
+    out = tmp_path / "endpoints.json"
+    result = runner.invoke(
+        app,
+        ["usdm", "show", "NCT00000001", "--warehouse", usdm_warehouse_path, "-o", str(out)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "5 endpoint(s)" in result.output
+
+    body = json.loads(out.read_text(encoding="utf-8"))
+    assert body["usdmVersion"] == "4.0.0"
+    assert sum(len(o["endpoints"]) for o in body["objectives"]) == 5
+    assert '<usdm:tag name="measurement"/>' in body["objectives"][0]["endpoints"][0]["text"]
+
+
+def test_usdm_show_to_stdout_and_filtered_by_level(usdm_warehouse_path):
+    result = runner.invoke(
+        app,
+        ["usdm", "show", "NCT00000001", "--warehouse", usdm_warehouse_path, "--level", "primary"],
+    )
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.stdout)
+    assert len(body["objectives"]) == 1
+
+
+def test_usdm_show_rejects_an_unknown_envelope(usdm_warehouse_path):
+    result = runner.invoke(
+        app,
+        ["usdm", "show", "NCT00000001", "--warehouse", usdm_warehouse_path, "--envelope", "nope"],
+    )
+    assert result.exit_code == 2
+    assert "--envelope must be one of" in result.output
+
+
+def test_usdm_show_on_an_unpulled_trial_exits_nonzero(usdm_warehouse_path):
+    result = runner.invoke(
+        app, ["usdm", "show", "NCT09999999", "--warehouse", usdm_warehouse_path]
+    )
+    assert result.exit_code == 1
+    assert "NCT09999999" in result.output
+
+
+def test_usdm_coverage_reports_the_tier_mix(usdm_warehouse_path):
+    result = runner.invoke(app, ["usdm", "coverage", "--warehouse", usdm_warehouse_path])
+    assert result.exit_code == 0, result.output
+    assert "templated" in result.output and "verbatim" in result.output

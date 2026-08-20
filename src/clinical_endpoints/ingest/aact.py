@@ -7,6 +7,11 @@ import re
 
 import duckdb
 
+from clinical_endpoints.ingest.design import (
+    DESIGN_GROUPS_DDL,
+    STUDY_COLUMNS,
+)
+from clinical_endpoints.ingest.design import STUDIES_DDL as SHARED_STUDIES_DDL
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
 from clinical_endpoints.ingest.pull_log import write_pull_log
 from clinical_endpoints.ingest.upsert import ensure_table
@@ -19,17 +24,16 @@ SOURCE = "aact"
 SOURCE_TABLES = (
     "studies",
     "design_outcomes",
+    "design_groups",
     "conditions",
     "browse_conditions",
     "browse_interventions",
     "mesh_terms",
 )
 
-STUDIES_DDL = """
-    nct_id VARCHAR PRIMARY KEY, phase VARCHAR, overall_status VARCHAR, study_type VARCHAR,
-    start_date DATE, primary_completion_date DATE,
-    brief_title VARCHAR, official_title VARCHAR
-"""
+# Shared with the ctgov_api backend so both land the same shape -- see
+# ingest/design.py for the CDISC ct-gov_mapping.xlsx rows these columns serve.
+STUDIES_DDL = SHARED_STUDIES_DDL
 DESIGN_OUTCOMES_DDL = """
     nct_id VARCHAR, outcome_type VARCHAR, measure VARCHAR,
     time_frame VARCHAR, description VARCHAR, population VARCHAR
@@ -59,6 +63,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
 
     ensure_table(con, "studies", STUDIES_DDL)
     ensure_table(con, "design_outcomes", DESIGN_OUTCOMES_DDL)
+    ensure_table(con, "design_groups", DESIGN_GROUPS_DDL)
     ensure_table(con, "conditions", CONDITIONS_DDL)
     ensure_table(con, "browse_conditions", BROWSE_CONDITIONS_DDL)
     ensure_table(con, "browse_interventions", BROWSE_INTERVENTIONS_DDL)
@@ -75,8 +80,24 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         SELECT
             s.nct_id, s.phase, s.overall_status, s.study_type,
             s.start_date, s.primary_completion_date,
-            s.brief_title, s.official_title
+            s.brief_title, s.official_title,
+            d.intervention_model, d.primary_purpose, d.allocation, d.masking,
+            TRY_CAST(s.enrollment AS INTEGER) AS enrollment_count,
+            s.enrollment_type,
+            -- AACT stores this as free text ("Accepts Healthy Volunteers" / "No");
+            -- anything else stays NULL rather than guessing, because a wrong
+            -- includesHealthySubjects is a clinical claim, not a formatting slip.
+            CASE lower(trim(e.healthy_volunteers))
+                WHEN 'accepts healthy volunteers' THEN TRUE
+                WHEN 'yes' THEN TRUE
+                WHEN 'no' THEN FALSE
+                ELSE NULL
+            END AS healthy_volunteers,
+            e.gender, e.minimum_age, e.maximum_age,
+            e.population AS population_description
         FROM aact.ctgov.studies s
+        LEFT JOIN aact.ctgov.designs d ON d.nct_id = s.nct_id
+        LEFT JOIN aact.ctgov.eligibilities e ON e.nct_id = s.nct_id
         WHERE s.phase = ANY(?)
         {since_clause}
         ORDER BY s.start_date DESC
@@ -90,14 +111,10 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         INSERT INTO raw.studies
         SELECT * FROM _pulled_studies
         ON CONFLICT (nct_id) DO UPDATE SET
-            phase = excluded.phase,
-            overall_status = excluded.overall_status,
-            study_type = excluded.study_type,
-            start_date = excluded.start_date,
-            primary_completion_date = excluded.primary_completion_date,
-            brief_title = excluded.brief_title,
-            official_title = excluded.official_title
         """
+        + ",\n            ".join(
+            f"{column} = excluded.{column}" for column in STUDY_COLUMNS if column != "nct_id"
+        )
     )
 
     con.execute(
@@ -110,6 +127,17 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     )
     con.execute("DELETE FROM raw.design_outcomes WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)")
     con.execute("INSERT INTO raw.design_outcomes SELECT * FROM _pulled_outcomes")
+
+    con.execute(
+        """
+        CREATE OR REPLACE TEMP TABLE _pulled_design_groups AS
+        SELECT dg.nct_id, dg.group_type, dg.title, dg.description
+        FROM aact.ctgov.design_groups dg
+        JOIN _pulled_studies s USING (nct_id)
+        """
+    )
+    con.execute("DELETE FROM raw.design_groups WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)")
+    con.execute("INSERT INTO raw.design_groups SELECT * FROM _pulled_design_groups")
 
     con.execute(
         """
@@ -156,6 +184,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     row_counts = {
         "studies": con.execute("SELECT count(*) FROM _pulled_studies").fetchone()[0],
         "design_outcomes": con.execute("SELECT count(*) FROM _pulled_outcomes").fetchone()[0],
+        "design_groups": con.execute("SELECT count(*) FROM _pulled_design_groups").fetchone()[0],
         "conditions": con.execute("SELECT count(*) FROM _pulled_conditions").fetchone()[0],
         "browse_conditions": con.execute(
             "SELECT count(*) FROM _pulled_browse_conditions"

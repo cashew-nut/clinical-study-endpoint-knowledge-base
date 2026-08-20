@@ -22,6 +22,7 @@ def test_run_pull_lands_filtered_studies_and_outcomes(fake_aact_con):
     assert result["row_counts"] == {
         "studies": 2,
         "design_outcomes": 2,
+        "design_groups": 3,  # NCT001 has two arms, NCT002 one; NCT003 excluded (PHASE1)
         "conditions": 2,
         "browse_conditions": 3,  # NCT001 has two MeSH conditions, NCT002 one; NCT003 excluded (PHASE1)
         "browse_interventions": 2,
@@ -79,6 +80,7 @@ def test_run_pull_logs_every_invocation(fake_aact_con):
     assert set(source_tables) == {
         "studies",
         "design_outcomes",
+        "design_groups",
         "conditions",
         "browse_conditions",
         "browse_interventions",
@@ -87,6 +89,7 @@ def test_run_pull_logs_every_invocation(fake_aact_con):
     assert json.loads(row_counts) == {
         "studies": 2,
         "design_outcomes": 2,
+        "design_groups": 3,
         "conditions": 2,
         "browse_conditions": 3,
         "browse_interventions": 2,
@@ -176,3 +179,39 @@ def test_pull_mesh_terms_picks_up_a_populated_tree_number_column(fake_aact_con):
         "SELECT mesh_term, mesh_term_normalised, tree_number FROM raw.mesh_terms ORDER BY mesh_term"
     ).fetchall()
     assert ("Lung Neoplasms", "lung neoplasms", "C04.588.894") in rows
+
+
+def test_run_pull_lands_design_and_eligibility_columns(fake_aact_con):
+    """The study-level facts the USDM projection needs, per CDISC's
+    ct-gov_mapping.xlsx: a valid USDM Wrapper requires
+    StudyDesignPopulation.includesHealthySubjects and
+    InterventionalStudyDesign.model, and neither used to be collected."""
+    run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500, since=None))
+
+    rows = fake_aact_con.execute(
+        """
+        SELECT nct_id, intervention_model, primary_purpose, allocation, masking,
+               enrollment_count, enrollment_type, healthy_volunteers, gender,
+               minimum_age, maximum_age, population_description
+        FROM raw.studies ORDER BY nct_id
+        """
+    ).fetchall()
+    assert rows[0] == (
+        "NCT001", "Parallel Assignment", "Treatment", "Randomized", "Double",
+        480, "Actual", False, "All", "18 Years", "75 Years", "Adults with advanced NSCLC",
+    )
+    # AACT writes healthy_volunteers as free text; "Accepts Healthy Volunteers"
+    # normalises to True, and a missing maximum_age stays NULL.
+    assert rows[1][7] is True
+    assert rows[1][10] is None
+
+
+def test_run_pull_lands_arms_into_design_groups(fake_aact_con):
+    run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500, since=None))
+    assert fake_aact_con.execute(
+        "SELECT nct_id, group_type, title FROM raw.design_groups ORDER BY nct_id, title"
+    ).fetchall() == [
+        ("NCT001", "Active Comparator", "Chemotherapy"),
+        ("NCT001", "Experimental", "Pembrolizumab"),
+        ("NCT002", "Experimental", "Trastuzumab"),
+    ]

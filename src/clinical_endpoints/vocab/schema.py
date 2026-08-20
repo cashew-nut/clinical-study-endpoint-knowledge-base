@@ -41,7 +41,7 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         dimension="measurement",
         table="measurements",
         columns=(
-            "id", "label", "definition", "concept", "method", "domain",
+            "id", "label", "inline_label", "definition", "concept", "method", "domain",
             "default_direction", "event_polarity", "default_scale", "composite", "mcid", "notes",
         ),
         references={"default_direction": "direction", "default_scale": "scale"},
@@ -51,7 +51,7 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         filename="references.yaml",
         dimension="reference",
         table="references",
-        columns=("id", "label", "definition", "kind", "notes"),
+        columns=("id", "label", "inline_label", "definition", "kind", "notes"),
         list_references={"implies_form": "form"},
     ),
     DimensionSpec(
@@ -65,7 +65,7 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         filename="scales.yaml",
         dimension="scale",
         table="scales",
-        columns=("id", "label", "definition", "kind", "si_equivalent", "factor_to_si", "notes"),
+        columns=("id", "label", "inline_label", "definition", "kind", "si_equivalent", "factor_to_si", "notes"),
     ),
     DimensionSpec(
         filename="therapeutic_areas.yaml",
@@ -93,8 +93,17 @@ MAPPING_FILENAME = "ta_mesh_mapping.yaml"
 # one wrong measurement while making coverage look 23 points better.
 MATCHING_FILENAME = "matching.yaml"
 
+# usdm_templates.yaml is not a term list either: it is one syntax template per
+# form id, plus the derived-text templates for the two USDM attributes a
+# registry record never states (Endpoint.purpose, Objective.text). Loaded and
+# validated for the same reason matching.yaml is -- the templates decide what
+# every projected endpoint asserts, so a malformed one must fail the command
+# rather than surface as a broken sentence in a standards-conformant document.
+USDM_TEMPLATES_FILENAME = "usdm_templates.yaml"
+
 ALL_FILENAMES: tuple[str, ...] = (
-    tuple(d.filename for d in DIMENSIONS) + (MAPPING_FILENAME, MATCHING_FILENAME)
+    tuple(d.filename for d in DIMENSIONS)
+    + (MAPPING_FILENAME, MATCHING_FILENAME, USDM_TEMPLATES_FILENAME)
 )
 
 # Closed value sets for matching.yaml.
@@ -113,3 +122,19 @@ MEASUREMENT_DOMAINS = frozenset(
 )
 EVENT_POLARITIES = frozenset({"harm", "benefit"})
 REFERENCE_KINDS = frozenset({"time_origin", "value_reference", "external_standard"})
+
+# The closed set of tags a USDM syntax template may use. Each one has to be
+# resolvable to both a rendered value and a USDM instance to reference -- see
+# docs/USDM_ENDPOINTS_API_SPEC.md, "Tag catalogue" -- so this set cannot grow
+# without a home for the new tag's value in the projected document.
+#
+# The per-outcome analysis population is deliberately NOT a tag. It has no good
+# position in an endpoint sentence ("... at Week 16 in Safety population"), and
+# its real USDM home is Estimand.analysisPopulationId, which needs the estimand
+# work. It is still projected -- as an AnalysisPopulation on the study design,
+# linked from the endpoint's decomposition -- just not rendered into the text.
+USDM_TAGS = frozenset({"measurement", "concept", "reference", "timepoint", "threshold", "scale"})
+
+# Objective templates are keyed on endpoint level, plus the fallback used when
+# no endpoint at that level resolved a measurement.
+USDM_OBJECTIVE_KEYS = frozenset({"primary", "secondary", "exploratory", "_unresolved"})

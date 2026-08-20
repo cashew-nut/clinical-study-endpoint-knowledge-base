@@ -77,6 +77,7 @@ terms:
 
   - id: vital_status
     label: "Vital status (death from any cause)"
+    inline_label: "vital status"
     concept: survival
     method: clinical_event
     domain: efficacy
@@ -113,6 +114,7 @@ terms:
 
   - id: treatment_failure
     label: "Treatment failure / need for subsequent therapy"
+    inline_label: "treatment failure"
     concept: treatment_failure
     method: clinical_event
     domain: efficacy
@@ -198,6 +200,7 @@ terms:
 
   - id: six_minute_walk_distance
     label: "6-minute walk distance (6MWD)"
+    inline_label: "6-minute walk distance"
     concept: exercise_capacity
     method: field_exercise_test
     domain: efficacy
@@ -602,6 +605,7 @@ terms:
 
   - id: retinal_fluid
     label: "Retinal fluid (intraretinal / subretinal)"
+    inline_label: "retinal fluid"
     concept: retinal_fluid
     method: optical_coherence_tomography
     domain: efficacy
@@ -624,6 +628,7 @@ terms:
 
   - id: clinical_activity_score_ted
     label: "Clinical Activity Score (thyroid eye disease)"
+    inline_label: "the Clinical Activity Score"
     concept: orbital_inflammation
     method: clinician_rated_instrument
     domain: efficacy
@@ -835,6 +840,7 @@ terms:
   # =========================================================================
   - id: acr_response_composite
     label: "ACR response (joint count + composite)"
+    inline_label: "ACR response"
     concept: inflammatory_arthritis_activity
     method: composite_index
     domain: efficacy
@@ -865,6 +871,7 @@ terms:
 
   - id: asas_response
     label: "ASAS response (axial spondyloarthritis)"
+    inline_label: "ASAS response"
     concept: axial_spondyloarthritis_activity
     method: composite_index
     domain: efficacy
@@ -887,6 +894,7 @@ terms:
 
   - id: pain_intensity_nrs
     label: "Pain intensity (NRS / VAS)"
+    inline_label: "pain intensity"
     concept: pain_intensity
     method: patient_reported_instrument
     domain: patient_reported
@@ -1113,6 +1121,7 @@ terms:
 
   - id: sans_saps
     label: "SANS / SAPS"
+    inline_label: "SANS/SAPS"
     concept: schizophrenia_symptom_severity
     method: clinician_rated_instrument
     domain: efficacy
@@ -1178,6 +1187,7 @@ terms:
 
   - id: extrapyramidal_symptom_scale
     label: "Extrapyramidal symptom scales (AIMS / BARS / SAS)"
+    inline_label: "extrapyramidal symptom scale score"
     concept: extrapyramidal_symptoms
     method: clinician_rated_instrument
     domain: safety
@@ -1189,6 +1199,7 @@ terms:
 
   - id: global_functioning_scale
     label: "Global Functioning scales (role / social)"
+    inline_label: "Global Functioning scale score"
     concept: psychosocial_functioning
     method: clinician_rated_instrument
     domain: efficacy
@@ -1333,6 +1344,7 @@ terms:
 
   - id: transfusion_burden
     label: "Transfusion burden / transfusion independence"
+    inline_label: "transfusion burden"
     concept: transfusion_dependence
     method: clinical_event_count
     domain: efficacy
@@ -1425,6 +1437,7 @@ terms:
 
   - id: liver_enzymes
     label: "Liver enzymes (ALT / AST)"
+    inline_label: "liver enzymes"
     concept: hepatic_injury
     method: laboratory
     domain: safety
@@ -1604,6 +1617,7 @@ terms:
 
   - id: pk_half_life
     label: "Elimination half-life (t½)"
+    inline_label: "elimination half-life"
     concept: drug_disposition
     method: bioanalytical_assay
     domain: pharmacokinetic
@@ -1702,6 +1716,7 @@ terms:
 
   - id: sf36
     label: "SF-36 / SF-12"
+    inline_label: "SF-36"
     concept: health_related_quality_of_life
     method: patient_reported_instrument
     domain: patient_reported
@@ -1711,6 +1726,7 @@ terms:
 
   - id: fact_g
     label: "FACT-G / FACT subscales"
+    inline_label: "FACT-G"
     concept: health_related_quality_of_life
     method: patient_reported_instrument
     domain: patient_reported
@@ -1731,6 +1747,7 @@ terms:
 
   - id: patient_global_impression
     label: "Patient Global Impression (PGIS / PGIC)"
+    inline_label: "Patient Global Impression"
     concept: global_clinical_change
     method: patient_reported_instrument
     domain: patient_reported
@@ -1741,6 +1758,7 @@ terms:
 
   - id: health_related_quality_of_life_unspecified
     label: "Health-related quality of life (instrument unspecified)"
+    inline_label: "health-related quality of life"
     concept: health_related_quality_of_life
     method: patient_reported_instrument
     domain: patient_reported
@@ -1862,6 +1880,7 @@ terms:
 
   - id: digit_symbol_coding
     label: "Digit Symbol Coding / Symbol Digit Modalities Test"
+    inline_label: "Digit Symbol Coding"
     concept: cognitive_function
     method: performance_test
     domain: efficacy
@@ -1884,6 +1903,7 @@ terms:
   # that belongs in the review queue rather than being silently dropped.
   - id: surgical_margin_status
     label: "Surgical margin status (R0 / R1 / R2 resection)"
+    inline_label: "surgical margin status"
     concept: surgical_completeness
     method: pathology
     domain: efficacy
@@ -1898,6 +1918,7 @@ terms:
 
   - id: pathological_response
     label: "Pathological response to neoadjuvant therapy (pCR / MPR)"
+    inline_label: "pathological response"
     concept: tumour_response
     method: pathology
     domain: efficacy
@@ -1932,6 +1953,7 @@ terms:
 
   - id: treatment_adherence
     label: "Treatment adherence / compliance"
+    inline_label: "treatment adherence"
     concept: treatment_adherence
     method: derived
     domain: healthcare_utilisation

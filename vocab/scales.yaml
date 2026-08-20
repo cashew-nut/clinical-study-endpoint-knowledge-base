@@ -22,36 +22,42 @@ terms:
   # --- time ----------------------------------------------------------------
   - id: minutes
     label: "Minutes"
+    inline_label: "minutes"
     kind: time
     si_equivalent: hours
     factor_to_si: 0.016666667
     synonyms: ["minute", "minutes", "min", "mins"]
   - id: seconds
     label: "Seconds"
+    inline_label: "seconds"
     kind: time
     si_equivalent: hours
     factor_to_si: 0.00027777778
     synonyms: ["second", "seconds", "sec", "s"]
   - id: hours
     label: "Hours"
+    inline_label: "hours"
     kind: time
     si_equivalent: hours
     factor_to_si: 1
     synonyms: ["hour", "hours", "hr", "hrs", "h"]
   - id: days
     label: "Days"
+    inline_label: "days"
     kind: time
     si_equivalent: hours
     factor_to_si: 24
     synonyms: ["day", "days", "d"]
   - id: weeks
     label: "Weeks"
+    inline_label: "weeks"
     kind: time
     si_equivalent: hours
     factor_to_si: 168
     synonyms: ["week", "weeks", "wk", "wks"]
   - id: months
     label: "Months"
+    inline_label: "months"
     kind: time
     si_equivalent: hours
     factor_to_si: 730.5
@@ -62,6 +68,7 @@ terms:
       a unit, and belongs in the form's notes rather than here.
   - id: years
     label: "Years"
+    inline_label: "years"
     kind: time
     si_equivalent: hours
     factor_to_si: 8766
@@ -70,6 +77,7 @@ terms:
   # --- proportions and percentages -----------------------------------------
   - id: percentage_of_participants
     label: "Percentage of participants (%)"
+    inline_label: "%"
     kind: proportion
     si_equivalent: proportion
     factor_to_si: 0.01
@@ -82,6 +90,7 @@ terms:
     notes: "The fixed scale for responder_proportion, incidence_proportion, and event_free_rate_at_timepoint."
   - id: correlation_coefficient
     label: "Correlation coefficient (-1 to 1)"
+    inline_label: "correlation coefficient"
     kind: proportion
     si_equivalent: correlation_coefficient
     factor_to_si: 1
@@ -89,12 +98,14 @@ terms:
                "intraclass correlation coefficient", "ICC"]
   - id: proportion
     label: "Proportion (0-1)"
+    inline_label: "proportion"
     kind: proportion
     si_equivalent: proportion
     factor_to_si: 1
     synonyms: ["proportion", "fraction", "rate (0-1)"]
   - id: percentage
     label: "Percentage of a quantity (%)"
+    inline_label: "%"
     kind: proportion
     si_equivalent: proportion
     factor_to_si: 0.01
@@ -106,6 +117,7 @@ terms:
       denominator of people.
   - id: percent_predicted
     label: "Percent predicted (%)"
+    inline_label: "% predicted"
     kind: proportion
     si_equivalent: proportion
     factor_to_si: 0.01
@@ -113,22 +125,26 @@ terms:
     notes: "Pairs with the predicted_normal reference: the denominator is a population-normative value, not the participant's own."
   - id: percent_of_time
     label: "Percent of time (%)"
+    inline_label: "% of time"
     kind: proportion
     si_equivalent: proportion
     factor_to_si: 0.01
     synonyms: ["percentage of time", "percent of time", "time in range (%)", "percentage of days"]
   - id: percent_change
     label: "Percent change (%)"
+    inline_label: "%"
     kind: relative_change
     synonyms: ["percent change", "percentage change", "% change", "relative change (%)"]
   - id: ratio
     label: "Ratio (dimensionless)"
+    inline_label: "ratio"
     kind: relative_change
     synonyms: ["ratio", "fold change", "geometric mean ratio", "measured as ratio"]
 
   # --- scores --------------------------------------------------------------
   - id: score_points
     label: "Score points"
+    inline_label: "points"
     kind: score
     synonyms: ["points", "score", "total score", "score units", "rated from"]
     notes: >-
@@ -138,34 +154,41 @@ terms:
       rather than becoming a per-instrument vocabulary.
   - id: z_score
     label: "Z-score (SD units)"
+    inline_label: "z-score"
     kind: score
     synonyms: ["z-score", "z score", "standard deviation score", "SD score"]
   - id: t_score
     label: "T-score (mean 50, SD 10)"
+    inline_label: "t-score"
     kind: score
     synonyms: ["t-score", "t score", "PROMIS t-score"]
   - id: letters_etdrs
     label: "ETDRS letters"
+    inline_label: "ETDRS letters"
     kind: score
     synonyms: ["ETDRS letters", "letters", "letter score", "BCVA letters"]
     notes: "Ophthalmology visual acuity; 5 letters = 1 line on the ETDRS chart."
   - id: logmar
     label: "logMAR"
+    inline_label: "logMAR"
     kind: score
     synonyms: ["logMAR", "log MAR"]
     notes: "Inverse polarity to letters_etdrs -- lower logMAR is better vision."
   - id: steps_drss
     label: "DRSS steps"
+    inline_label: "DRSS steps"
     kind: score
     synonyms: ["steps", "DRSS steps", "step improvement"]
   - id: grade_ctcae
     label: "CTCAE grade"
+    inline_label: "CTCAE grade"
     kind: score
     synonyms: ["CTCAE grade", "grade", "toxicity grade", "NCI-CTCAE"]
 
   # --- volume, flow, distance ----------------------------------------------
   - id: litres
     label: "Litres (L)"
+    inline_label: "L"
     kind: volume
     si_equivalent: litres
     factor_to_si: 1
@@ -173,16 +196,19 @@ terms:
     notes: "The reference table's scale for FEV1 change-from-baseline."
   - id: millilitres
     label: "Millilitres (mL)"
+    inline_label: "mL"
     kind: volume
     si_equivalent: litres
     factor_to_si: 0.001
     synonyms: ["mL", "ml", "millilitre", "milliliter"]
   - id: litres_per_second
     label: "Litres per second (L/s)"
+    inline_label: "L/s"
     kind: flow
     synonyms: ["L/s", "L/sec", "litres per second"]
   - id: metres
     label: "Metres (m)"
+    inline_label: "m"
     kind: length
     si_equivalent: metres
     factor_to_si: 1
@@ -190,12 +216,14 @@ terms:
     notes: "6-minute walk distance."
   - id: centimetres
     label: "Centimetres (cm)"
+    inline_label: "cm"
     kind: length
     si_equivalent: metres
     factor_to_si: 0.01
     synonyms: ["cm", "centimetre", "centimeter"]
   - id: millimetres
     label: "Millimetres (mm)"
+    inline_label: "mm"
     kind: length
     si_equivalent: metres
     factor_to_si: 0.001
@@ -203,6 +231,7 @@ terms:
     notes: "Proptosis (exophthalmometry), lesion diameters, retinal thickness is µm."
   - id: micrometres
     label: "Micrometres (µm)"
+    inline_label: "µm"
     kind: length
     si_equivalent: metres
     factor_to_si: 0.000001
@@ -212,34 +241,41 @@ terms:
   # --- mass and body composition -------------------------------------------
   - id: kilograms
     label: "Kilograms (kg)"
+    inline_label: "kg"
     kind: mass
     si_equivalent: kilograms
     factor_to_si: 1
     synonyms: ["kg", "kilogram", "kilograms"]
   - id: kg_per_m2
     label: "kg/m² (BMI)"
+    inline_label: "kg/m²"
     kind: composite_unit
     synonyms: ["kg/m2", "kg/m^2", "kg/m²", "BMI units"]
   - id: percent_body_surface_area
     label: "% body surface area"
+    inline_label: "% BSA"
     kind: proportion
     synonyms: ["% BSA", "percent BSA", "body surface area (%)"]
 
   # --- pressure, rate, electrical ------------------------------------------
   - id: mmhg
     label: "Millimetres of mercury (mmHg)"
+    inline_label: "mmHg"
     kind: pressure
     synonyms: ["mmHg", "mm Hg", "millimetres of mercury"]
   - id: beats_per_minute
     label: "Beats per minute (bpm)"
+    inline_label: "bpm"
     kind: rate_per_minute
     synonyms: ["bpm", "beats per minute", "heart rate"]
   - id: breaths_per_minute
     label: "Breaths per minute"
+    inline_label: "breaths/min"
     kind: rate_per_minute
     synonyms: ["breaths per minute", "respiratory rate"]
   - id: milliseconds
     label: "Milliseconds (ms)"
+    inline_label: "ms"
     kind: time
     si_equivalent: hours
     factor_to_si: 0.00000027777778
@@ -249,6 +285,7 @@ terms:
   # --- concentrations and laboratory ---------------------------------------
   - id: percent_hba1c
     label: "% (HbA1c, NGSP)"
+    inline_label: "%"
     kind: concentration
     si_equivalent: mmol_per_mol
     synonyms: ["percent HbA1c", "NGSP %", "% (mmol/mol)", "NGSP"]
@@ -260,81 +297,99 @@ terms:
       factor, hence no factor_to_si here.
   - id: mmol_per_mol
     label: "mmol/mol (HbA1c, IFCC)"
+    inline_label: "mmol/mol"
     kind: concentration
     si_equivalent: mmol_per_mol
     synonyms: ["mmol/mol", "IFCC"]
   - id: mg_per_dl
     label: "mg/dL"
+    inline_label: "mg/dL"
     kind: concentration
     synonyms: ["mg/dL", "mg/dl", "milligrams per decilitre"]
   - id: mmol_per_l
     label: "mmol/L"
+    inline_label: "mmol/L"
     kind: concentration
     synonyms: ["mmol/L", "mmol/l", "millimoles per litre"]
   - id: g_per_dl
     label: "g/dL"
+    inline_label: "g/dL"
     kind: concentration
     synonyms: ["g/dL", "g/dl", "grams per decilitre"]
   - id: ng_per_ml
     label: "ng/mL"
+    inline_label: "ng/mL"
     kind: concentration
     synonyms: ["ng/mL", "ng/ml", "nanograms per millilitre"]
   - id: ug_per_ml
     label: "µg/mL"
+    inline_label: "µg/mL"
     kind: concentration
     synonyms: ["µg/mL", "ug/mL", "mcg/mL", "micrograms per millilitre"]
   - id: pg_per_ml
     label: "pg/mL"
+    inline_label: "pg/mL"
     kind: concentration
     synonyms: ["pg/mL", "pg/ml", "picograms per millilitre"]
   - id: units_per_l
     label: "U/L"
+    inline_label: "U/L"
     kind: concentration
     synonyms: ["U/L", "IU/L", "units per litre"]
   - id: copies_per_ml
     label: "copies/mL"
+    inline_label: "copies/mL"
     kind: concentration
     synonyms: ["copies/mL", "copies/ml", "viral load units"]
   - id: cells_per_ul
     label: "cells/µL"
+    inline_label: "cells/µL"
     kind: concentration
     synonyms: ["cells/µL", "cells/uL", "cells per microlitre", "/mm3"]
 
   # --- pharmacokinetics ----------------------------------------------------
   - id: ng_h_per_ml
     label: "ng·h/mL (AUC)"
+    inline_label: "ng·h/mL"
     kind: pk_exposure
     synonyms: ["ng*h/mL", "ng.h/mL", "ng·h/mL", "ng*hr/mL"]
   - id: litres_per_hour
     label: "L/h (clearance)"
+    inline_label: "L/h"
     kind: pk_clearance
     synonyms: ["L/h", "L/hr", "litres per hour", "clearance units"]
 
   # --- immunogenicity ------------------------------------------------------
   - id: titre
     label: "Titre (reciprocal dilution)"
+    inline_label: "titre"
     kind: immunogenicity
     synonyms: ["titer", "titre", "reciprocal dilution", "1:8", "rSBA titre"]
   - id: geometric_mean_titre
     label: "Geometric mean titre (GMT)"
+    inline_label: "GMT"
     kind: immunogenicity
     synonyms: ["GMT", "geometric mean titer", "geometric mean titre"]
   - id: geometric_mean_concentration
     label: "Geometric mean concentration (GMC)"
+    inline_label: "GMC"
     kind: immunogenicity
     synonyms: ["GMC", "geometric mean concentration"]
 
   # --- counts and rates ----------------------------------------------------
   - id: count
     label: "Count (events or participants)"
+    inline_label: "count"
     kind: count
     synonyms: ["count", "number", "number of events", "n"]
   - id: events_per_year
     label: "Events per person-year"
+    inline_label: "events per person-year"
     kind: rate
     synonyms: ["per year", "annualized rate", "annualised rate", "events per patient-year", "per person-year"]
   - id: count_per_period
     label: "Count per stated period"
+    inline_label: "count per period"
     kind: rate
     synonyms: ["per month", "per week", "per day", "per 28 days", "episodes per month"]
     notes: "Use when a denominator period is stated but is not a person-year, e.g. monthly migraine days."
@@ -342,18 +397,22 @@ terms:
   # --- other ---------------------------------------------------------------
   - id: mme
     label: "Morphine milligram equivalents (MME)"
+    inline_label: "MME"
     kind: dose_equivalent
     synonyms: ["MME", "morphine milligram equivalents", "morphine equivalent dose"]
   - id: kcal_per_day
     label: "kcal/day"
+    inline_label: "kcal/day"
     kind: energy
     synonyms: ["kcal/day", "kilocalories per day", "resting metabolic rate units"]
   - id: dimensionless
     label: "Dimensionless"
+    inline_label: "dimensionless"
     kind: other
     synonyms: ["unitless", "dimensionless", "index", "arbitrary units", "AU"]
   - id: not_stated
     label: "Scale not determinable"
+    inline_label: null
     kind: other
     definition: >-
       No unit is stated in the text and neither the form nor the measurement fixes

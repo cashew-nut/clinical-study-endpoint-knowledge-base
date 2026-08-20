@@ -29,6 +29,14 @@ from typing import Any, Optional
 import duckdb
 import requests
 
+from clinical_endpoints.ingest.design import (
+    DESIGN_GROUPS_COLUMNS,
+    DESIGN_GROUPS_DDL,
+    STUDIES_DDL,
+    STUDY_COLUMNS,
+    normalise_enrollment_count,
+    normalise_healthy_volunteers,
+)
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
 from clinical_endpoints.ingest.pull_log import write_pull_log
 from clinical_endpoints.ingest.upsert import ensure_table, replace_children, upsert_rows
@@ -43,6 +51,7 @@ SOURCE = "ctgov_api"
 SOURCE_TABLES = (
     "studies",
     "design_outcomes",
+    "design_groups",
     "conditions",
     "browse_conditions",
     "browse_interventions",
@@ -129,6 +138,8 @@ def _extract_study_row(study: dict) -> dict:
     ident = proto.get("identificationModule", {})
     status = proto.get("statusModule", {})
     design = proto.get("designModule", {})
+    eligibility = proto.get("eligibilityModule", {})
+    design_info = design.get("designInfo") or {}
     return {
         "nct_id": ident.get("nctId"),
         "phase": _join_phases(design.get("phases") or []),
@@ -140,7 +151,37 @@ def _extract_study_row(study: dict) -> dict:
         ),
         "brief_title": ident.get("briefTitle"),
         "official_title": ident.get("officialTitle"),
+        # Design and eligibility, per CDISC's ct-gov_mapping.xlsx -- see
+        # ingest/design.py for the field-by-field USDM targets.
+        "intervention_model": design_info.get("interventionModel"),
+        "primary_purpose": design_info.get("primaryPurpose"),
+        "allocation": design_info.get("allocation"),
+        "masking": _get_path(design_info, "maskingInfo", "masking"),
+        "enrollment_count": normalise_enrollment_count(
+            _get_path(design, "enrollmentInfo", "count")
+        ),
+        "enrollment_type": _get_path(design, "enrollmentInfo", "type"),
+        "healthy_volunteers": normalise_healthy_volunteers(eligibility.get("healthyVolunteers")),
+        "gender": eligibility.get("sex"),
+        "minimum_age": eligibility.get("minimumAge"),
+        "maximum_age": eligibility.get("maximumAge"),
+        "population_description": eligibility.get("studyPopulation"),
     }
+
+
+def _extract_arm_rows(study: dict) -> list[dict]:
+    """protocolSection.armsInterventionsModule.armGroups[] -> raw.design_groups."""
+    nct_id = _get_path(study, "protocolSection", "identificationModule", "nctId")
+    arms = _get_path(study, "protocolSection", "armsInterventionsModule", "armGroups") or []
+    return [
+        {
+            "nct_id": nct_id,
+            "group_type": arm.get("type"),
+            "title": arm.get("label"),
+            "description": arm.get("description"),
+        }
+        for arm in arms
+    ]
 
 
 def _extract_outcome_rows(study: dict) -> list[dict]:
@@ -230,6 +271,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
 
     studies: list[dict] = []
     outcomes_by_nct: dict[str, list[dict]] = {}
+    arms_by_nct: dict[str, list[dict]] = {}
     conditions_by_nct: dict[str, list[dict]] = {}
     browse_conditions_by_nct: dict[str, list[dict]] = {}
     browse_interventions_by_nct: dict[str, list[dict]] = {}
@@ -256,6 +298,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
             seen_nct_ids.add(nct_id)
             studies.append(row)
             outcomes_by_nct[nct_id] = _extract_outcome_rows(study)
+            arms_by_nct[nct_id] = _extract_arm_rows(study)
             conditions_by_nct[nct_id] = _extract_condition_rows(study)
             browse_conditions_by_nct[nct_id] = _extract_mesh_rows(
                 study, module="conditionBrowseModule", mesh_type="condition"
@@ -273,6 +316,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     studies = studies[: filters.limit]
     kept_nct_ids = [s["nct_id"] for s in studies]
     outcomes = [o for s in studies for o in outcomes_by_nct.get(s["nct_id"], [])]
+    arms = [a for nct_id in kept_nct_ids for a in arms_by_nct.get(nct_id, [])]
     conditions = [c for nct_id in kept_nct_ids for c in conditions_by_nct.get(nct_id, [])]
     browse_conditions = [
         m for nct_id in kept_nct_ids for m in browse_conditions_by_nct.get(nct_id, [])
@@ -284,36 +328,13 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         b for nct_id in kept_nct_ids for b in condition_branches_by_nct.get(nct_id, [])
     ]
 
-    ensure_table(
-        con,
-        "studies",
-        """
-        nct_id VARCHAR PRIMARY KEY, phase VARCHAR, overall_status VARCHAR, study_type VARCHAR,
-        start_date DATE, primary_completion_date DATE,
-        brief_title VARCHAR, official_title VARCHAR
-        """,
-    )
+    ensure_table(con, "studies", STUDIES_DDL)
     upsert_rows(
         con,
         "studies",
-        [
-            "nct_id", "phase", "overall_status", "study_type",
-            "start_date", "primary_completion_date", "brief_title", "official_title",
-        ],
+        list(STUDY_COLUMNS),
         ["nct_id"],
-        [
-            (
-                s["nct_id"],
-                s["phase"],
-                s["overall_status"],
-                s["study_type"],
-                s["start_date"],
-                s["primary_completion_date"],
-                s["brief_title"],
-                s["official_title"],
-            )
-            for s in studies
-        ],
+        [tuple(s.get(column) for column in STUDY_COLUMNS) for s in studies],
     )
 
     ensure_table(
@@ -334,6 +355,16 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
             (o["nct_id"], o["outcome_type"], o["measure"], o["time_frame"], o["description"], o["population"])
             for o in outcomes
         ],
+    )
+
+    ensure_table(con, "design_groups", DESIGN_GROUPS_DDL)
+    replace_children(
+        con,
+        "design_groups",
+        list(DESIGN_GROUPS_COLUMNS),
+        "nct_id",
+        kept_nct_ids,
+        [tuple(a.get(c) for c in DESIGN_GROUPS_COLUMNS) for a in arms],
     )
 
     ensure_table(con, "conditions", "nct_id VARCHAR, name VARCHAR")
@@ -397,6 +428,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     row_counts = {
         "studies": len(studies),
         "design_outcomes": len(outcomes),
+        "design_groups": len(arms),
         "conditions": len(conditions),
         "browse_conditions": len(browse_conditions),
         "browse_interventions": len(browse_interventions),

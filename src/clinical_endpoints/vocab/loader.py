@@ -39,6 +39,9 @@ from clinical_endpoints.vocab.schema import (
     CASCADE_FIELDS,
     MEASUREMENT_DOMAINS,
     REFERENCE_KINDS,
+    USDM_OBJECTIVE_KEYS,
+    USDM_TAGS,
+    USDM_TEMPLATES_FILENAME,
     VOCAB_DIRNAME,
     DimensionSpec,
 )
@@ -89,6 +92,7 @@ def load_vocab(vocab_dir: Path | str) -> dict[str, Any]:
         docs[spec.dimension] = _read_yaml(vocab_dir / spec.filename)
     docs["ta_mesh_mapping"] = _read_yaml(vocab_dir / MAPPING_FILENAME)
     docs["matching"] = _read_yaml(vocab_dir / MATCHING_FILENAME)
+    docs["usdm_templates"] = _read_yaml(vocab_dir / USDM_TEMPLATES_FILENAME)
     return docs
 
 
@@ -128,6 +132,9 @@ def validate_vocab(docs: dict[str, Any]) -> ValidationResult:
     _validate_timepoints(docs["timepoint_pattern"], ids, result)
     _validate_ta_mesh_mapping(docs["ta_mesh_mapping"], ids, result)
     _validate_matching(docs["matching"], ids, result)
+    if docs.get("usdm_templates") is not None:
+        _validate_usdm_templates(docs["usdm_templates"], docs["form"], ids, result)
+        _warn_missing_inline_labels(docs, result)
     return result
 
 
@@ -450,6 +457,163 @@ def _validate_ta_mesh_mapping(doc: dict, ids: dict[str, set[str]], result: Valid
 
 # --------------------------------------------------------------- persistence
 
+
+def _validate_usdm_templates(
+    doc: dict, forms_doc: dict, ids: dict[str, set[str]], result: ValidationResult
+) -> None:
+    """Check usdm_templates.yaml: one template per form, valid grammar, tags in
+    the closed set, and a `{threshold}` wherever forms.yaml says the form
+    expects one.
+
+    A form with neither a template nor `verbatim: true` is an error rather than
+    a warning: it would silently start rendering as raw registry text, which is
+    exactly the kind of quiet degradation that is invisible downstream.
+    """
+    from clinical_endpoints.usdm.templates import TemplateError, all_tags, parse_template, required_tags
+
+    where = USDM_TEMPLATES_FILENAME
+    if not isinstance(doc.get("version"), int):
+        result.error(where, "`version` must be an integer")
+
+    entries = doc.get("templates")
+    if not isinstance(entries, list) or not entries:
+        result.error(where, "`templates` must be a non-empty list")
+        return
+
+    form_ids = ids.get("form", set())
+    expects_threshold = {
+        t["id"]: bool(t.get("expects_threshold")) for t in forms_doc.get("terms") or [] if t.get("id")
+    }
+    reference_ids = ids.get("reference", set())
+
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            result.error(where, "template entry is not a mapping")
+            continue
+        form_id = entry.get("form")
+        if form_id not in form_ids:
+            result.error(where, f"template for {form_id!r}, which is not a form id")
+            continue
+        if form_id in seen:
+            result.error(where, f"{form_id}: more than one template")
+        seen.add(form_id)
+
+        fallback = entry.get("reference_fallback")
+        if fallback is not None and fallback not in reference_ids:
+            result.error(where, f"{form_id}: reference_fallback {fallback!r} is not a reference id")
+
+        if entry.get("verbatim"):
+            if entry.get("template"):
+                result.error(where, f"{form_id}: has both `verbatim: true` and a `template`")
+            continue
+
+        template = entry.get("template")
+        if not isinstance(template, str) or not template.strip():
+            result.error(where, f"{form_id}: missing `template` (or set `verbatim: true`)")
+            continue
+        try:
+            parts = parse_template(template)
+        except TemplateError as exc:
+            result.error(where, f"{form_id}: {exc}")
+            continue
+
+        tags = all_tags(parts)
+        unknown = sorted(set(tags) - USDM_TAGS)
+        if unknown:
+            result.error(where, f"{form_id}: unknown tag(s) {unknown}, not in {sorted(USDM_TAGS)}")
+        if not required_tags(parts):
+            result.error(
+                where,
+                f"{form_id}: no required tag -- the template would render identically "
+                "for every endpoint of this form",
+            )
+        if expects_threshold.get(form_id) and "threshold" not in tags:
+            result.error(
+                where,
+                f"{form_id}: forms.yaml marks it expects_threshold, but the template has no "
+                "{threshold} tag",
+            )
+        if len(template) > 200:
+            result.warn(where, f"{form_id}: template is {len(template)} characters")
+
+    missing = sorted(form_ids - seen)
+    if missing:
+        result.error(
+            where,
+            f"no template and no `verbatim: true` for form(s) {missing} -- they would "
+            "silently render as raw registry text",
+        )
+
+    purposes = doc.get("purpose_by_domain") or {}
+    for key in purposes:
+        if key != "_default" and key not in MEASUREMENT_DOMAINS:
+            result.error(where, f"purpose_by_domain key {key!r} is not a measurement domain")
+    for domain in sorted(MEASUREMENT_DOMAINS - set(purposes)):
+        result.warn(where, f"purpose_by_domain has no entry for domain {domain!r}")
+    if "_default" not in purposes:
+        result.error(where, "purpose_by_domain has no `_default`")
+
+    objectives = doc.get("objective_templates") or {}
+    unknown_levels = sorted(set(objectives) - USDM_OBJECTIVE_KEYS)
+    if unknown_levels:
+        result.error(where, f"objective_templates has unknown key(s) {unknown_levels}")
+    for key in sorted(USDM_OBJECTIVE_KEYS - set(objectives)):
+        result.error(where, f"objective_templates has no entry for {key!r}")
+    for key, template in objectives.items():
+        if key == "_unresolved":
+            continue
+        try:
+            parts = parse_template(template)
+        except TemplateError as exc:
+            result.error(where, f"objective_templates.{key}: {exc}")
+            continue
+        if all_tags(parts) != ("concept_list",):
+            result.error(
+                where,
+                f"objective_templates.{key}: expected exactly one {{concept_list}} tag",
+            )
+
+
+def _warn_missing_inline_labels(docs: dict[str, Any], result: ValidationResult) -> None:
+    """Warn where a tag-reachable term has no `inline_label` and a `label` that
+    will not read as a sentence fragment ("First dose / start of treatment")."""
+    for dimension, filename in (
+        ("reference", "references.yaml"),
+        ("scale", "scales.yaml"),
+        ("measurement", "measurements.yaml"),
+    ):
+        doc = docs.get(dimension)
+        if not doc:
+            continue
+        for term in doc.get("terms") or []:
+            if "inline_label" in term:
+                continue
+            label = term.get("label") or ""
+            if not _label_is_sentence_safe(label):
+                result.warn(
+                    filename,
+                    f"{term.get('id')}: no `inline_label` and `label` {label!r} will not read "
+                    "as a sentence fragment when a template renders it",
+                )
+
+
+#: A parenthetical that is a bare abbreviation -- "(PASI)", "(HbA1c)" -- reads
+#: fine inside a sentence and is how clinical prose introduces an instrument. One
+#: carrying a unit, a range or several words -- "(%)", "(0-1)", "(SD units)" --
+#: does not.
+_BARE_ABBREVIATION = re.compile(r"^\([A-Za-z][A-Za-z0-9.\-]*\)$")
+
+
+def _label_is_sentence_safe(label: str) -> bool:
+    if "/" in label:
+        return False
+    for match in re.finditer(r"\([^()]*\)", label):
+        if not _BARE_ABBREVIATION.match(match.group(0)):
+            return False
+    return True
+
+
 _LONG_TABLES = (
     ("synonyms", "dimension VARCHAR, term_id VARCHAR, synonym VARCHAR, synonym_normalised VARCHAR"),
     ("patterns", "dimension VARCHAR, term_id VARCHAR, pattern VARCHAR, pattern_role VARCHAR, ordinal INTEGER"),
@@ -486,6 +650,12 @@ _LONG_TABLES = (
     ("matching_settings", "key VARCHAR, value VARCHAR"),
     ("matching_cascade", "dimension VARCHAR, ordinal INTEGER, field VARCHAR, match_method VARCHAR, fallback_value VARCHAR"),
     ("matching_confidence_floor", "match_method VARCHAR, confidence DOUBLE"),
+    # usdm_templates.yaml -- one syntax template per form, plus the derived-text
+    # templates for the two USDM attributes a registry record never states.
+    ("usdm_templates", "form_id VARCHAR, template VARCHAR, verbatim BOOLEAN, reference_fallback VARCHAR, required_tags VARCHAR[], all_tags VARCHAR[]"),
+    ("usdm_purposes", "domain VARCHAR, purpose VARCHAR"),
+    ("usdm_objective_templates", "level VARCHAR, template VARCHAR"),
+    ("usdm_settings", "key VARCHAR, value VARCHAR"),
 )
 
 
@@ -671,7 +841,52 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
     counts["form_disambiguation"] = len(form_disambiguation)
 
     counts.update(_write_matching_tables(con, docs["matching"]))
+    if docs.get("usdm_templates") is not None:
+        counts.update(_write_usdm_tables(con, docs["usdm_templates"]))
     return counts
+
+
+def _write_usdm_tables(con: duckdb.DuckDBPyConnection, doc: dict[str, Any]) -> dict[str, int]:
+    """Persist usdm_templates.yaml, with each template's tags pre-computed.
+
+    The parse happens once, here, rather than per request in the projection --
+    same reason matching.yaml is persisted rather than re-parsed: the warehouse
+    is the contract the downstream code reads.
+    """
+    from clinical_endpoints.usdm.templates import all_tags, parse_template, required_tags
+
+    templates: list[tuple] = []
+    for entry in doc.get("templates") or []:
+        template = entry.get("template")
+        if entry.get("verbatim") or not template:
+            templates.append((entry.get("form"), None, True, None, [], []))
+            continue
+        parts = parse_template(template)
+        templates.append(
+            (
+                entry.get("form"),
+                template,
+                False,
+                entry.get("reference_fallback"),
+                list(required_tags(parts)),
+                list(dict.fromkeys(all_tags(parts))),
+            )
+        )
+
+    purposes = [(k, v) for k, v in (doc.get("purpose_by_domain") or {}).items()]
+    objectives = [(k, v) for k, v in (doc.get("objective_templates") or {}).items()]
+    settings = [("concept_list_limit", str(doc.get("concept_list_limit", 3)))]
+
+    _insert(con, "vocab.usdm_templates", 6, templates)
+    _insert(con, "vocab.usdm_purposes", 2, purposes)
+    _insert(con, "vocab.usdm_objective_templates", 2, objectives)
+    _insert(con, "vocab.usdm_settings", 2, settings)
+    return {
+        "usdm_templates": len(templates),
+        "usdm_purposes": len(purposes),
+        "usdm_objective_templates": len(objectives),
+        "usdm_settings": len(settings),
+    }
 
 
 def _write_matching_tables(con: duckdb.DuckDBPyConnection, matching: dict[str, Any]) -> dict[str, int]:

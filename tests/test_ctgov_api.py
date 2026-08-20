@@ -91,6 +91,19 @@ def test_extract_study_row_pads_month_precision_dates():
         "primary_completion_date": "2024-06-15",
         "brief_title": "NCT001 brief",
         "official_title": "NCT001 official",
+        # Design and eligibility columns: absent from this minimal fixture, so
+        # every one stays None rather than being invented.
+        "intervention_model": None,
+        "primary_purpose": None,
+        "allocation": None,
+        "masking": None,
+        "enrollment_count": None,
+        "enrollment_type": None,
+        "healthy_volunteers": None,
+        "gender": None,
+        "minimum_age": None,
+        "maximum_age": None,
+        "population_description": None,
     }
 
 
@@ -203,6 +216,7 @@ def test_run_pull_lands_conditions_and_mesh_tables(tmp_path, monkeypatch):
     assert result["row_counts"] == {
         "studies": 1,
         "design_outcomes": 0,
+        "design_groups": 0,
         "conditions": 1,
         "browse_conditions": 1,
         "browse_interventions": 1,
@@ -249,6 +263,7 @@ def test_run_pull_lands_studies_sorted_desc_and_logs(tmp_path, monkeypatch):
     expected_row_counts = {
         "studies": 2,
         "design_outcomes": 1,
+        "design_groups": 0,
         "conditions": 0,
         "browse_conditions": 0,
         "browse_interventions": 0,

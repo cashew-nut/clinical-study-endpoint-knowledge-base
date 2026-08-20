@@ -355,3 +355,59 @@ reference to an id that does not exist, a `match_precedence` that has drifted
 out of step with its terms, tied precedence or priority values, and a value
 outside a closed set (`direction_rule`, `domain`, `event_polarity`, reference
 `kind`).
+
+---
+
+## `usdm_templates.yaml` and `inline_label`
+
+Added with the USDM 4.0 endpoints projection
+(`docs/USDM_ENDPOINTS_API_SPEC.md`). Two changes touch this vocabulary.
+
+### One syntax template per form
+
+`usdm_templates.yaml` is not a term list. It holds one sentence frame per
+`forms.yaml` id, because form is already defined here as "what kind of number
+is this endpoint", independent of what is measured -- which is a sentence frame
+written out:
+
+```yaml
+- form: change_from_baseline
+  template: "Change from {reference} in {measurement}[ {timepoint}][ ({scale})]"
+  reference_fallback: patient_baseline
+```
+
+`{tag}` is a slot filled from a conformed endpoint's dimensions; `[ ... ]` is
+dropped whole when a tag inside it did not resolve. A tag outside brackets is
+required, and a form whose required tags do not resolve renders verbatim rather
+than as half a sentence. `vocab validate` rejects a form with neither a
+template nor `verbatim: true`, a tag outside the closed set, a template with no
+required tag, and a missing `{threshold}` on a form that declares
+`expects_threshold`.
+
+The file also carries `purpose_by_domain` (USDM requires `Endpoint.purpose`; no
+registry record states one, so it is derived from the measurement's `domain`)
+and `objective_templates` (USDM hangs endpoints off objectives; registry
+records have none).
+
+### `inline_label`: the sentence-fragment form of a term
+
+A term's `label` is a *display* label, written for a review table. Several read
+wrong inside a generated sentence:
+
+```
+'First dose / start of treatment'      -> 'the start of treatment'
+'Percentage of participants (%)'       -> '%'
+'No reference (absolute quantity)'     -> null
+```
+
+So `references.yaml`, `scales.yaml` and `measurements.yaml` carry an optional
+`inline_label`, and a renderer uses it in preference to `label`. `null` means
+the term has no sentence form at all -- `references.yaml`'s `none` and
+`not_stated` name the *absence* of a reference, and printing "Change from No
+reference (absolute quantity) in FEV1" is worse than dropping the phrase.
+
+`vocab validate` warns where a tag-reachable term has no `inline_label` and a
+`label` that will not read as a fragment: one containing a slash, or a
+parenthetical that is not a bare abbreviation. `Glycated haemoglobin (HbA1c)`
+passes; `Ratio (dimensionless)` does not. That check found 50 terms on its
+first run, all now curated.

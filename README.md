@@ -76,17 +76,21 @@ uv run endpoints review list          # what landed in the review queue, and why
 
 `graph build`, `query`, and `export` are stubbed pending step 4.
 
-**Proposed, not implemented.** Two design specs are written but unscheduled --
-decide against them or schedule them, but nothing in the tree implements
-either:
+**USDM 4.0 endpoints API:** `endpoints usdm show <NCT_ID>` projects a trial's
+endpoints into CDISC USDM 4.0, and `endpoints serve` exposes the same thing
+over HTTP as `GET /v4/studies/{nctId}/endpoints`. Each endpoint's `text` is a
+*syntax template* -- `<p>Change from <usdm:tag name="reference"/> in
+<usdm:tag name="measurement"/> ...</p>` -- whose tags resolve, through the
+endpoint's own `SyntaxTemplateDictionary`, into the controlled vocabularies;
+the registry string is kept verbatim in `description`, so the projection is
+auditable. See [`docs/USDM_ENDPOINTS_API_SPEC.md`](docs/USDM_ENDPOINTS_API_SPEC.md)
+for the design and [Projecting to USDM 4.0](#projecting-to-usdm-40) below for
+how to run it.
 
-* [`docs/COMPOSITE_ENDPOINTS_SPEC.md`](docs/COMPOSITE_ENDPOINTS_SPEC.md) --
-  decomposing composite endpoints into their components, and why that is the
-  one structure worth a recursive relation.
-* [`docs/USDM_ENDPOINTS_API_SPEC.md`](docs/USDM_ENDPOINTS_API_SPEC.md) -- a
-  read-only CDISC USDM 4.0 projection of the endpoints module, keyed on NCT
-  id, in which each form supplies a syntax template and the vocabularies fill
-  its tags through a `SyntaxTemplateDictionary`.
+**Proposed, not implemented.** One design spec is written but unscheduled --
+[`docs/COMPOSITE_ENDPOINTS_SPEC.md`](docs/COMPOSITE_ENDPOINTS_SPEC.md),
+decomposing composite endpoints into their components, and why that is the one
+structure worth a recursive relation. Nothing in the tree implements it.
 
 ## Setup
 
@@ -204,6 +208,7 @@ vocabulary review round two against an unbiased sample of 13,542 outcome rows:
 | `timepoint_patterns.yaml` | 11 | `time_frame` categories + extraction regexes |
 | `ta_mesh_mapping.yaml` | -- | MeSH condition/intervention -> TA |
 | `matching.yaml` | -- | how all of the above are matched |
+| `usdm_templates.yaml` | 18 | one USDM syntax template per form |
 
 ```bash
 uv run endpoints vocab validate               # check, then write vocab.* tables
@@ -253,6 +258,40 @@ A". `vocab_review_coverage.csv` (or `<out>_coverage.csv`) reports, per field,
 what fraction of rows the kept values actually account for -- machine-readable,
 so the next vocabulary round can diff it against this one.
 
+## Projecting to USDM 4.0
+
+```bash
+# Every endpoint in one trial, as a USDM 4.0 endpoints module
+uv run endpoints usdm show NCT04162249
+
+# A full USDM Wrapper instead, and to a file
+uv run endpoints usdm show NCT04162249 --envelope wrapper -o study.json
+
+# Just the primary endpoints, flat
+uv run endpoints usdm show NCT04162249 --level primary --flatten
+
+# How much of the corpus renders as a fully parameterized template
+uv run endpoints usdm coverage
+
+# Serve it (needs the optional extra: uv sync --extra serve)
+uv run endpoints serve --port 8000
+curl localhost:8000/v4/studies/NCT04162249/endpoints
+```
+
+Every row in `raw.design_outcomes` becomes exactly one USDM `Endpoint`, at one
+of three fidelity tiers -- `templated` (every required tag resolved), `partial`
+(an optional group dropped, or the form was `not_stated`), or `verbatim` (the
+registry string passed through, for rows `conform` sent to the review queue).
+A trial whose endpoints did not conform is a trial whose endpoints render less
+richly, never one that appears to have fewer of them.
+
+Templates live in [`vocab/usdm_templates.yaml`](vocab/usdm_templates.yaml), one
+per form id, and are validated by `endpoints vocab validate` along with
+everything else. Objectives and `Endpoint.purpose` are absent from registry
+records, so both are derived from the vocabulary and flagged `derived` in
+`extensionAttributes`; the wrapper envelope names every attribute it had to
+default in `provenance.synthesized[]`.
+
 ## Querying the warehouse directly
 
 The warehouse (`warehouse.duckdb`, gitignored, created on first `pull`) is a
@@ -299,9 +338,11 @@ step 4) -- the `duckdb` CLI above works today as the escape hatch.
 
 ```
 vocab/            controlled vocabularies (YAML) -- see vocab/README.md
+                  (including usdm_templates.yaml, one syntax template per form)
 src/clinical_endpoints/
   db.py           DuckDB connection + AACT attach
   ingest/
+    design.py     study-level design/eligibility columns both backends land
     filters.py    shared PullFilters / phase normalization
     pull_log.py   shared raw._pull_log writer
     aact.py       AACT backend
@@ -312,6 +353,7 @@ src/clinical_endpoints/
     loader.py     `vocab validate`: parse, validate, write vocab.* tables
   ta/
     resolver.py   MeSH condition/intervention -> therapeutic area (pull --ta, ta diff-tree)
+  usdm/           CDISC USDM 4.0 projection: templates, tags, ids, envelopes, FastAPI app
   conform/        normalize / syntactic rules / semantic fallback / threshold+timepoint parsers (step 3)
   graph/          node/edge materialization (step 4)
   cli/            `endpoints` CLI
