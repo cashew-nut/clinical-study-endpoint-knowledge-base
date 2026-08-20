@@ -8,13 +8,14 @@ import re
 import duckdb
 
 from clinical_endpoints.ingest.design import (
+    DESIGN_GROUPS_COLUMNS,
     DESIGN_GROUPS_DDL,
     STUDY_COLUMNS,
 )
 from clinical_endpoints.ingest.design import STUDIES_DDL as SHARED_STUDIES_DDL
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
 from clinical_endpoints.ingest.pull_log import write_pull_log
-from clinical_endpoints.ingest.upsert import ensure_table
+from clinical_endpoints.ingest.upsert import SchemaReconciler
 
 SOURCE = "aact"
 
@@ -43,6 +44,16 @@ BROWSE_CONDITIONS_DDL = (
     "nct_id VARCHAR, mesh_term VARCHAR, mesh_term_normalised VARCHAR, mesh_type VARCHAR"
 )
 BROWSE_INTERVENTIONS_DDL = BROWSE_CONDITIONS_DDL
+
+# Every INSERT below names these rather than relying on `SELECT *`, which binds
+# by position: AACT is an upstream database whose tables carry columns this
+# project doesn't model (ctgov.design_outcomes leads with its own `id`), and a
+# positional insert makes the pull depend on that column list never changing.
+DESIGN_OUTCOMES_COLUMNS = (
+    "nct_id", "outcome_type", "measure", "time_frame", "description", "population",
+)
+CONDITIONS_COLUMNS = ("nct_id", "name")
+BROWSE_COLUMNS = ("nct_id", "mesh_term", "mesh_term_normalised", "mesh_type")
 MESH_TERMS_DDL = (
     "mesh_term VARCHAR, mesh_term_normalised VARCHAR, tree_number VARCHAR, "
     "PRIMARY KEY (mesh_term, tree_number)"
@@ -61,12 +72,14 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     """
     aact_phases = normalize_phases(list(filters.phases))
 
-    ensure_table(con, "studies", STUDIES_DDL)
-    ensure_table(con, "design_outcomes", DESIGN_OUTCOMES_DDL)
-    ensure_table(con, "design_groups", DESIGN_GROUPS_DDL)
-    ensure_table(con, "conditions", CONDITIONS_DDL)
-    ensure_table(con, "browse_conditions", BROWSE_CONDITIONS_DDL)
-    ensure_table(con, "browse_interventions", BROWSE_INTERVENTIONS_DDL)
+    schema = SchemaReconciler(con)
+    schema.ensure("studies", STUDIES_DDL)
+    schema.ensure("design_outcomes", DESIGN_OUTCOMES_DDL)
+    schema.ensure("design_groups", DESIGN_GROUPS_DDL)
+    schema.ensure("conditions", CONDITIONS_DDL)
+    schema.ensure("browse_conditions", BROWSE_CONDITIONS_DDL)
+    schema.ensure("browse_interventions", BROWSE_INTERVENTIONS_DDL)
+    schema.ensure("mesh_terms", MESH_TERMS_DDL)
 
     since_clause = "AND s.start_date >= ?" if filters.since else ""
     params: list = [aact_phases]
@@ -108,8 +121,8 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
 
     con.execute(
         """
-        INSERT INTO raw.studies
-        SELECT * FROM _pulled_studies
+        INSERT INTO raw.studies (""" + ", ".join(STUDY_COLUMNS) + """)
+        SELECT """ + ", ".join(STUDY_COLUMNS) + """ FROM _pulled_studies
         ON CONFLICT (nct_id) DO UPDATE SET
         """
         + ",\n            ".join(
@@ -119,14 +132,14 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
 
     con.execute(
         """
-        CREATE OR REPLACE TEMP TABLE _pulled_outcomes AS
-        SELECT outcomes.*
+        CREATE OR REPLACE TEMP TABLE _pulled_design_outcomes AS
+        SELECT """ + ", ".join(f"outcomes.{c}" for c in DESIGN_OUTCOMES_COLUMNS) + """
         FROM aact.ctgov.design_outcomes AS outcomes
         JOIN _pulled_studies s USING (nct_id)
         """
     )
     con.execute("DELETE FROM raw.design_outcomes WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)")
-    con.execute("INSERT INTO raw.design_outcomes SELECT * FROM _pulled_outcomes")
+    con.execute(_insert_pulled("design_outcomes", DESIGN_OUTCOMES_COLUMNS))
 
     con.execute(
         """
@@ -137,7 +150,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         """
     )
     con.execute("DELETE FROM raw.design_groups WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)")
-    con.execute("INSERT INTO raw.design_groups SELECT * FROM _pulled_design_groups")
+    con.execute(_insert_pulled("design_groups", DESIGN_GROUPS_COLUMNS))
 
     con.execute(
         """
@@ -148,7 +161,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         """
     )
     con.execute("DELETE FROM raw.conditions WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)")
-    con.execute("INSERT INTO raw.conditions SELECT * FROM _pulled_conditions")
+    con.execute(_insert_pulled("conditions", CONDITIONS_COLUMNS))
 
     con.execute(
         """
@@ -162,7 +175,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     con.execute(
         "DELETE FROM raw.browse_conditions WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)"
     )
-    con.execute("INSERT INTO raw.browse_conditions SELECT * FROM _pulled_browse_conditions")
+    con.execute(_insert_pulled("browse_conditions", BROWSE_COLUMNS))
 
     con.execute(
         """
@@ -176,14 +189,14 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     con.execute(
         "DELETE FROM raw.browse_interventions WHERE nct_id IN (SELECT nct_id FROM _pulled_studies)"
     )
-    con.execute("INSERT INTO raw.browse_interventions SELECT * FROM _pulled_browse_interventions")
+    con.execute(_insert_pulled("browse_interventions", BROWSE_COLUMNS))
 
     has_tree_numbers, mesh_terms_count = _pull_mesh_terms(con)
 
     pulled_nct_ids = [row[0] for row in con.execute("SELECT nct_id FROM _pulled_studies").fetchall()]
     row_counts = {
         "studies": con.execute("SELECT count(*) FROM _pulled_studies").fetchone()[0],
-        "design_outcomes": con.execute("SELECT count(*) FROM _pulled_outcomes").fetchone()[0],
+        "design_outcomes": con.execute("SELECT count(*) FROM _pulled_design_outcomes").fetchone()[0],
         "design_groups": con.execute("SELECT count(*) FROM _pulled_design_groups").fetchone()[0],
         "conditions": con.execute("SELECT count(*) FROM _pulled_conditions").fetchone()[0],
         "browse_conditions": con.execute(
@@ -207,7 +220,13 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         "row_counts": row_counts,
         "has_mesh_tree_numbers": has_tree_numbers,
         "nct_ids": pulled_nct_ids,
+        "migrations": schema.changes,
     }
+
+
+def _insert_pulled(table: str, columns: tuple[str, ...]) -> str:
+    names = ", ".join(columns)
+    return f"INSERT INTO raw.{table} ({names}) SELECT {names} FROM _pulled_{table}"
 
 
 _TREE_NUMBER_COLUMN_RE = re.compile(r"tree.?number", re.IGNORECASE)
@@ -222,8 +241,8 @@ def _pull_mesh_terms(con: duckdb.DuckDBPyConnection) -> tuple[bool, int]:
     C/F branch structure without ever being checked against a live join (this
     build sandbox is egress-blocked from AACT). Rather than hardcode a column
     name we can't verify, this introspects `ctgov.mesh_terms`'s real columns
-    at pull time and adapts -- or, if there's nothing usable, ensures the
-    (correctly shaped) raw.mesh_terms table exists without touching it and
+    at pull time and adapts -- or, if there's nothing usable, leaves the
+    (already-ensured, correctly shaped) raw.mesh_terms table untouched and
     reports `has_tree_numbers=False`, so the TA resolver degrades to the
     descriptor/regex layers instead of silently joining on a made-up column.
 
@@ -232,8 +251,6 @@ def _pull_mesh_terms(con: duckdb.DuckDBPyConnection) -> tuple[bool, int]:
     AACT database today regardless of its column names -- see
     vocab/ta_mesh_mapping.yaml's `caveats` block.
     """
-    ensure_table(con, "mesh_terms", MESH_TERMS_DDL)
-
     columns = {
         row[0]
         for row in con.execute(
@@ -261,8 +278,8 @@ def _pull_mesh_terms(con: duckdb.DuckDBPyConnection) -> tuple[bool, int]:
     )
     con.execute(
         """
-        INSERT INTO raw.mesh_terms
-        SELECT * FROM _pulled_mesh_terms
+        INSERT INTO raw.mesh_terms (mesh_term, mesh_term_normalised, tree_number)
+        SELECT mesh_term, mesh_term_normalised, tree_number FROM _pulled_mesh_terms
         ON CONFLICT (mesh_term, tree_number) DO UPDATE SET
             mesh_term_normalised = excluded.mesh_term_normalised
         """

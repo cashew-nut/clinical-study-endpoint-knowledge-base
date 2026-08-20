@@ -215,3 +215,33 @@ def test_run_pull_lands_arms_into_design_groups(fake_aact_con):
         ("NCT001", "Experimental", "Pembrolizumab"),
         ("NCT002", "Experimental", "Trastuzumab"),
     ]
+
+
+def test_run_pull_migrates_a_warehouse_left_by_the_pre_upsert_release(fake_aact_con):
+    """The reported failure, end to end: a raw.studies created by the release
+    that used `CREATE OR REPLACE TABLE ... AS SELECT` has no PRIMARY KEY, so the
+    upsert's ON CONFLICT could not bind against it."""
+    fake_aact_con.execute(
+        """
+        CREATE TABLE raw.studies AS
+        SELECT 'NCT_OLD' AS nct_id, 'Phase 2' AS phase, 'Completed' AS overall_status,
+               'Interventional' AS study_type, DATE '2020-01-01' AS start_date,
+               NULL::DATE AS primary_completion_date,
+               'landed by an earlier pull' AS brief_title, 'official' AS official_title
+        """
+    )
+
+    result = run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
+
+    assert [c.table for c in result["migrations"]] == ["studies"]
+    assert result["migrations"][0].added_key == ("nct_id",)
+    # The point of migrating rather than refreshing: the earlier pull survives.
+    assert [
+        r[0]
+        for r in fake_aact_con.execute("SELECT nct_id FROM raw.studies ORDER BY nct_id").fetchall()
+    ] == ["NCT001", "NCT002", "NCT_OLD"]
+
+
+def test_run_pull_needs_no_migration_on_a_warehouse_it_built_itself(fake_aact_con):
+    run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
+    assert run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))["migrations"] == []

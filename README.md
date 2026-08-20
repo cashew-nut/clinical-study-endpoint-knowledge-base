@@ -158,6 +158,29 @@ with the same filters refreshes those studies in place, re-running it with
 different filters accumulates alongside what's already there, and the pull
 history in `raw._pull_log` accumulates across runs either way.
 
+A warehouse outlives the release that built it, so `pull` also reconciles each
+`raw.*` table against the schema the current code declares, and reports what it
+had to do:
+
+```
+Migrated raw.studies: added 11 columns (intervention_model, primary_purpose,
+allocation, masking, +7 more); added PRIMARY KEY (nct_id) -- 4,812 rows preserved
+```
+
+Migration, not a refresh: dropping and re-pulling would discard every study
+landed by an earlier pull with different filters, which is exactly what
+upserting exists to prevent. Rows that violate a newly declared key (duplicates,
+NULLs) are dropped and counted in that line; columns the current schema no
+longer declares are dropped and named. Where the rows cannot be carried across
+at all -- a value that will not cast, or no key column to key them by -- `pull`
+stops and says so rather than choosing for you, leaving the table untouched:
+
+```
+raw.studies has 4,812 rows but no nct_id column, so they cannot be keyed by the
+PRIMARY KEY (nct_id) the current schema declares. Inspect the table and drop it
+once you're satisfied nothing in it is worth keeping, then re-run the pull.
+```
+
 ```bash
 # Once vocab validate has loaded the TA mapping, pull can filter by it
 uv run endpoints vocab validate
@@ -345,6 +368,7 @@ src/clinical_endpoints/
     design.py     study-level design/eligibility columns both backends land
     filters.py    shared PullFilters / phase normalization
     pull_log.py   shared raw._pull_log writer
+    upsert.py     raw.* schema reconciliation + upsert/replace-children helpers
     aact.py       AACT backend
     ctgov_api.py  ClinicalTrials.gov API v2 backend (default)
   vocab/

@@ -39,7 +39,7 @@ from clinical_endpoints.ingest.design import (
 )
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
 from clinical_endpoints.ingest.pull_log import write_pull_log
-from clinical_endpoints.ingest.upsert import ensure_table, replace_children, upsert_rows
+from clinical_endpoints.ingest.upsert import SchemaReconciler, replace_children, upsert_rows
 
 API_BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
 SOURCE = "ctgov_api"
@@ -328,7 +328,8 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         b for nct_id in kept_nct_ids for b in condition_branches_by_nct.get(nct_id, [])
     ]
 
-    ensure_table(con, "studies", STUDIES_DDL)
+    schema = SchemaReconciler(con)
+    schema.ensure("studies", STUDIES_DDL)
     upsert_rows(
         con,
         "studies",
@@ -337,8 +338,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         [tuple(s.get(column) for column in STUDY_COLUMNS) for s in studies],
     )
 
-    ensure_table(
-        con,
+    schema.ensure(
         "design_outcomes",
         """
         nct_id VARCHAR, outcome_type VARCHAR, measure VARCHAR,
@@ -357,7 +357,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         ],
     )
 
-    ensure_table(con, "design_groups", DESIGN_GROUPS_DDL)
+    schema.ensure("design_groups", DESIGN_GROUPS_DDL)
     replace_children(
         con,
         "design_groups",
@@ -367,7 +367,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         [tuple(a.get(c) for c in DESIGN_GROUPS_COLUMNS) for a in arms],
     )
 
-    ensure_table(con, "conditions", "nct_id VARCHAR, name VARCHAR")
+    schema.ensure("conditions", "nct_id VARCHAR, name VARCHAR")
     replace_children(
         con,
         "conditions",
@@ -377,8 +377,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         [(c["nct_id"], c["name"]) for c in conditions],
     )
 
-    ensure_table(
-        con,
+    schema.ensure(
         "browse_conditions",
         "nct_id VARCHAR, mesh_term VARCHAR, mesh_term_normalised VARCHAR, mesh_type VARCHAR",
     )
@@ -394,8 +393,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         ],
     )
 
-    ensure_table(
-        con,
+    schema.ensure(
         "browse_interventions",
         "nct_id VARCHAR, mesh_term VARCHAR, mesh_term_normalised VARCHAR, mesh_type VARCHAR",
     )
@@ -411,8 +409,7 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
         ],
     )
 
-    ensure_table(
-        con,
+    schema.ensure(
         "browse_condition_branches",
         "nct_id VARCHAR, branch_abbrev VARCHAR, branch_name VARCHAR",
     )
@@ -437,4 +434,9 @@ def run_pull(con: duckdb.DuckDBPyConnection, filters: PullFilters) -> dict:
     log_entry = write_pull_log(
         con, source=SOURCE, filters=filters.as_dict(), row_counts=row_counts, source_tables=SOURCE_TABLES
     )
-    return {**log_entry, "row_counts": row_counts, "nct_ids": kept_nct_ids}
+    return {
+        **log_entry,
+        "row_counts": row_counts,
+        "nct_ids": kept_nct_ids,
+        "migrations": schema.changes,
+    }

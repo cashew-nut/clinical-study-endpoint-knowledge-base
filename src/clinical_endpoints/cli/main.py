@@ -26,6 +26,7 @@ from clinical_endpoints.ingest import aact as aact_backend
 from clinical_endpoints.ingest import ctgov_api as ctgov_api_backend
 from clinical_endpoints.ingest.ctgov_api import CtgovApiError
 from clinical_endpoints.ingest.filters import PullFilters
+from clinical_endpoints.ingest.upsert import SchemaMigrationError
 from clinical_endpoints.usdm.codes import UnknownOutcomeType
 from clinical_endpoints.usdm.envelope import module_envelope, wrapper_envelope
 from clinical_endpoints.usdm.project import (
@@ -190,11 +191,27 @@ def pull(
                 }
                 result["row_counts"] = filter_raw_tables_by_nct_ids(con, set(result["nct_ids"]), keep)
                 ta_summary = run_ta_resolution(con)  # re-derive the distribution for the kept studies only
+    except SchemaMigrationError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
     finally:
         con.close()
+
+    # A migration rewrites tables the operator already had; say so rather than
+    # letting rows quietly change shape underneath them.
+    migrations = result.get("migrations", [])
+    for change in migrations:
+        console.print(f"[yellow]Migrated {change.describe()}[/yellow]")
+    if any(change.added and change.rows_kept for change in migrations):
+        # Migration backfills NULL, not data: the new columns are only populated
+        # for studies this pull actually touched.
+        console.print(
+            "[yellow]New columns are NULL for studies landed by earlier pulls -- "
+            "re-run `pull` covering them to fill in.[/yellow]"
+        )
 
     console.print(
         f"[green]Pull {result['pull_id']} complete[/green] "

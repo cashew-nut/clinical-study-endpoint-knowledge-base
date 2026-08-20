@@ -377,3 +377,34 @@ def test_run_pull_retries_transient_5xx_then_succeeds(tmp_path, monkeypatch):
     result = run_pull(con, PullFilters(phases=("3",), limit=500))
     assert result["row_counts"]["studies"] == 1
     con.close()
+
+
+def test_run_pull_migrates_a_warehouse_left_by_the_pre_upsert_release(tmp_path, monkeypatch):
+    """`endpoints pull` against a warehouse from an earlier release used to die
+    with a binder error: raw.studies predated both the PRIMARY KEY the upsert
+    binds on and the design/eligibility columns the USDM projection needs."""
+    responses = [FakeResponse(200, {"studies": [_make_study("NCT002", ["PHASE3"], "2024-01-01")]})]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    con.execute(
+        """
+        CREATE TABLE raw.studies AS
+        SELECT 'NCT_OLD' AS nct_id, 'Phase 2' AS phase, 'Completed' AS overall_status,
+               'Interventional' AS study_type, DATE '2020-01-01' AS start_date,
+               NULL::DATE AS primary_completion_date,
+               'landed by an earlier pull' AS brief_title, 'official' AS official_title
+        """
+    )
+
+    result = run_pull(con, PullFilters(phases=("3",), limit=10))
+
+    assert [c.table for c in result["migrations"]] == ["studies"]
+    assert result["migrations"][0].added_key == ("nct_id",)
+    assert [
+        r[0] for r in con.execute("SELECT nct_id FROM raw.studies ORDER BY nct_id").fetchall()
+    ] == ["NCT002", "NCT_OLD"]
+    assert con.execute(
+        "SELECT brief_title FROM raw.studies WHERE nct_id = 'NCT_OLD'"
+    ).fetchone() == ("landed by an earlier pull",)
+    con.close()

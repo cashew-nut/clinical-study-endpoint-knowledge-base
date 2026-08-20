@@ -352,3 +352,52 @@ def test_usdm_coverage_reports_the_tier_mix(usdm_warehouse_path):
     result = runner.invoke(app, ["usdm", "coverage", "--warehouse", usdm_warehouse_path])
     assert result.exit_code == 0, result.output
     assert "templated" in result.output and "verbatim" in result.output
+
+
+def test_pull_reports_a_schema_migration(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse = tmp_path / "wh.duckdb"
+    con = duckdb.connect(str(warehouse))
+    con.execute("CREATE SCHEMA raw")
+    con.execute(
+        """
+        CREATE TABLE raw.studies AS
+        SELECT 'NCT_OLD' AS nct_id, 'Phase 2' AS phase, 'Completed' AS overall_status,
+               'Interventional' AS study_type, DATE '2020-01-01' AS start_date,
+               NULL::DATE AS primary_completion_date, 'brief' AS brief_title,
+               'official' AS official_title
+        """
+    )
+    con.close()
+
+    monkeypatch.setattr(
+        ctgov_api.requests, "get", lambda *a, **k: _FakeResponse([_make_study("NCT001", "2024-01-01")])
+    )
+    result = runner.invoke(app, ["pull", "--phase", "3", "--warehouse", str(warehouse)])
+
+    assert result.exit_code == 0, result.output
+    assert "Migrated raw.studies" in result.output
+    assert "added PRIMARY KEY (nct_id)" in result.output
+    assert "1 row preserved" in result.output
+
+
+def test_pull_refuses_a_table_it_cannot_migrate(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse = tmp_path / "wh.duckdb"
+    con = duckdb.connect(str(warehouse))
+    con.execute("CREATE SCHEMA raw")
+    con.execute("CREATE TABLE raw.studies AS SELECT 'brief' AS brief_title")
+    con.close()
+
+    monkeypatch.setattr(
+        ctgov_api.requests, "get", lambda *a, **k: _FakeResponse([_make_study("NCT001", "2024-01-01")])
+    )
+    result = runner.invoke(app, ["pull", "--phase", "3", "--warehouse", str(warehouse)])
+
+    assert result.exit_code == 1
+    assert "no nct_id column" in result.output
+    con = duckdb.connect(str(warehouse))
+    try:  # refused, not silently dropped
+        assert con.execute("SELECT * FROM raw.studies").fetchall() == [("brief",)]
+    finally:
+        con.close()
