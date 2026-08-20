@@ -26,6 +26,8 @@ from dataclasses import dataclass
 
 import duckdb
 
+from clinical_endpoints.db import bulk_insert
+
 #: raw.* table and column names are literals in this codebase, never user input.
 #: Checked anyway because these get interpolated into DDL, where a bound
 #: parameter isn't available.
@@ -243,14 +245,21 @@ def upsert_rows(
     UNIQUE constraint on `key_columns` (see `ensure_table`'s DDL)."""
     if not rows:
         return
+    # An INSERT ... ON CONFLICT cannot update the same key twice within one
+    # statement (DuckDB, like Postgres, rejects that) -- deduplicate on
+    # `key_columns` first, keeping the last occurrence, so a caller that (like
+    # the single-row executemany this replaced) relied on "later rows win"
+    # still gets that behaviour.
+    key_indexes = [columns.index(k) for k in key_columns]
+    deduped: dict[tuple, tuple] = {}
+    for row in rows:
+        deduped[tuple(row[i] for i in key_indexes)] = row
+    rows = list(deduped.values())
+
     update_cols = [c for c in columns if c not in key_columns]
     set_clause = ", ".join(f"{c} = excluded.{c}" for c in update_cols)
-    placeholders = ", ".join(["?"] * len(columns))
-    sql = (
-        f"INSERT INTO raw.{table} ({', '.join(columns)}) VALUES ({placeholders}) "
-        f"ON CONFLICT ({', '.join(key_columns)}) DO UPDATE SET {set_clause}"
-    )
-    con.executemany(sql, rows)
+    on_conflict = f"ON CONFLICT ({', '.join(key_columns)}) DO UPDATE SET {set_clause}"
+    bulk_insert(con, f"raw.{table}", columns, rows, on_conflict=on_conflict)
 
 
 def replace_children(
@@ -267,9 +276,4 @@ def replace_children(
     touched."""
     if key_values:
         con.execute(f"DELETE FROM raw.{table} WHERE {key_column} = ANY(?)", [list(key_values)])
-    if not rows:
-        return
-    placeholders = ", ".join(["?"] * len(columns))
-    con.executemany(
-        f"INSERT INTO raw.{table} ({', '.join(columns)}) VALUES ({placeholders})", rows
-    )
+    bulk_insert(con, f"raw.{table}", columns, rows)

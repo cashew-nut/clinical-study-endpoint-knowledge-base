@@ -11,6 +11,14 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "requests>=2.31.0",
     "pyyaml>=6.0",
+    # Bulk-loading raw/conformed rows through an Arrow table instead of
+    # DuckDB's scalar parameter binding (db.py's `bulk_insert`) -- with
+    # neither pyarrow nor pandas installed, DuckDB's Python client re-probes
+    # for them on every bound value, and a failed `import` isn't cached by
+    # CPython, so that probe re-walks the whole of sys.path per value. That
+    # made executemany-based inserts the dominant cost of both `pull` and
+    # `conform` on any real-sized warehouse.
+    "pyarrow>=15.0.0",
 ]
 
 [project.optional-dependencies]

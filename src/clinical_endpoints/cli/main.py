@@ -13,6 +13,16 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 from rich.table import Table
 
 from clinical_endpoints.conform.pipeline import run_conform
@@ -65,6 +75,37 @@ app.add_typer(ta_app, name="ta")
 app.add_typer(usdm_app, name="usdm")
 
 USDM_ENVELOPES = ("module", "wrapper")
+
+
+def _determinate_progress() -> Progress:
+    """A progress bar for work with a known total (row/step counts). Disabled
+    outright when stdout isn't a terminal (e.g. under the test runner), so it
+    never litters captured output with redraws."""
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+        transient=True,
+        disable=not console.is_terminal,
+    )
+
+
+def _indeterminate_progress() -> Progress:
+    """A progress bar for work with no knowable total up front (paginating an
+    API until it stops handing back pages)."""
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+        disable=not console.is_terminal,
+    )
 
 
 def _not_yet_implemented(command: str, instead: str) -> None:
@@ -169,10 +210,28 @@ def pull(
             except (MissingAactCredentialsError, AactConnectionError) as exc:
                 console.print(f"[red]{exc}[/red]")
                 raise typer.Exit(code=1) from exc
-            result = aact_backend.run_pull(con, filters)
+            with _determinate_progress() as progress:
+                task = progress.add_task("Pulling from AACT...", total=len(aact_backend.PULL_STEPS))
+
+                def on_step(step_name: str, index: int, total: int) -> None:
+                    progress.update(task, completed=index, description=f"Pulling from AACT: {step_name}")
+
+                result = aact_backend.run_pull(con, filters, on_step=on_step)
         else:
             try:
-                result = ctgov_api_backend.run_pull(con, filters)
+                with _indeterminate_progress() as progress:
+                    task = progress.add_task("Pulling from ClinicalTrials.gov API...", total=None)
+
+                    def on_page(page_index: int, studies_collected: int) -> None:
+                        progress.update(
+                            task,
+                            description=(
+                                f"Pulling from ClinicalTrials.gov API: page {page_index}, "
+                                f"{studies_collected} studies collected"
+                            ),
+                        )
+
+                    result = ctgov_api_backend.run_pull(con, filters, on_page=on_page)
             except CtgovApiError as exc:
                 console.print(f"[red]{exc}[/red]")
                 raise typer.Exit(code=1) from exc
@@ -438,6 +497,14 @@ def conform(
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
+    jobs: int = typer.Option(
+        0,
+        "--jobs",
+        "-j",
+        help="Worker processes for the row-conforming step. 0 (default) = auto: parallelize "
+        "across all CPUs once there's enough work to be worth it, serial otherwise. "
+        "1 forces serial.",
+    ),
 ) -> None:
     """Normalize -> syntactic rules -> semantic fallback -> review queue.
     Reads raw.design_outcomes + vocab.*, writes conformed.endpoints and
@@ -446,16 +513,23 @@ def conform(
     con = connect(warehouse)
     try:
         try:
-            result = run_conform(con)
+            with _determinate_progress() as progress:
+                task = progress.add_task("Conforming design_outcomes...", total=None)
+
+                def on_progress(done: int, total: int) -> None:
+                    progress.update(task, completed=done, total=total)
+
+                result = run_conform(con, jobs=jobs, on_progress=on_progress)
         except ValueError as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=1) from exc
     finally:
         con.close()
 
+    workers_note = f" ({result['workers']} worker processes)" if result.get("workers", 1) > 1 else ""
     console.print(
         f"[green]Conformed {result['rows_conformed']} of {result['total_rows']} row(s)[/green] "
-        f"-> conformed.endpoints; {result['rows_queued']} -> conformed.review_queue"
+        f"-> conformed.endpoints; {result['rows_queued']} -> conformed.review_queue{workers_note}"
     )
 
 

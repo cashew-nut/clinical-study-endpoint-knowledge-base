@@ -7,10 +7,13 @@ output). See docs/USAGE.md, "The warehouse".
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 from pathlib import Path
+from typing import Optional
 
 import duckdb
+import pyarrow as pa
 from dotenv import load_dotenv
 
 DEFAULT_WAREHOUSE_PATH = Path("warehouse.duckdb")
@@ -82,3 +85,58 @@ def attach_aact(con: duckdb.DuckDBPyConnection, *, alias: str = "aact") -> None:
             "  4. Confirm your AACT registration is fully approved -- check for a "
             "confirmation email, not just the signup form."
         ) from exc
+
+
+def _infer_arrow_type(values: list) -> pa.DataType:
+    """One column's pyarrow type, from its first non-NULL value -- every
+    column `bulk_insert` is ever asked to load is homogeneous (one dataclass
+    field), so the first value that isn't NULL settles it. `bool` is checked
+    before `int` because `bool` is a Python `int` subclass. A column that is
+    NULL in every row of this batch falls back to string(); DuckDB casts a
+    NULL of any Arrow type to whatever the target column declares, so the
+    fallback type only matters when there's an actual value to carry."""
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            return pa.bool_()
+        if isinstance(value, int):
+            return pa.int64()
+        if isinstance(value, float):
+            return pa.float64()
+        if isinstance(value, dt.datetime):
+            return pa.timestamp("us")
+        return pa.string()
+    return pa.string()
+
+
+def bulk_insert(
+    con: duckdb.DuckDBPyConnection,
+    table: str,
+    columns: list[str],
+    rows: list[tuple],
+    *,
+    on_conflict: Optional[str] = None,
+) -> None:
+    """Load `rows` into `table` (schema-qualified, e.g. "raw.studies") via a
+    zero-copy Arrow table rather than `execute`/`executemany`'s scalar
+    parameter binding -- see the `pyarrow` entry in pyproject.toml's
+    `dependencies` for why that binding path is worth avoiding here.
+
+    `on_conflict`, if given, is appended verbatim after the SELECT (e.g.
+    "ON CONFLICT (nct_id) DO UPDATE SET title = excluded.title") -- like
+    `table` and `columns`, always one of this codebase's own hardcoded
+    strings, never external input, so building it into the SQL text is safe
+    the same way the DDL-building elsewhere in this codebase already is.
+    """
+    if not rows:
+        return
+    columns_by_name = {name: [row[i] for row in rows] for i, name in enumerate(columns)}
+    arrow_table = pa.table(
+        {name: pa.array(values, type=_infer_arrow_type(values)) for name, values in columns_by_name.items()}
+    )
+    cols_sql = ", ".join(columns)
+    sql = f"INSERT INTO {table} ({cols_sql}) SELECT {cols_sql} FROM arrow_table"
+    if on_conflict:
+        sql += f" {on_conflict}"
+    con.execute(sql)
