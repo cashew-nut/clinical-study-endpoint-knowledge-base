@@ -43,10 +43,11 @@ class _FakeResponse:
         return self._json
 
 
-def test_help_lists_full_planned_interface():
+def test_help_lists_the_command_surface():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for command in ("pull", "vocab", "conform", "review", "graph", "query", "export"):
+    for command in ("pull", "vocab", "conform", "review", "ta", "usdm", "serve",
+                    "query", "export"):
         assert command in result.output
 
 

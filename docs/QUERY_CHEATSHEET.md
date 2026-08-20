@@ -1,9 +1,10 @@
 # Query cheat sheet
 
 One page of copy-pasteable SQL for `warehouse.duckdb` once you've run the
-pipeline. Everything here is read-only, ad hoc querying -- `endpoints query`/
-`export` (build-order step 4) will be thin passthroughs to the same
-connection; this is the escape hatch that works today.
+pipeline. Everything here is read-only, ad hoc querying. (`endpoints query` and
+`endpoints export` are declared but not implemented -- see
+[`USAGE.md`](USAGE.md#not-implemented); the `duckdb` CLI below is what works
+today.)
 
 ## Run the pipeline first
 
@@ -108,13 +109,12 @@ GROUP BY 1, 2, 3 ORDER BY 4 DESC;
 ## Cross-study comparability
 
 The reason the warehouse exists: which studies measured the same thing a
-different way. These were the motivating questions for a separate graph
-projection (implementation plan §6); they are all joins on `conformed.endpoints`
-and its foreign keys, so they live here as SQL rather than as a node/edge
-encoding of the same facts. See
-[`docs/COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) for the one
-relation in this domain that a graph *would* serve better, and why it is not
-built yet.
+different way. Every one of these is a join on `conformed.endpoints` and its
+foreign keys -- which is why they live here as SQL rather than as a separate
+node/edge encoding of the same facts. See
+[`COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) for the one
+relation in this domain that recursion *would* serve better, and why it is not
+built.
 
 **Read the caveat below first.** These comparisons only see rows that conformed,
 which is a biased subset.

@@ -1,8 +1,14 @@
 # Design spec: event semantics for time-to-event endpoints
 
-Status: **implemented.** Written after the first validation of the USDM
-projection against a live pull (NCT01777919, 2026-08-20) and an external USDM
-review of that payload. The defect it fixes surfaced on the first trial tried,
+> **Status: implemented** through phase C — `vocab/events.yaml`,
+> `vocab/named_endpoints.yaml`, event resolution in
+> `src/clinical_endpoints/conform/`, and the `{event}` tag in the USDM
+> projection. Phase D is deliberately unscheduled; see
+> [Phasing](#phasing).
+
+Written after the first validation of the USDM projection against a live pull
+(NCT01777919, 2026-08-20) and an external USDM review of that payload. The
+defect it fixes surfaced on the first trial tried,
 is systematic rather than incidental, and affects the clinical correctness of
 every time-to-event endpoint the warehouse serves.
 
@@ -502,23 +508,25 @@ conform work does not wait on it; the template flip does.
 
 ## Phasing
 
-**Phase A — vocabulary only.** `events.yaml`, `named_endpoints.yaml`,
+**Phase A — vocabulary only. Built.** `events.yaml`, `named_endpoints.yaml`,
 `implies_event` on the event-shaped measurements, `event_family` on the six
 forms, `response_onset` in `references.yaml`, the synonym migration out of
 `measurements.yaml`, and every validator rule below. Runs entirely in this
 sandbox; `vocab validate` green is the exit.
 
-**Phase B — conform.** Step 0, event resolution, the new
+**Phase B — conform. Built.** Step 0, event resolution, the new
 `conformed.endpoints` columns, event-first direction. Exit: the zero-churn
 and direction-regression assertions green on the fixture corpus.
 
-**Phase C — projection.** The `{event}` tag and its surrogate, the three
+**Phase C — projection. Built.** The `{event}` tag and its surrogate, the three
 template changes, the degraded frame, always-minted measurement surrogates,
-objectives from event concepts, `/v4/vocab/event/…`. **Gated on the event
-coverage measurement from a real pull** (point 2 above): the template flip
-ships only once event coverage on event-family rows supports it.
+objectives from event concepts, `/v4/vocab/event/…`. The template flip shipped
+on the fixture corpus; the **event coverage measurement it was gated on**
+(point 2 above) is still owed, and needs the first environment that can pull.
+If coverage on event-family rows turns out weak outside the named-endpoint
+head, the answer is an events review round — not loosening the degraded frame.
 
-**Phase D — extensions, evidence-scheduled.** `{event}` in the
+**Phase D — extensions, evidence-scheduled. Not built.** `{event}` in the
 incidence/count/rate templates; named endpoints beyond time-to-event (the
 ORR family); the `free_phrase` refinement. Each on measured need, none
 blocking A–C.
@@ -597,7 +605,7 @@ composite spec's job.
    unchanged, but the value is lower — those sentences are not wrong today,
    merely thresholdless. Schedule on evidence.
 
-## What NOT to do
+## Standing constraints
 
 * **Do not regrain `measurements.yaml` to event level.** The PFS↔ORR
   same-measurement pair is the point of the current grain; the event is a new

@@ -1,8 +1,8 @@
 # The vocabularies
 
 One YAML file per dimension, plus the MeSH mapping and the matching contract.
-Built during build-order step 2 and revised in vocabulary review round two
-against an unbiased sample of 13,542 outcome rows. This file records the schema,
+Revised in vocabulary review round two against an unbiased sample of 13,542
+outcome rows. This file records the schema,
 the judgment calls, and the things a reviewer should push back on.
 
 ```
@@ -87,9 +87,9 @@ same-measurement-different-form triple.
 
 `PASI` and `sPGA` are separate measurements (different instruments) sharing no
 id, but both carry a concept — `psoriasis_severity` and
-`skin_disease_global_severity`. The graph layer can build
-`SAME_MEASUREMENT_DIFFERENT_FORM` from `id` and a `SAME_CONCEPT` edge from
-`concept` with no extra vocabulary. If concept later needs its own definitions
+`skin_disease_global_severity`. "Same measurement, different form" is then a
+`GROUP BY id` and "same concept, different instrument" a `GROUP BY concept`,
+with no extra vocabulary. If concept later needs its own definitions
 and synonyms, promoting it to `concepts.yaml` is additive — the join key already
 exists.
 
@@ -241,8 +241,8 @@ and "progression", assigning **9.8% of every outcome row in the corpus** to
 indication. `alt` and `ast` matched inside "Health" and "Past" → `liver_enzymes`.
 `fa` inside "Fatigue" and "Factor" → `fluorescein_angiography_findings`. `ree`
 inside "preeclampsia" and "-free" → `resting_metabolic_rate`. Every one of those
-inflated coverage while silently poisoning exactly the `SAME_MEASUREMENT` edges
-the graph layer exists to build.
+inflated coverage while silently poisoning exactly the same-measurement
+comparisons the warehouse exists to support.
 
 The fix is `matching.yaml`, a new file: whole-token matching, case-sensitive
 short acronyms, longest-match-wins where a file declares no precedence, and the

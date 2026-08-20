@@ -16,7 +16,7 @@ def test_connect_creates_all_schemas(tmp_path):
             "SELECT schema_name FROM information_schema.schemata"
         ).fetchall()
     }
-    assert {"raw", "vocab", "conformed", "graph"} <= schemas
+    assert {"raw", "vocab", "conformed"} <= schemas
     con.close()
 
 

@@ -57,21 +57,20 @@ console = Console()
 
 vocab_app = typer.Typer(no_args_is_help=True, help="Vocabulary sampling / validation.")
 review_app = typer.Typer(no_args_is_help=True, help="Review-queue management.")
-graph_app = typer.Typer(no_args_is_help=True, help="Graph layer.")
 ta_app = typer.Typer(no_args_is_help=True, help="Therapeutic-area mapping.")
 usdm_app = typer.Typer(no_args_is_help=True, help="CDISC USDM 4.0 projection.")
 app.add_typer(vocab_app, name="vocab")
 app.add_typer(review_app, name="review")
-app.add_typer(graph_app, name="graph")
 app.add_typer(ta_app, name="ta")
 app.add_typer(usdm_app, name="usdm")
 
 USDM_ENVELOPES = ("module", "wrapper")
 
 
-def _not_yet_implemented(command: str, step: str) -> None:
+def _not_yet_implemented(command: str, instead: str) -> None:
     console.print(
-        f"[yellow]`{command}` is not implemented yet -- it lands in build-order {step}.[/yellow]"
+        f"[yellow]`{command}` is not implemented -- {instead}. "
+        "See docs/USAGE.md, \"Not implemented\".[/yellow]"
     )
     raise typer.Exit(code=1)
 
@@ -393,7 +392,7 @@ def ta_diff_tree(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
 ) -> None:
-    """Task 3: run the tree-prefix layer alone and the regex layer alone over every
+    """Run the tree-prefix layer alone and the regex layer alone over every
     pulled study's conditions, and report every disagreement, most frequent first --
     each one is either a wrong tree prefix or a wrong regex in ta_mesh_mapping.yaml.
     Requires `pull` and `vocab validate` to have already been run against this warehouse."""
@@ -675,19 +674,16 @@ def review_resolve(
     new_term: bool = typer.Option(False, "--new-term"),
 ) -> None:
     """Resolve a review_queue entry against an existing or new vocab term."""
-    _not_yet_implemented("review resolve", "step 3 (conforming pipeline)")
-
-
-@graph_app.command("build")
-def graph_build() -> None:
-    """Materialize graph.nodes / graph.edges, including SAME_MEASUREMENT_DIFFERENT_FORM."""
-    _not_yet_implemented("graph build", "step 4 (graph layer + CLI polish)")
+    _not_yet_implemented(
+        "review resolve",
+        "edit vocab/*.yaml, then re-run `vocab validate` and `conform`",
+    )
 
 
 @app.command()
 def query(sql: str = typer.Argument(...)) -> None:
     """Run arbitrary SQL against the warehouse and print the result."""
-    _not_yet_implemented("query", "step 4 (graph layer + CLI polish)")
+    _not_yet_implemented("query", 'use `duckdb warehouse.duckdb -c "<sql>"`')
 
 
 @app.command()
@@ -697,7 +693,9 @@ def export(
     out: str = typer.Option(..., "--out"),
 ) -> None:
     """Run SQL and export the result as parquet/csv/json."""
-    _not_yet_implemented("export", "step 4 (graph layer + CLI polish)")
+    _not_yet_implemented(
+        "export", "use `duckdb warehouse.duckdb -c \"COPY (<sql>) TO 'out.parquet'\"`"
+    )
 
 
 if __name__ == "__main__":

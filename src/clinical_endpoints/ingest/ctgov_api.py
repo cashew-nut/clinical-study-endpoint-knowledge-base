@@ -2,11 +2,11 @@
 fallback ingestion backend when AACT access is unavailable.
 
 Produces the *same* raw.studies / raw.design_outcomes shape as ingest/aact.py,
-so everything downstream (vocab sampling, conforming, graph) is source-agnostic
-and doesn't care which backend a given pull came from. Switch back to AACT with
-`--source aact` once AACT access is resolved -- see plan §2, which flags the
-live API/site as "the thing that gets you blocked" in the first place; this
-backend exists only as a stopgap, not a replacement.
+so everything downstream (vocab sampling, conforming, projection) is
+source-agnostic and doesn't care which backend a given pull came from. Switch
+back to AACT with `--source aact` once AACT access is resolved: the live API is
+also the thing that gets you rate-limited or blocked, so this backend is a
+stopgap, not a replacement.
 
 CAVEAT: this was built from ClinicalTrials.gov's documented API v2 shape, not
 verified against a live response -- the sandbox this was built in also can't

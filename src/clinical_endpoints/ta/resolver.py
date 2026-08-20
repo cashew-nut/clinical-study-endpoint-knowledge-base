@@ -1,5 +1,5 @@
-"""Layered MeSH condition/intervention -> therapeutic-area resolution
-(docs/NEXT_SESSION.md gap 2d), plus the tree-vs-pattern diff tool (task 3).
+"""Layered MeSH condition/intervention -> therapeutic-area resolution, plus the
+tree-vs-pattern diff tool (docs/SAMPLING_AND_TA_RESOLUTION_SPEC.md §§2-3).
 
 Reads the `vocab.ta_mesh_*` tables `vocab validate` writes (term_overrides,
 tree_prefixes, term_patterns) and the `raw.browse_conditions` /
@@ -37,10 +37,11 @@ RULE_LAYERS = ("intervention_rule", "term_override", "tree_prefix", "term_patter
 _LAYER_RANK = {layer: i for i, layer in enumerate(RULE_LAYERS)}
 
 # CT.gov API v2's derivedSection.conditionBrowseModule.browseBranches[].abbrev is
-# not documented beyond the one example in docs/NEXT_SESSION.md ("BC04" =
-# Neoplasms). Inferred convention: "B" + the top-level MeSH tree code, i.e. the
-# same "C04" that appears in ta_mesh_mapping.yaml's tree_prefixes. If a live pull
-# ever shows a different convention, this is the one place to fix it.
+# not documented beyond the one example in
+# docs/SAMPLING_AND_TA_RESOLUTION_SPEC.md ("BC04" = Neoplasms). Inferred
+# convention: "B" + the top-level MeSH tree code, i.e. the same "C04" that
+# appears in ta_mesh_mapping.yaml's tree_prefixes. If a live pull ever shows a
+# different convention, this is the one place to fix it.
 _BRANCH_ABBREV_RE = re.compile(r"^B([A-Z]\d{2})$")
 
 _NCT_KEYED_RAW_TABLES = (
@@ -381,7 +382,7 @@ def diff_tree_vs_pattern(
     vocab_dir: Path | str | None = None,
     nct_ids: Optional[list[str]] = None,
 ) -> list[dict]:
-    """Task 3: run the tree-prefix layer alone and the regex layer alone over
+    """Run the tree-prefix layer alone and the regex layer alone over
     every study's browse_conditions, and return every disagreement, most
     frequent first.
 
