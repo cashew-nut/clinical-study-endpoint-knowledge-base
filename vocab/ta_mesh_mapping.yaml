@@ -396,7 +396,7 @@ caveats:
     bucket. Both are judgment calls against the tree, recorded here so a future
     reader does not "fix" them back.
   - >-
-    UPDATED (session that closed the step-2 gaps, see docs/NEXT_SESSION.md):
+    UPDATED (see docs/SAMPLING_AND_TA_RESOLUTION_SPEC.md):
     `raw.browse_conditions`, `raw.browse_interventions`, `raw.conditions`, and
     `raw.mesh_terms` (AACT) / `raw.browse_condition_branches` (CT.gov API) are now
     pulled by both backends, `pull --ta` works, and `conformed.study_therapeutic_area`
@@ -432,8 +432,8 @@ caveats:
   - >-
     `tree_prefixes`'s longest-prefix-wins matching, and the diff tool
     (`ta/resolver.py`'s `diff_tree_vs_pattern`, `endpoints ta diff-tree`) that
-    compares this layer against `term_patterns` per docs/NEXT_SESSION.md task 3,
-    are implemented and unit-tested, but have only been exercised against synthetic
+    compares this layer against `term_patterns` per §3 of
+    docs/SAMPLING_AND_TA_RESOLUTION_SPEC.md, are implemented and unit-tested, but have only been exercised against synthetic
     data -- this sandbox cannot reach either ingestion backend (confirmed: both
     return HTTP 403 on the outbound proxy), so no live pull has been run. Two
     illustrative disagreements surfaced by a synthetic run against this file's real

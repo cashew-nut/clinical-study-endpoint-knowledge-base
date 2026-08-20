@@ -1,21 +1,26 @@
 # Design spec: composite endpoint decomposition
 
-Status: **proposed, not scheduled.** Written after the build-order step 4 review
-(see "Why this and not the graph projection" below). Nothing here is
-implemented; this is a spec to decide against or schedule, not a plan of record.
+> **Status: not implemented.** Nothing here exists in code: there is no
+> `vocab/composites.yaml`, no `conformed.endpoint_composite`, no variant
+> resolution in `conform`. This is a proposal to schedule or decide against,
+> and its first phase is gated on a measurement that needs a live pull — see
+> [Phasing, with a gate](#phasing-with-a-gate).
+
+Written after reviewing whether a generic node/edge layer over the conformed
+endpoints was worth building; it is not, and this is the one relation in the
+domain that would have justified it (see below).
 
 Read alongside:
 
-* the implementation plan §6 (the graph layer this replaces)
 * `vocab/README.md` — the vocabulary schema and the judgment calls behind it
 * `docs/QUERY_CHEATSHEET.md`, "Cross-study comparability" — the flat relations
-  that already answer the plan's other motivating questions
+  that already answer the questions a node/edge layer was meant to serve
 
 ---
 
-## Why this and not the graph projection
+## Why this and not a node/edge layer
 
-Implementation plan §6 proposes `graph.nodes` / `graph.edges` with edge types
+The rejected design was a `graph.nodes` / `graph.edges` pair with edge types
 `HAS_ENDPOINT`, `USES_FORM`, `MEASURES`, `HAS_REFERENCE`, `IN_TA`. Every one of
 those is a foreign key that already exists as a typed column on
 `conformed.endpoints`. Re-encoding them as generic edge rows makes no new
@@ -35,7 +40,7 @@ question answerable, and it costs:
   `WHERE CAST(json_extract_string(properties,'$.threshold_value') AS DOUBLE) >= 30`.
 
 Every path in the star schema is length ≤ 3 and statically known — no cycles, no
-variable depth. That is the test a graph layer has to pass, and §6 fails it.
+variable depth. That is the test a node/edge layer has to pass, and it fails it.
 
 **The composite→component relation passes it.** A composite endpoint contains
 component endpoints, a component can itself be a composite, and the depth is not
@@ -374,9 +379,9 @@ the build sandbox** (AACT port 5432 closed, `clinicaltrials.gov` unreachable);
 resolver. Phase A cannot be run to completion from an environment with no
 egress. Writing `composites.yaml` can; measuring the gate cannot.
 
-## What NOT to do
+## Standing constraints
 
-* **Do not build the §6 node/edge layer alongside this.** If composites land,
+* **Do not build a generic node/edge layer alongside this.** If composites land,
   they land as two typed vocab tables and a recursive CTE. A generic node/edge
   encoding would reintroduce every problem in the first section.
 * **Do not infer components from endpoint text.** "Composite of death, MI and

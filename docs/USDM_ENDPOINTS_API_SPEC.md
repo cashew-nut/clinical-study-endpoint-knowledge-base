@@ -1,8 +1,13 @@
 # Design spec: a USDM 4.0 endpoints API
 
-Status: **implemented.** This document is the design of record for
-`src/clinical_endpoints/usdm/` and `vocab/usdm_templates.yaml`; the sections on
-phasing mark what is built and what is deferred.
+> **Status: implemented** through phase 2 — the projection, the templates and
+> the HTTP API. Estimands (phase 3) and composite decomposition (phase 4) are
+> not built; see [Phasing](#phasing). Amended by
+> `docs/EVENT_SEMANTICS_SPEC.md` and
+> `docs/USDM_PROJECTION_INTEGRITY_SPEC.md`, both implemented.
+
+This document is the design of record for `src/clinical_endpoints/usdm/` and
+`vocab/usdm_templates.yaml`.
 
 The deliverable is one call:
 
@@ -688,10 +693,10 @@ required attributes are clinical assertions that the original eight columns of
 * `StudyDesignPopulation.includesHealthySubjects: bool` — required, no default.
 * `InterventionalStudyDesign.model: Code` — required.
 
-Rather than fill those with placeholders, **the ingestion is being extended to
-source them** — see [Where the ingestion has to
-grow](#where-the-ingestion-has-to-grow). Both are published fields on both
-backends, and CDISC's own `ct-gov_mapping.xlsx` states the mapping, so this is
+Rather than fill those with placeholders, **the ingestion was extended to
+source them** — see [Where the ingestion had to
+grow](#where-the-ingestion-had-to-grow). Both are published fields on both
+backends, and CDISC's own `ct-gov_mapping.xlsx` states the mapping, so this was
 a data-collection gap rather than a modelling one.
 
 That leaves two envelopes with an honest split:
@@ -820,11 +825,14 @@ Cross-study comparison becomes a join on a reference inside a
 standards-conformant document, which is the whole point of putting the
 vocabulary in the dictionary rather than in a sidecar.
 
-## Where the ingestion has to grow
+## Where the ingestion had to grow
 
-Everything above needs one thing the warehouse does not yet have: study-level
-design and eligibility facts. `raw.studies` holds eight columns — `nct_id`,
-`phase`, `overall_status`, `study_type`, `start_date`,
+**Built** — both backends now land the columns below; this section records the
+mapping they follow.
+
+Everything above needs one thing the warehouse originally did not have:
+study-level design and eligibility facts. `raw.studies` held eight columns —
+`nct_id`, `phase`, `overall_status`, `study_type`, `start_date`,
 `primary_completion_date`, `brief_title`, `official_title` — because the
 conforming pipeline never needed more.
 
@@ -1046,7 +1054,7 @@ What is still open:
    with a flag, because USDM requires the containment. A reviewer could
    reasonably prefer `?objectives=none` as the default.
 
-## What NOT to do
+## Standing constraints
 
 * **Do not re-parse registry text in the API layer.** Every dimension is
   resolved by `conform`, with a match method and a confidence recorded. A

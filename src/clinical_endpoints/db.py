@@ -1,7 +1,8 @@
 """DuckDB warehouse connection and AACT Postgres attach.
 
-The warehouse is a single gitignored DuckDB file with four schemas:
-raw / vocab / conformed / graph (see implementation plan §3).
+The warehouse is a single gitignored DuckDB file with three schemas:
+raw (as pulled) / vocab (the endpoint library) / conformed (the pipeline's
+output). See docs/USAGE.md, "The warehouse".
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import duckdb
 from dotenv import load_dotenv
 
 DEFAULT_WAREHOUSE_PATH = Path("warehouse.duckdb")
-SCHEMAS = ("raw", "vocab", "conformed", "graph")
+SCHEMAS = ("raw", "vocab", "conformed")
 
 REQUIRED_AACT_ENV_VARS = ("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD")
 

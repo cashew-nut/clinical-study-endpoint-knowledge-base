@@ -1,7 +1,7 @@
 [project]
 name = "clinical-endpoints"
 version = "0.1.0"
-description = "Ontology + graph pipeline for clinical trial endpoints, sourced from AACT or the ClinicalTrials.gov API."
+description = "A controlled-vocabulary endpoint library, conformance pipeline and USDM 4.0 projection for clinical study endpoints, sourced from AACT or the ClinicalTrials.gov API."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

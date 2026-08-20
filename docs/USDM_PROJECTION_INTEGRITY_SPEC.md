@@ -1,8 +1,12 @@
 # Design spec: announced defaults and the USDM extension profile
 
-Status: **implemented.** Companion to `docs/EVENT_SEMANTICS_SPEC.md`, written from
-the same first live validation of the USDM projection (NCT01777919,
-2026-08-20) and the external USDM review of that payload. The event spec fixes
+> **Status: implemented** — `src/clinical_endpoints/usdm/project.py`,
+> `tags.py`, `envelope.py`, and the validator rules in
+> `src/clinical_endpoints/vocab/loader.py`.
+
+Companion to `docs/EVENT_SEMANTICS_SPEC.md`, written from the same first live
+validation of the USDM projection (NCT01777919, 2026-08-20) and the external
+USDM review of that payload. The event spec fixes
 what the time-to-event sentences *say*; this one fixes how the projection
 *accounts for what it says* — defaults, provenance flags, the extension
 layout, and the envelope boundary.
@@ -305,7 +309,7 @@ flag-day release either way.
 * Schema conformance, tag bijection, reference resolvability, determinism —
   the standing suite — green under v2 URNs.
 
-## What NOT to do
+## Standing constraints
 
 * **Do not edit the decomposition to agree with a rendering.** The
   decomposition is the pipeline's sworn testimony; renderings that go beyond
