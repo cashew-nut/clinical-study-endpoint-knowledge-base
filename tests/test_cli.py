@@ -118,18 +118,32 @@ def test_pull_resolves_and_optionally_filters_by_ta(tmp_path, monkeypatch):
     finally:
         con.close()
 
+    # A later, differently-filtered pull that re-scans the same underlying
+    # studies must only ever land/keep matches for --ta -- it must not prune
+    # NCT002, which an earlier pull (with no --ta) already legitimately
+    # landed. `pull` never discards a study landed by an earlier pull with
+    # different filters (see ingest/aact.py's `run_pull` docstring); --ta is
+    # no exception, so NCT002 survives even though it doesn't match this
+    # pull's --ta.
     filtered = runner.invoke(
         app, ["pull", "--phase", "3", "--ta", "oncology", "--warehouse", str(warehouse)]
     )
     assert filtered.exit_code == 0, filtered.output
     assert "Filtered to --ta ['oncology']" in filtered.output
+    assert "1 studies" in filtered.output  # only NCT001 matched --ta on this pull
 
     con = duckdb.connect(str(warehouse))
     try:
-        assert con.execute("SELECT nct_id FROM raw.studies").fetchall() == [("NCT001",)]
-        assert con.execute("SELECT nct_id FROM conformed.study_therapeutic_area").fetchall() == [
-            ("NCT001",)
+        assert con.execute("SELECT nct_id FROM raw.studies ORDER BY nct_id").fetchall() == [
+            ("NCT001",),
+            ("NCT002",),
         ]
+        # conformed.study_therapeutic_area is recomputed from every study in
+        # raw.studies each pull, regardless of --ta -- it still covers both.
+        rows = con.execute(
+            "SELECT nct_id, ta_id FROM conformed.study_therapeutic_area WHERE is_primary ORDER BY nct_id"
+        ).fetchall()
+        assert rows == [("NCT001", "oncology"), ("NCT002", "respiratory")]
     finally:
         con.close()
 

@@ -279,6 +279,15 @@ def pull(
     )
     if ta_ids:
         console.print(f"[green]Filtered to --ta {list(ta_ids)}[/green]")
+        if result.get("hit_scan_cap"):
+            console.print(
+                f"[yellow]Only found {result['row_counts']['studies']} of the requested "
+                f"{limit} studies matching --ta {list(ta_ids)} after scanning "
+                f"{result.get('studies_scanned', '?')} studies -- ClinicalTrials.gov has no "
+                "server-side filter for this project's therapeutic areas, so `pull` scans "
+                "recent studies broadly and keeps only matches. Narrow --since or accept "
+                "the smaller result.[/yellow]"
+            )
     if ta_summary is not None:
         dist = ", ".join(f"{ta_id}={n}" for ta_id, n in ta_summary["distribution"].items())
         console.print(
