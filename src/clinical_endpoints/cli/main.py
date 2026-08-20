@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +26,15 @@ from clinical_endpoints.ingest import aact as aact_backend
 from clinical_endpoints.ingest import ctgov_api as ctgov_api_backend
 from clinical_endpoints.ingest.ctgov_api import CtgovApiError
 from clinical_endpoints.ingest.filters import PullFilters
+from clinical_endpoints.ingest.upsert import SchemaMigrationError
+from clinical_endpoints.usdm.codes import UnknownOutcomeType
+from clinical_endpoints.usdm.envelope import module_envelope, wrapper_envelope
+from clinical_endpoints.usdm.project import (
+    NotConformed,
+    NotPulled,
+    load_projection_rules,
+    project,
+)
 from clinical_endpoints.vocab.loader import (
     VocabError,
     default_vocab_dir,
@@ -49,10 +59,14 @@ vocab_app = typer.Typer(no_args_is_help=True, help="Vocabulary sampling / valida
 review_app = typer.Typer(no_args_is_help=True, help="Review-queue management.")
 graph_app = typer.Typer(no_args_is_help=True, help="Graph layer.")
 ta_app = typer.Typer(no_args_is_help=True, help="Therapeutic-area mapping.")
+usdm_app = typer.Typer(no_args_is_help=True, help="CDISC USDM 4.0 projection.")
 app.add_typer(vocab_app, name="vocab")
 app.add_typer(review_app, name="review")
 app.add_typer(graph_app, name="graph")
 app.add_typer(ta_app, name="ta")
+app.add_typer(usdm_app, name="usdm")
+
+USDM_ENVELOPES = ("module", "wrapper")
 
 
 def _not_yet_implemented(command: str, step: str) -> None:
@@ -177,11 +191,27 @@ def pull(
                 }
                 result["row_counts"] = filter_raw_tables_by_nct_ids(con, set(result["nct_ids"]), keep)
                 ta_summary = run_ta_resolution(con)  # re-derive the distribution for the kept studies only
+    except SchemaMigrationError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
     finally:
         con.close()
+
+    # A migration rewrites tables the operator already had; say so rather than
+    # letting rows quietly change shape underneath them.
+    migrations = result.get("migrations", [])
+    for change in migrations:
+        console.print(f"[yellow]Migrated {change.describe()}[/yellow]")
+    if any(change.added and change.rows_kept for change in migrations):
+        # Migration backfills NULL, not data: the new columns are only populated
+        # for studies this pull actually touched.
+        console.print(
+            "[yellow]New columns are NULL for studies landed by earlier pulls -- "
+            "re-run `pull` covering them to fill in.[/yellow]"
+        )
 
     console.print(
         f"[green]Pull {result['pull_id']} complete[/green] "
@@ -428,6 +458,154 @@ def conform(
         f"[green]Conformed {result['rows_conformed']} of {result['total_rows']} row(s)[/green] "
         f"-> conformed.endpoints; {result['rows_queued']} -> conformed.review_queue"
     )
+
+
+@usdm_app.command("show")
+def usdm_show(
+    nct_id: str = typer.Argument(..., help="The trial to project, e.g. NCT04162249."),
+    envelope: str = typer.Option(
+        "module", "--envelope", help="module (the endpoints module) or wrapper (a full USDM Wrapper)."
+    ),
+    flatten: bool = typer.Option(
+        False, "--flatten", help="Return a flat endpoints[] instead of objectives[].endpoints[]."
+    ),
+    level: Optional[str] = typer.Option(
+        None, "--level", help="Comma-separated: primary, secondary, exploratory."
+    ),
+    tier: Optional[str] = typer.Option(
+        None, "--tier", help="Comma-separated: templated, partial, verbatim."
+    ),
+    out: Optional[str] = typer.Option(None, "--out", "-o", help="Write JSON here instead of stdout."),
+    warehouse: str = typer.Option("warehouse.duckdb", "--warehouse"),
+) -> None:
+    """A USDM 4.0 representation of every endpoint in one trial.
+
+    Each endpoint's `text` is a syntax template whose tags resolve through its
+    `SyntaxTemplateDictionary` into the controlled vocabularies; the registry
+    string is kept verbatim in `description`, so the projection is auditable.
+    """
+    if envelope not in USDM_ENVELOPES:
+        console.print(f"[red]--envelope must be one of {', '.join(USDM_ENVELOPES)}[/red]")
+        raise typer.Exit(code=2)
+
+    con = connect(warehouse)
+    try:
+        try:
+            rules = load_projection_rules(con)
+            projection = project(
+                con,
+                nct_id,
+                rules=rules,
+                levels=_split_option(level),
+                tiers=_split_option(tier),
+            )
+        except NotPulled as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+        except NotConformed as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+        except UnknownOutcomeType as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+
+        if envelope == "wrapper":
+            body = wrapper_envelope(con, projection, vocab_version=rules.vocab_version)
+        else:
+            body = module_envelope(
+                con, projection, vocab_version=rules.vocab_version, flatten=flatten
+            )
+    finally:
+        con.close()
+
+    payload = json.dumps(body, indent=2, ensure_ascii=False)
+    if out:
+        Path(out).write_text(payload + "\n", encoding="utf-8")
+        console.print(
+            f"[green]{projection.endpoint_count} endpoint(s)[/green] -> {out} "
+            f"({', '.join(f'{k} {v}' for k, v in sorted(projection.tiers.items()))})"
+        )
+    else:
+        print(payload)
+
+
+@usdm_app.command("coverage")
+def usdm_coverage(
+    warehouse: str = typer.Option("warehouse.duckdb", "--warehouse"),
+    limit: int = typer.Option(0, "--limit", help="Only the first N trials; 0 = all."),
+) -> None:
+    """The fidelity-tier mix across every conformed trial.
+
+    The tiers are the honest measure of what the templates buy: `templated` is a
+    fully parameterized endpoint, `partial` dropped an optional group, and
+    `verbatim` is the registry string passed through because no template
+    applied. Per-dimension vocabulary coverage does not compose into this --
+    the tiers depend on joint resolution -- so it has to be counted.
+    """
+    con = connect(warehouse)
+    try:
+        rules = load_projection_rules(con)
+        nct_ids = [
+            row[0]
+            for row in con.execute(
+                "SELECT DISTINCT nct_id FROM conformed.endpoints ORDER BY nct_id"
+            ).fetchall()
+        ]
+        if limit:
+            nct_ids = nct_ids[:limit]
+        totals: dict[str, int] = {}
+        for nct_id in nct_ids:
+            projection = project(con, nct_id, rules=rules)
+            for tier, count in projection.tiers.items():
+                totals[tier] = totals.get(tier, 0) + count
+    finally:
+        con.close()
+
+    grand = sum(totals.values())
+    if not grand:
+        console.print("[yellow]No conformed endpoints -- run `endpoints conform` first.[/yellow]")
+        raise typer.Exit(code=1)
+
+    table = Table(title=f"USDM fidelity tiers over {len(nct_ids)} trial(s)")
+    table.add_column("tier")
+    table.add_column("endpoints", justify="right")
+    table.add_column("share", justify="right")
+    for tier in ("templated", "partial", "verbatim"):
+        count = totals.get(tier, 0)
+        table.add_row(tier, str(count), f"{100 * count / grand:.1f}%")
+    table.add_row("[bold]total", f"[bold]{grand}", "")
+    console.print(table)
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    warehouse: str = typer.Option("warehouse.duckdb", "--warehouse"),
+) -> None:
+    """Serve the read-only USDM 4.0 endpoints API.
+
+    `GET /v4/studies/{nctId}/endpoints` is the one call this exists for.
+    Requires the `serve` extra (`uv sync --extra serve`).
+    """
+    try:
+        import uvicorn
+
+        from clinical_endpoints.usdm.api import create_app
+    except ImportError as exc:
+        console.print(
+            "[red]The API needs FastAPI and uvicorn, which are an optional extra:[/red]\n"
+            "  uv sync --extra serve"
+        )
+        raise typer.Exit(code=1) from exc
+
+    uvicorn.run(create_app(warehouse), host=host, port=port)
+
+
+def _split_option(value: Optional[str]) -> Optional[list[str]]:
+    if not value:
+        return None
+    return [token.strip() for token in value.split(",") if token.strip()]
 
 
 @review_app.command("list")

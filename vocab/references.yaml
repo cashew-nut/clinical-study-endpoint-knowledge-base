@@ -24,6 +24,7 @@ terms:
   # --- time origins --------------------------------------------------------
   - id: randomisation
     label: "Randomisation"
+    inline_label: "randomisation"
     kind: time_origin
     definition: >-
       The moment of random treatment assignment. The default time origin for
@@ -42,6 +43,7 @@ terms:
 
   - id: treatment_start
     label: "First dose / start of treatment"
+    inline_label: "the start of treatment"
     kind: time_origin
     definition: >-
       Administration of the first dose of study intervention. The origin for the
@@ -62,6 +64,7 @@ terms:
 
   - id: enrolment
     label: "Enrolment / informed consent"
+    inline_label: "enrolment"
     kind: time_origin
     definition: >-
       Signing of informed consent, screening, or enrolment -- used when safety
@@ -79,6 +82,7 @@ terms:
 
   - id: index_event
     label: "Index clinical event or procedure"
+    inline_label: "the index event"
     kind: time_origin
     definition: >-
       A clinical event or procedure that starts the clock: surgery, transplant,
@@ -101,6 +105,7 @@ terms:
   # --- value references ----------------------------------------------------
   - id: patient_baseline
     label: "Participant's own baseline"
+    inline_label: "their own baseline"
     kind: value_reference
     definition: >-
       The participant's last pre-treatment value of the same measurement. The
@@ -120,6 +125,7 @@ terms:
 
   - id: pre_dose
     label: "Pre-dose value (same day)"
+    inline_label: "the pre-dose value"
     kind: value_reference
     definition: >-
       A value taken immediately before a dose within a dosing interval, rather than
@@ -138,6 +144,7 @@ terms:
 
   - id: screening
     label: "Screening value"
+    inline_label: "the screening value"
     kind: value_reference
     definition: >-
       The value recorded at the screening visit, used where screening and baseline
@@ -152,6 +159,7 @@ terms:
 
   - id: parent_trial_baseline
     label: "Parent-trial baseline"
+    inline_label: "the parent-trial baseline"
     kind: value_reference
     definition: >-
       The baseline of the originating trial, referenced from an extension or
@@ -171,6 +179,7 @@ terms:
 
   - id: baseline_sum_of_diameters
     label: "Baseline sum of diameters (RECIST)"
+    inline_label: "the baseline sum of diameters"
     kind: value_reference
     definition: >-
       The sum of the longest diameters of RECIST target lesions at baseline. The
@@ -189,6 +198,7 @@ terms:
 
   - id: nadir
     label: "Nadir (smallest value on study)"
+    inline_label: "the nadir"
     kind: value_reference
     definition: >-
       The smallest value recorded so far on study, including baseline. RECIST
@@ -207,6 +217,7 @@ terms:
   # --- external standards --------------------------------------------------
   - id: absolute_threshold
     label: "Fixed clinical threshold"
+    inline_label: "a fixed clinical threshold"
     kind: external_standard
     definition: >-
       A guideline or protocol-defined absolute target that is the same for every
@@ -226,6 +237,7 @@ terms:
 
   - id: predicted_normal
     label: "Predicted-normal value"
+    inline_label: "predicted normal"
     kind: external_standard
     definition: >-
       A population-normative predicted value derived from age, sex, height, and
@@ -245,6 +257,7 @@ terms:
 
   - id: normative_population_score
     label: "Normative population score"
+    inline_label: "the normative population score"
     kind: external_standard
     definition: >-
       A score calibrated against a reference population rather than the
@@ -262,6 +275,7 @@ terms:
 
   - id: comparator_arm
     label: "Concurrent comparator arm"
+    inline_label: "the comparator arm"
     kind: external_standard
     definition: >-
       The endpoint is defined explicitly as a between-arm contrast rather than a
@@ -283,6 +297,7 @@ terms:
   # --- unresolved ----------------------------------------------------------
   - id: none
     label: "No reference (absolute quantity)"
+    inline_label: null
     kind: value_reference
     definition: >-
       The endpoint is an absolute quantity with nothing to compare against -- Cmax,
@@ -292,6 +307,7 @@ terms:
 
   - id: not_stated
     label: "Reference not determinable"
+    inline_label: null
     kind: value_reference
     definition: >-
       The text does not say what the endpoint is measured against and no default

@@ -1,0 +1,181 @@
+# USDM SYNTAX TEMPLATES -- how a conformed endpoint becomes a USDM 4.0
+# SyntaxTemplate with tags.
+#
+# Not a term list, so this file loads through its own path like matching.yaml
+# rather than through a DimensionSpec.
+#
+# THE IDEA. forms.yaml defines form as "what kind of number is this endpoint",
+# independent of what is measured. That is a sentence frame written out, so one
+# template per form id, and every other dimension (measurement, reference,
+# timepoint, threshold, scale, population) is a tag that fills it. Nothing here
+# re-parses registry text: the tags are filled from what `conform` already
+# resolved and recorded.
+#
+# AUTHORING vs EMISSION. Templates are written here in a compact form and
+# emitted in USDM's own markup:
+#
+#   authored   Change from {reference} in {measurement}[ at {timepoint}]
+#   emitted    <p>Change from <usdm:tag name="reference"/> in
+#              <usdm:tag name="measurement"/> at <usdm:tag name="timepoint"/></p>
+#
+# The emitted form matches CDISC's published examples (see
+# DDF-RA/Documents/Examples/CDISC_Pilot/CDISC_Pilot_Study.json, where an
+# EligibilityCriterionItem's text is
+# "<p>Males and postmenopausal females at least <usdm:tag name=\"min_age\"/> years of age.</p>").
+# The authored form exists because 18 templates have to stay readable to a human
+# reviewer.
+#
+# GRAMMAR.
+# TIMEPOINTS CARRY THEIR OWN PREPOSITION. render_timepoint returns "at Week 16",
+# "over 6 weeks", "from first dose through Week 52", "until the required number
+# of events" -- so templates write a bare "[ {timepoint}]" and never supply
+# "at"/"during"/"over" themselves. Doing it the other way round produced
+# "during through Week 52" and "up to until the required number of events",
+# because a third of the timepoint categories render a self-contained phrase
+# rather than a point in time.
+#
+#   {name}     a tag. Outside brackets it is REQUIRED: if it does not resolve,
+#              the template does not apply and the endpoint falls to a lower
+#              fidelity tier rather than rendering a half-sentence.
+#   [ ... ]    an optional group, dropped entirely if ANY tag inside it is
+#              unresolved. Groups may not nest.
+#   \{ \} \[ \] \\   escapes.
+#
+# WHAT IS NOT A TAG. Direction. It is derived rather than matched
+# (directions.yaml), it can vary by therapeutic area via `direction_by_ta`, and
+# "decrease is better" belongs in no endpoint's name. It travels in
+# extensionAttributes instead.
+
+version: 1
+kind: usdm_syntax_templates
+
+# Endpoint.purpose is required by USDM and stated by no registry record, so it
+# is derived from the resolved measurement's `domain` (the closed set in
+# vocab/schema.py MEASUREMENT_DOMAINS). Every endpoint carrying one is flagged
+# derived=purpose in its extensions -- unflagged synthesis in a
+# standards-conformant document is indistinguishable from sourced fact.
+purpose_by_domain:
+  efficacy: "To assess the efficacy of the study intervention."
+  safety: "To assess the safety and tolerability of the study intervention."
+  pharmacokinetic: "To characterise the pharmacokinetics of the study intervention."
+  pharmacodynamic: "To characterise the pharmacodynamics of the study intervention."
+  immunogenicity: "To assess the immunogenicity of the study intervention."
+  patient_reported: "To assess participant-reported outcomes."
+  healthcare_utilisation: "To assess healthcare resource utilisation."
+  exploratory: "To explore the effect of the study intervention."
+  _default: "Purpose not stated in the source registry record."
+
+# Registry records contain no objectives, and USDM hangs endpoints off them.
+# One objective is synthesized per level present, its text filled from the
+# distinct measurement concepts at that level. Also flagged as derived.
+objective_templates:
+  primary: "To evaluate the effect of the study intervention on {concept_list}"
+  secondary: "To further evaluate the effect of the study intervention on {concept_list}"
+  exploratory: "To explore the effect of the study intervention on {concept_list}"
+  _unresolved: "Objective not stated in the source registry record."
+
+# How many concepts {concept_list} names before it says "and others".
+concept_list_limit: 3
+
+templates:
+
+  # --- time-to-event -------------------------------------------------------
+  - form: time_to_event
+    template: "Time from {reference} to {measurement}[ {timepoint}]"
+    reference_fallback: randomisation
+    notes: >-
+      The reference is a time origin for this form, so a fallback is safe:
+      forms.yaml lists randomisation first in typical_reference, and a
+      time-to-event endpoint with no stated origin is measured from
+      randomisation by convention in a randomised trial.
+
+  - form: event_free_rate_at_timepoint
+    template: "Proportion of participants free of {measurement} {timepoint}[, measured from {reference}]"
+    notes: >-
+      {timepoint} is required: a landmark rate with no landmark is not this
+      form. Where the timepoint does not resolve the endpoint falls to partial
+      tier under the not_stated template instead.
+
+  # --- proportions ---------------------------------------------------------
+  - form: responder_proportion
+    template: "Proportion of participants achieving {threshold} in {measurement}[ from {reference}][ {timepoint}]"
+    notes: >-
+      {threshold} is required because forms.yaml marks this form
+      expects_threshold: true. A responder proportion with no recoverable
+      threshold is a partial, not a templated, endpoint -- rendering "proportion
+      of participants achieving PASI" would assert a responder definition that
+      the registry string did not state.
+
+  - form: incidence_proportion
+    template: "Proportion of participants with {measurement}[ {timepoint}]"
+
+  - form: proportion_of_time_in_state
+    template: "Proportion of time with {measurement} {threshold}[ {timepoint}]"
+
+  # --- change from a reference value --------------------------------------
+  - form: change_from_baseline
+    template: "Change from {reference} in {measurement}[ {timepoint}][ ({scale})]"
+    reference_fallback: patient_baseline
+
+  - form: percent_change_from_baseline
+    template: "Percent change from {reference} in {measurement}[ {timepoint}]"
+    reference_fallback: patient_baseline
+
+  - form: ratio_to_baseline
+    template: "Ratio to {reference} of {measurement}[ {timepoint}]"
+    reference_fallback: patient_baseline
+
+  - form: shift_from_baseline
+    template: "Shift from {reference} in {measurement} category[ {timepoint}]"
+    reference_fallback: patient_baseline
+
+  # --- values and exposure -------------------------------------------------
+  - form: value_at_timepoint
+    template: "{measurement}[ {timepoint}][ ({scale})]"
+
+  - form: auc_over_time
+    template: "Area under the {measurement} curve[ {timepoint}]"
+
+  # --- counts and rates ----------------------------------------------------
+  - form: event_count
+    template: "Number of {measurement} events[ {timepoint}]"
+
+  - form: event_rate
+    template: "Rate of {measurement}[ {timepoint}]"
+    notes: >-
+      No "per {scale}" group. scales.yaml's rate units are events_per_year and
+      count_per_period, whose inline forms are the whole phrase rather than a
+      denominator -- "per events per year" is not a sentence. The unit travels
+      in extensions until scales.yaml carries a denominator form.
+
+  - form: annualized_rate_of_change
+    template: "Annualised rate of change in {measurement}[ from {reference}][ {timepoint}]"
+
+  - form: event_free_days
+    template: "Days free of {measurement}[ {timepoint}]"
+
+  # --- the awkward ones ----------------------------------------------------
+  - form: correlation
+    template: "Correlation involving {measurement}[ {timepoint}]"
+    notes: >-
+      Under-modelled, deliberately. A correlation endpoint has two variables and
+      conformed.endpoints has one measurement_id. "Involving" is the honest
+      wording: borrowing {reference} for the second variable would misuse a
+      dimension whose kinds are time_origin, value_reference and
+      external_standard, none of which is "the other thing we correlated
+      against". Fixing this means a schema change, not a template change.
+
+  - form: not_stated
+    template: "{measurement}[ {timepoint}]"
+    notes: >-
+      The fallback frame. 31% of rows name a measurement and no form, so this is
+      the most-used template in the file -- it asserts only what was actually
+      resolved.
+
+  - form: descriptive
+    verbatim: true
+    notes: >-
+      No template on purpose. forms.yaml uses this form for rows that are not a
+      computable statistic, and analysable:false already marks them. Generating
+      a confident sentence for registry boilerplate is worse than passing the
+      raw string through.

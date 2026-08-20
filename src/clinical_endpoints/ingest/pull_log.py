@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 
 import duckdb
 
+from clinical_endpoints.ingest.upsert import ensure_table
+
 # Kept for reference/backwards compatibility -- callers now pass the tables
 # they actually landed via `source_tables`, since that differs by backend
 # (e.g. AACT lands mesh_terms, the CT.gov API backend lands
@@ -20,19 +22,21 @@ import duckdb
 SOURCE_TABLES = ("studies", "design_outcomes")
 
 
+PULL_LOG_DDL = """
+    pull_id VARCHAR PRIMARY KEY,
+    pulled_at TIMESTAMPTZ,
+    source VARCHAR,
+    filters_json JSON,
+    source_tables VARCHAR[],
+    row_counts JSON
+"""
+
+
 def ensure_pull_log(con: duckdb.DuckDBPyConnection) -> None:
-    con.execute(
-        """
-        CREATE TABLE IF NOT EXISTS raw._pull_log (
-            pull_id VARCHAR PRIMARY KEY,
-            pulled_at TIMESTAMPTZ,
-            source VARCHAR,
-            filters_json JSON,
-            source_tables VARCHAR[],
-            row_counts JSON
-        )
-        """
-    )
+    """Via `ensure_table` so the log survives a change to its own columns the
+    same way raw.* does -- a pull that can't record itself is worse than one
+    that has to migrate a table first."""
+    ensure_table(con, "_pull_log", PULL_LOG_DDL)
 
 
 def write_pull_log(
