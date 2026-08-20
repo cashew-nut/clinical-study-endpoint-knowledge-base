@@ -1,11 +1,11 @@
 # Design spec: announced defaults and the USDM extension profile
 
-Status: **proposed.** Companion to `docs/EVENT_SEMANTICS_SPEC.md`, written from
+Status: **implemented.** Companion to `docs/EVENT_SEMANTICS_SPEC.md`, written from
 the same first live validation of the USDM projection (NCT01777919,
 2026-08-20) and the external USDM review of that payload. The event spec fixes
 what the time-to-event sentences *say*; this one fixes how the projection
 *accounts for what it says* — defaults, provenance flags, the extension
-layout, and the envelope boundary. Nothing here is implemented.
+layout, and the envelope boundary.
 
 Read alongside:
 

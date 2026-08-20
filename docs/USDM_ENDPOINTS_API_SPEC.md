@@ -516,7 +516,7 @@ they are the two fields most likely to be silently wrong.
 USDM hangs endpoints off objectives. **Registry records contain no objectives.**
 There is no honest way to source them, so they are synthesized — one per level
 present in the trial — and every synthesized object carries
-`urn:x-endpoints-kb:usdm:ext:v1:derived = "objective"` in its extensions.
+`urn:x-endpoints-kb:usdm:ext:v2:derived = "objective"` in its extensions.
 
 The objective's text is templated on level and filled from the distinct
 measurement *concepts* at that level:
@@ -576,25 +576,44 @@ pointed at that, not at `Endpoint_7`.
 right vehicle: a standards-only consumer ignores it, while a consumer of *this*
 warehouse gets the full decomposition without a second call.
 
+**Amended by `docs/USDM_PROJECTION_INTEGRITY_SPEC.md`, now implemented.** The
+namespace is `urn:x-endpoints-kb:usdm:ext:v2:*`, and the single block sketched
+below splits into two: `decomposition` carries what the endpoint *means* (the
+resolved vocabulary ids, `timepointPattern`/`timepointRole`/`timepointRaw` plus
+whatever structured fields the pattern parsed, `threshold*`, `analysable`,
+`analysisPopulationId`); `conformance` carries how confidently and by what
+method each dimension was decided (`formMatchMethod`/`Confidence`,
+`measurementMatchMethod`/`Confidence`, `referenceMatchMethod`/`Confidence`,
+`eventMatchMethod`/`Confidence`, `fidelity`, `reviewReason`, `sourceRowId`) --
+two different questions, kept in two extension classes rather than one. A
+`derived` flag rides alongside, once per synthesized or defaulted attribute
+(`purpose`, `reference`, `objective`), not a single blanket flag per endpoint.
+`threshold` is rendered as a plain string (`"≥75%"`) on both the `tag:threshold`
+host and nowhere else in `decomposition` beyond its comparator/value/unit
+fields -- there is no `valueQuantity` in the shipped implementation, unlike the
+sketch below.
+
 ```json
 {
-  "id": "…", "url": "urn:x-endpoints-kb:usdm:ext:v1:decomposition",
+  "id": "…", "url": "urn:x-endpoints-kb:usdm:ext:v2:decomposition",
   "instanceType": "ExtensionAttribute",
   "valueExtensionClass": {
-    "id": "…", "url": "urn:x-endpoints-kb:usdm:ext:v1:decomposition",
+    "id": "…", "url": "urn:x-endpoints-kb:usdm:ext:v2:decomposition",
     "instanceType": "ExtensionClass",
     "extensionAttributes": [
       {"url": "…:form",            "valueString": "responder_proportion",  "…": "…"},
       {"url": "…:measurement",     "valueString": "pasi",                  "…": "…"},
-      {"url": "…:concept",         "valueString": "psoriasis_severity",    "…": "…"},
       {"url": "…:reference",       "valueString": "patient_baseline",      "…": "…"},
       {"url": "…:direction",       "valueString": "increase_is_better",    "…": "…"},
       {"url": "…:scale",           "valueString": "percentage_of_participants", "…": "…"},
+      {"url": "…:thresholdComparator", "valueString": ">=",                "…": "…"},
+      {"url": "…:thresholdValue",  "valueString": "75.0",                  "…": "…"},
+      {"url": "…:thresholdUnit",   "valueString": "%",                     "…": "…"},
       {"url": "…:timepointPattern","valueString": "single_fixed",          "…": "…"},
+      {"url": "…:timepointRole",   "valueString": "assessment_time",       "…": "…"},
       {"url": "…:timepointRaw",    "valueString": "Week 16",               "…": "…"},
-      {"url": "…:threshold",       "valueQuantity": {"value": 75.0, "unit": {"…": "AliasCode over percent"}}},
-      {"url": "…:matchMethod",     "valueString": "exact",                 "…": "…"},
-      {"url": "…:fidelity",        "valueString": "templated",             "…": "…"},
+      {"url": "…:timepointValue",  "valueString": "16",                    "…": "…"},
+      {"url": "…:timepointUnit",   "valueString": "Week",                  "…": "…"},
       {"url": "…:analysable",      "valueBoolean": true,                   "…": "…"}
     ]
   }
@@ -678,10 +697,18 @@ a data-collection gap rather than a modelling one.
 That leaves two envelopes with an honest split:
 
 **`envelope=module`** (default) — the endpoints module and nothing else. Small,
-fast, and the right answer for "give me this trial's endpoints":
+fast, and the right answer for "give me this trial's endpoints": USDM class
+instances (`objectives[]`, `dictionaries[]`, `bcSurrogates[]`,
+`analysisPopulations[]`) inside a knowledge-base envelope (`profile`, `study`,
+`provenance`). Amended by `docs/USDM_PROJECTION_INTEGRITY_SPEC.md`: `profile`
+is the first key, stating that boundary machine-readably rather than leaving
+it implied by `systemName`, and `provenance` gains `defaulted` alongside
+`tiers` -- the per-tag count of endpoints whose value is an announced default,
+not something the source actually stated.
 
 ```json
 {
+  "profile": "urn:x-endpoints-kb:usdm:module:v2",
   "usdmVersion": "4.0.0",
   "systemName": "clinical-study-endpoint-knowledge-base",
   "study": {"id": "Study_1", "nctId": "NCT04162249"},
@@ -691,18 +718,21 @@ fast, and the right answer for "give me this trial's endpoints":
   "provenance": {
     "source": "ctgov_api", "pullId": "…", "pulledAt": "…",
     "conformedAt": "…", "vocabVersion": "…",
-    "tiers": {"templated": 7, "partial": 3, "verbatim": 2}
+    "tiers": {"templated": 7, "partial": 3, "verbatim": 2},
+    "defaulted": {"reference": 3}
   }
 }
 ```
 
 **`envelope=wrapper`** — a full USDM `Wrapper`, valid against the 4.0.0 schema,
 carrying a real `StudyVersion` and `InterventionalStudyDesign` built from the
-extended `raw.*`. Anything still unsourceable (`StudyVersion.rationale`, for
-one — a registry record has no protocol rationale) is emitted as `""` and named
-in `provenance.synthesized[]` and in a `CommentAnnotation` on the study
-version. **A placeholder that is not announced is a fabricated clinical fact**,
-and that rule does not relax just because the wrapper now has less to fake.
+extended `raw.*`. Canonical USDM: no `profile` key, because it is the
+standard's own shape and needs no disclaimer. Anything still unsourceable
+(`StudyVersion.rationale`, for one — a registry record has no protocol
+rationale) is emitted as `""` and named in `provenance.synthesized[]` and in a
+`CommentAnnotation` on the study version. **A placeholder that is not
+announced is a fabricated clinical fact**, and that rule does not relax just
+because the wrapper now has less to fake.
 
 The NCT ID has a legal USDM home in either envelope:
 `StudyIdentifier(text="NCT04162249", scopeId=<org>)` with an `Organization` for

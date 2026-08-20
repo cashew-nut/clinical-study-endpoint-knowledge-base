@@ -25,6 +25,16 @@
 # `analysable: false` marks rows that are registry boilerplate rather than an
 # endpoint with a computable value; the conforming pipeline should keep them out of
 # comparative analysis rather than force a match.
+#
+# `reference_entailed: true` (docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1) marks
+# a form whose own MEANING supplies a reference value, independent of corpus
+# convention -- "change from baseline" still means change from the participant's own
+# prior value even when the registry string omits the word "baseline". This is what
+# usdm_templates.yaml's `reference_fallback` is legal on: `endpoints vocab validate`
+# rejects a fallback on any form that is not flagged here (or whose template does not
+# render `{reference}`), the "definitional or dead" test made mechanical. It killed
+# the old form-keyed time_to_event fallback, which entailed *some* origin but not any
+# particular one -- see docs/EVENT_SEMANTICS_SPEC.md.
 
 version: 1
 dimension: form
@@ -230,6 +240,7 @@ terms:
       participant's reference (usually baseline) value, in the measurement's own
       units.
     direction_rule: inherit_measurement
+    reference_entailed: true
     typical_reference: [patient_baseline, parent_trial_baseline, screening, pre_dose]
     synonyms:
       - "CFB"
@@ -255,6 +266,7 @@ terms:
     definition: >-
       Change expressed as a percentage of the participant's own reference value.
     direction_rule: inherit_measurement
+    reference_entailed: true
     typical_reference: [patient_baseline, parent_trial_baseline, baseline_sum_of_diameters]
     typical_scale: [percent_change]
     synonyms:
@@ -279,6 +291,7 @@ terms:
       The post-treatment value divided by the participant's own reference value,
       reported as a ratio (or geometric mean ratio) rather than a difference.
     direction_rule: inherit_measurement
+    reference_entailed: true
     typical_reference: [patient_baseline, pre_dose]
     typical_scale: [ratio]
     synonyms:
@@ -304,6 +317,7 @@ terms:
       abnormal, CTCAE grade shifts, severity-band transitions. The classic safety
       "shift table" endpoint.
     direction_rule: inherit_event_polarity
+    reference_entailed: true
     typical_reference: [patient_baseline, screening]
     typical_scale: [count, percentage_of_participants]
     synonyms:

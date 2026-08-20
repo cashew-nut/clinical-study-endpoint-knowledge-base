@@ -40,6 +40,7 @@ from clinical_endpoints.vocab.schema import (
     MEASUREMENT_DOMAINS,
     NAMED_ENDPOINTS_FILENAME,
     REFERENCE_KINDS,
+    TIMEPOINT_ROLES,
     USDM_OBJECTIVE_KEYS,
     USDM_TAGS,
     USDM_TEMPLATES_FILENAME,
@@ -560,6 +561,15 @@ def _validate_timepoints(doc: dict, ids: dict[str, set[str]], result: Validation
         result.error(where, "every timepoint pattern needs a `priority`")
     elif len(set(priorities)) != len(priorities):
         result.error(where, "`priority` values must be unique -- ties make classification order-dependent")
+    # docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 3: every pattern must
+    # declare what it actually names (a point in time vs. a window vs. no
+    # calendar horizon at all), from the closed set the projection relies on.
+    for term in doc.get("terms") or []:
+        role = term.get("role")
+        if role not in TIMEPOINT_ROLES:
+            result.error(
+                where, f"{term.get('id')}: role {role!r} not in {sorted(TIMEPOINT_ROLES)}"
+            )
     for token, scale_id in (doc.get("unit_tokens") or {}).items():
         if scale_id not in ids["scale"]:
             result.error(where, f"unit_tokens[{token!r}] = {scale_id!r} is not a scale id")
@@ -680,6 +690,9 @@ def _validate_usdm_templates(
         t["id"]: bool(t.get("expects_threshold")) for t in forms_doc.get("terms") or [] if t.get("id")
     }
     event_family = {t["id"]: bool(t.get("event_family")) for t in forms_doc.get("terms") or [] if t.get("id")}
+    reference_entailed = {
+        t["id"]: bool(t.get("reference_entailed")) for t in forms_doc.get("terms") or [] if t.get("id")
+    }
     reference_ids = ids.get("reference", set())
 
     seen: set[str] = set()
@@ -718,6 +731,26 @@ def _validate_usdm_templates(
         unknown = sorted(set(tags) - USDM_TAGS)
         if unknown:
             result.error(where, f"{form_id}: unknown tag(s) {unknown}, not in {sorted(USDM_TAGS)}")
+        # docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1: "definitional or
+        # dead" made mechanical. A fallback is legal only where the template
+        # actually renders {reference} AND forms.yaml says the form's own
+        # meaning entails a reference value -- never on corpus convention
+        # alone. This also covers the event spec's carried-over rule (no
+        # reference_fallback on time_to_event): that form is not
+        # reference_entailed, so it falls out of the same check.
+        if fallback is not None and "reference" not in tags:
+            result.error(
+                where,
+                f"{form_id}: reference_fallback set but the template does not render "
+                "{reference} -- there is nothing for the fallback to fill",
+            )
+        if fallback is not None and not reference_entailed.get(form_id):
+            result.error(
+                where,
+                f"{form_id}: reference_fallback set but forms.yaml does not mark it "
+                "reference_entailed -- a fallback is only legal where the form's own "
+                "meaning entails the value, never on corpus convention alone",
+            )
         if not required_tags(parts):
             result.error(
                 where,
@@ -919,7 +952,10 @@ _NUMERIC_COLUMNS = frozenset({"sign", "precedence", "priority", "factor_to_si", 
 
 # Boolean term flags, with the value assumed when a term omits them. Written out
 # explicitly so `WHERE analysable = 'true'` works without a COALESCE.
-_BOOLEAN_DEFAULTS = {"analysable": True, "expects_threshold": False, "composite": False, "event_family": False}
+_BOOLEAN_DEFAULTS = {
+    "analysable": True, "expects_threshold": False, "composite": False, "event_family": False,
+    "reference_entailed": False,
+}
 
 
 def _scalar(value: Any) -> Any:

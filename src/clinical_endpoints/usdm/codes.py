@@ -23,12 +23,24 @@ SYSTEM_NAME = "clinical-study-endpoint-knowledge-base"
 CODE_SYSTEM = "http://www.cdisc.org"
 CODE_SYSTEM_VERSION = "2024-09-27"
 
-#: Namespace for every ExtensionAttribute this projection emits.
-EXTENSION_NS = "urn:x-endpoints-kb:usdm:ext:v1"
+#: Namespace for every ExtensionAttribute this projection emits. Bumped to v2
+#: by docs/USDM_PROJECTION_INTEGRITY_SPEC.md's extension profile (change 4):
+#: `decomposition` split into `decomposition` (semantics) + `conformance`
+#: (how it was decided), `derived` became a per-attribute flag, and
+#: `timepointRole` joined the decomposition. One flag day, with the event
+#: spec, not a piecemeal bump.
+EXTENSION_NS = "urn:x-endpoints-kb:usdm:ext:v2"
 
 #: Prefix for the `reference` a BiomedicalConceptSurrogate carries back to the
 #: vocabulary term it stands for. Resolvable when the API is served.
 VOCAB_REFERENCE_BASE = "/v4/vocab"
+
+#: docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 5: a machine-readable
+#: statement, first key in the module envelope, that its shape is the
+#: knowledge-base module -- USDM class instances inside a KB envelope --
+#: not USDM's own Wrapper. The wrapper envelope carries no `profile`; it is
+#: the standard's own shape and needs no disclaimer.
+MODULE_PROFILE = "urn:x-endpoints-kb:usdm:module:v2"
 
 LEVEL_ORDER: tuple[str, ...] = ("primary", "secondary", "exploratory")
 

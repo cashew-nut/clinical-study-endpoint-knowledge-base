@@ -605,3 +605,71 @@ def test_bare_duration_is_not_read_as_a_fixed_timepoint(docs):
     """"6 weeks" is an observation period; "Week 6" is an assessment visit."""
     assert _classify_timepoint(docs, "6 weeks") == "bare_duration"
     assert _classify_timepoint(docs, "Week 6") == "single_fixed"
+
+
+# ------------------------------- projection integrity (docs/USDM_PROJECTION_INTEGRITY_SPEC.md)
+
+
+def _template_for(doc: dict, form_id: str) -> dict:
+    return next(t for t in doc["usdm_templates"]["templates"] if t["form"] == form_id)
+
+
+def test_timepoint_pattern_missing_role_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    del broken["timepoint_pattern"]["terms"][0]["role"]
+    assert any("role" in e and "None" in e for e in validate_vocab(broken).errors)
+
+
+def test_timepoint_pattern_role_outside_closed_set_is_an_error(docs):
+    broken = copy.deepcopy(docs)
+    broken["timepoint_pattern"]["terms"][0]["role"] = "vibes"
+    assert any("role 'vibes'" in e for e in validate_vocab(broken).errors)
+
+
+def test_reference_fallback_on_a_template_with_no_reference_tag_is_an_error(docs):
+    """change_from_baseline is reference_entailed and carries a fallback in the
+    shipped vocabulary -- strip {reference} from its own template and the
+    fallback becomes illegal: nothing left for it to fill."""
+    broken = copy.deepcopy(docs)
+    entry = _template_for(broken, "change_from_baseline")
+    assert entry.get("reference_fallback")
+    entry["template"] = "Change in {measurement}[ {timepoint}][ ({scale})]"
+    errors = validate_vocab(broken).errors
+    assert any("does not render" in e and "change_from_baseline" in e for e in errors)
+
+
+def test_reference_fallback_on_a_form_outside_the_change_family_is_an_error(docs):
+    """value_at_timepoint is not reference_entailed -- a fallback there is
+    corpus convention, not something the form's own meaning supplies, exactly
+    the "definitional or dead" test the validator now makes mechanical."""
+    broken = copy.deepcopy(docs)
+    entry = _template_for(broken, "value_at_timepoint")
+    entry["template"] = "{measurement}[ {reference}][ {timepoint}][ ({scale})]"
+    entry["reference_fallback"] = "patient_baseline"
+    errors = validate_vocab(broken).errors
+    assert any("reference_entailed" in e and "value_at_timepoint" in e for e in errors)
+
+
+def test_reference_fallback_on_time_to_event_is_an_error(docs):
+    """Carried over from docs/EVENT_SEMANTICS_SPEC.md: time_to_event entails
+    SOME time origin, not any particular one -- a form-keyed fallback there
+    produced the wrong answer for duration-of-response rows. Not a special
+    case any more: time_to_event is simply not reference_entailed, so this
+    falls out of the same general rule."""
+    broken = copy.deepcopy(docs)
+    entry = _template_for(broken, "time_to_event")
+    entry["reference_fallback"] = "randomisation"
+    errors = validate_vocab(broken).errors
+    assert any("reference_entailed" in e and "time_to_event" in e for e in errors)
+
+
+def test_shipped_reference_fallbacks_are_all_definitional(docs):
+    """Positive check: every fallback the shipped file actually carries sits
+    on a reference_entailed form whose template renders {reference} -- the
+    bar docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1 sets."""
+    entailed = {t["id"] for t in docs["form"]["terms"] if t.get("reference_entailed")}
+    fallback_forms = {
+        t["form"] for t in docs["usdm_templates"]["templates"] if t.get("reference_fallback")
+    }
+    assert fallback_forms
+    assert fallback_forms <= entailed

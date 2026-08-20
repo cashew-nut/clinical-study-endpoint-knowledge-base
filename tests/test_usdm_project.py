@@ -29,6 +29,7 @@ from clinical_endpoints.usdm.envelope import module_envelope, wrapper_envelope
 from clinical_endpoints.usdm.project import (
     NotConformed,
     NotPulled,
+    fetch_rows,
     load_projection_rules,
     project,
 )
@@ -44,6 +45,16 @@ TAG_RE = re.compile(r'<usdm:tag name="([a-z0-9_]+)"/>')
 
 def schema_for(name: str) -> Draft202012Validator:
     return Draft202012Validator({"$ref": f"#/$defs/{name}", "$defs": _BUNDLE["$defs"]})
+
+
+def _extension_class(endpoint: dict, name: str) -> dict[str, str | None]:
+    """Flatten one of an endpoint's nested extension classes (`decomposition`,
+    `conformance`) into {field: valueString}, by URL suffix."""
+    ext = next(e for e in endpoint["extensionAttributes"] if e["url"].endswith(f":{name}"))
+    return {
+        inner["url"].rsplit(":", 1)[-1]: inner.get("valueString")
+        for inner in ext["valueExtensionClass"]["extensionAttributes"]
+    }
 
 
 @pytest.fixture
@@ -377,18 +388,18 @@ def test_nct01777919_pfs_row_projects_the_worked_example(nct01777919_con):
         '<p>Time from <usdm:tag name="reference"/> to <usdm:tag name="event"/> '
         '<usdm:tag name="timepoint"/></p>'
     )
-    deco = {
-        ext["url"].rsplit(":", 1)[-1]: ext.get("valueString")
-        for ext in next(
-            e for e in pfs["extensionAttributes"] if e["url"].endswith(":decomposition")
-        )["valueExtensionClass"]["extensionAttributes"]
-    }
+    deco = _extension_class(pfs, "decomposition")
+    conformance = _extension_class(pfs, "conformance")
     assert deco["reference"] == "randomisation"
     assert deco["event"] == "disease_progression_or_death"
     assert deco["measurement"] == "tumour_burden_recist"
     assert deco["namedEndpoint"] == "pfs"
-    assert deco["eventMatchMethod"] == "named_endpoint"
-    assert deco["fidelity"] == "templated"
+    assert conformance["eventMatchMethod"] == "named_endpoint"
+    assert conformance["fidelity"] == "templated"
+    # fidelity/matchMethod are process bookkeeping, not semantics -- they no
+    # longer ride along in `decomposition` (change 4).
+    assert "fidelity" not in deco
+    assert "eventMatchMethod" not in deco
 
     # The measurement surrogate still carries the ORR join, even though the
     # template renders {event} rather than {measurement}.
@@ -428,13 +439,8 @@ def test_event_family_row_with_unresolvable_event_degrades_to_the_not_stated_fra
 
     assert degraded["label"] == "Tumour burden (RECIST)"
     assert degraded["text"] == '<p><usdm:tag name="measurement"/></p>'
-    deco = {
-        ext["url"].rsplit(":", 1)[-1]: ext.get("valueString")
-        for ext in next(
-            e for e in degraded["extensionAttributes"] if e["url"].endswith(":decomposition")
-        )["valueExtensionClass"]["extensionAttributes"]
-    }
-    assert deco["fidelity"] == "partial"
+    deco = _extension_class(degraded, "decomposition")
+    assert _extension_class(degraded, "conformance")["fidelity"] == "partial"
     assert deco["event"] == "not_stated"
     assert deco["measurement"] == "tumour_burden_recist"
 
@@ -454,3 +460,231 @@ def test_provenance_survives_a_warehouse_with_no_pull_log(usdm_warehouse_path, t
 
     assert body["provenance"]["source"] is None
     assert body["provenance"]["pulledAt"] is None
+
+
+# ------------------------------------------ projection integrity (USDM_PROJECTION_INTEGRITY_SPEC)
+
+
+def test_module_envelope_names_its_profile_first(usdm_con):
+    """docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 5: the module payload
+    states its own boundary; the wrapper -- USDM's own shape -- does not."""
+    module = module_envelope(usdm_con, project(usdm_con, "NCT00000001"))
+    assert list(module.keys())[0] == "profile"
+    assert module["profile"] == codes.MODULE_PROFILE
+
+    wrapper = wrapper_envelope(usdm_con, project(usdm_con, "NCT00000001"))
+    assert "profile" not in wrapper
+
+
+def test_timepoint_role_and_extracted_values_are_projected(nct01777919_con):
+    """docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 3: a bare "6 months" is an
+    observation window, not an assessment timepoint, and the projection now
+    says so and carries the structure `conform` already parsed."""
+    projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
+    pfs = next(e for e in projection.endpoints() if e["description"] == "Progression-free survival")
+    deco = _extension_class(pfs, "decomposition")
+
+    assert deco["timepointPattern"] == "bare_duration"
+    assert deco["timepointRole"] == "observation_window"
+    assert deco["timepointRaw"] == "6 months"
+    assert deco["timepointValue"] == "6"
+    assert deco["timepointUnit"] == "month"
+
+
+def test_timepoint_extracted_fields_camel_case_every_pattern_specific_key():
+    """The projection previously discarded `timepoint_extracted` entirely --
+    this exercises the field-name mapping directly for every kind of key the
+    eleven patterns in timepoint_patterns.yaml can populate (value/value_end,
+    window_pm, anchor, start_anchor, estimated_max_value, ...), independent of
+    getting a live pull to classify into each one."""
+    import json as _json
+
+    from clinical_endpoints.usdm.project import _timepoint_extracted_fields
+
+    fields = dict(
+        _timepoint_extracted_fields(
+            {
+                "value": 90, "value_end": 97, "unit": "day", "window_pm": 7,
+                "anchor": "randomisation", "start_anchor": "baseline",
+                "estimated_max_value": 36, "estimated_max_unit": "month",
+                "approximate": True, "has_baseline": False,
+            }
+        )
+    )
+    assert fields["timepointValue"] == "90"
+    assert fields["timepointValueEnd"] == "97"
+    assert fields["timepointUnit"] == "day"
+    assert fields["timepointWindowPm"] == "7"
+    assert fields["timepointAnchor"] == "randomisation"
+    assert fields["timepointStartAnchor"] == "baseline"
+    assert fields["timepointEstimatedMaxValue"] == "36"
+    assert fields["timepointEstimatedMaxUnit"] == "month"
+    assert fields["timepointApproximate"] == "True"
+    assert fields["timepointHasBaseline"] == "False"
+
+    # Accepts the JSON-text shape `conformed.endpoints.timepoint_extracted`
+    # is actually stored as, and is silent on absence.
+    assert dict(_timepoint_extracted_fields(_json.dumps({"anchor": "surgery"}))) == {
+        "timepointAnchor": "surgery"
+    }
+    assert _timepoint_extracted_fields(None) == []
+    assert _timepoint_extracted_fields("") == []
+    assert _timepoint_extracted_fields("not json") == []
+
+
+@pytest.fixture(scope="module")
+def reference_fallback_con():
+    """A standalone warehouse with one change_from_baseline-shaped endpoint
+    whose text names no reference at all ("CFB in HbA1c") -- the ordinary
+    reference cascade is silent, so usdm_templates.yaml's
+    `reference_fallback: patient_baseline` fires. Isolated from `usdm_con` so
+    this test pins the announced-default path without perturbing the shared
+    fixture's tier/endpoint counts other tests rely on."""
+    from clinical_endpoints.conform.pipeline import run_conform
+    from clinical_endpoints.db import SCHEMAS
+    from clinical_endpoints.ingest.design import STUDIES_DDL
+    from clinical_endpoints.ingest.pull_log import write_pull_log
+    from clinical_endpoints.vocab.loader import default_vocab_dir, load_vocab, write_vocab_tables
+
+    con = duckdb.connect(":memory:")
+    for schema in SCHEMAS:
+        con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+    vocab_dir = default_vocab_dir(Path(__file__).parent)
+    write_vocab_tables(con, load_vocab(vocab_dir), vocab_dir=vocab_dir)
+
+    con.execute(f"CREATE TABLE raw.studies ({STUDIES_DDL})")
+    con.execute(
+        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 19) + ")",
+        [
+            "NCT03000000", "PHASE2", "COMPLETED", "INTERVENTIONAL", "2020-01-01", "2021-01-01",
+            "A diabetes trial", "A diabetes trial, officially",
+            "Single Group Assignment", "Treatment", "Non-Randomized", "None", 60, "Actual",
+            False, "All", "18 Years", "75 Years", "Adults with type 2 diabetes",
+        ],
+    )
+    con.execute(
+        "CREATE TABLE raw.design_outcomes (nct_id VARCHAR, outcome_type VARCHAR, measure VARCHAR, "
+        "time_frame VARCHAR, description VARCHAR, population VARCHAR)"
+    )
+    con.execute(
+        "INSERT INTO raw.design_outcomes VALUES (?, ?, ?, ?, ?, ?)",
+        ("NCT03000000", "primary", "CFB in HbA1c", "Week 24", None, None),
+    )
+    write_pull_log(
+        con, source="ctgov_api", filters={}, row_counts={"studies": 1, "design_outcomes": 1},
+        source_tables=("studies", "design_outcomes"),
+    )
+    run_conform(con)
+    yield con
+    con.close()
+
+
+def test_reference_fallback_is_announced_and_counted(reference_fallback_con):
+    """docs/USDM_PROJECTION_INTEGRITY_SPEC.md changes 1-2: a fallback-filled
+    reference host is flagged `derived: reference`, the decomposition keeps
+    the pipeline's honest `not_stated` rather than being edited to agree with
+    the rendering, and the projection counts the default so the tier cannot
+    hide it."""
+    rules = load_projection_rules(reference_fallback_con)
+    projection = project(reference_fallback_con, "NCT03000000", rules=rules)
+    endpoint = projection.endpoints()[0]
+
+    assert endpoint["label"] == "Change from their own baseline in Glycated haemoglobin (HbA1c) at Week 24 (%)"
+    flags = {
+        e["valueString"] for e in endpoint["extensionAttributes"] if e["url"].endswith(":derived")
+    }
+    assert flags == {"purpose", "reference"}
+
+    deco = _extension_class(endpoint, "decomposition")
+    assert deco["reference"] == "not_stated"  # the pipeline's testimony, never edited to match the host
+    assert _extension_class(endpoint, "conformance")["fidelity"] == "templated"
+
+    dictionary = next(d for d in projection.dictionaries if d["id"] == endpoint["dictionaryId"])
+    reference_map = next(pm for pm in dictionary["parameterMaps"] if pm["tag"] == "reference")
+    host_id = re.search(r'id="([^"]+)"', reference_map["reference"]).group(1)
+    host = next(e for e in endpoint["extensionAttributes"] if e["id"] == host_id)
+    assert host["valueString"] == "their own baseline"  # the announced default, not "not_stated"
+
+    assert projection.defaulted == {"reference": 1}
+    module = module_envelope(reference_fallback_con, projection)
+    assert module["provenance"]["defaulted"] == {"reference": 1}
+
+
+def test_tag_hosts_match_the_decomposition_rendering_unless_derived_flags_it(usdm_con, reference_fallback_con):
+    """The host contract, stated at last (change 4): a `tag:*` extension (or a
+    measurement/event surrogate) carries the RENDERING of the matching
+    decomposition/conformance field, and the only way the two may legitimately
+    disagree is a `derived` flag naming that tag. Recomputes the expected
+    rendering independently, from the row `conform` wrote, using the same
+    render functions the projection itself calls -- so a template rendering
+    one thing while the decomposition claims another (the exact shape of the
+    incident this spec exists to prevent) fails here."""
+    from clinical_endpoints.usdm.tags import render_threshold, render_timepoint
+
+    for con, nct_ids in ((usdm_con, ("NCT00000001", "NCT00000002")), (reference_fallback_con, ("NCT03000000",))):
+        rules = load_projection_rules(con)
+        for nct_id in nct_ids:
+            projection = project(con, nct_id, rules=rules)
+            rows_by_id = {r.endpoint_id: r for r in fetch_rows(con, nct_id)}
+            surrogates_by_id = {s["id"]: s for s in projection.bc_surrogates}
+
+            for endpoint in projection.endpoints():
+                if endpoint["dictionaryId"] is None:
+                    continue
+                derived = {
+                    e["valueString"] for e in endpoint["extensionAttributes"] if e["url"].endswith(":derived")
+                }
+                source_row_id = _extension_class(endpoint, "conformance")["sourceRowId"]
+                row = rows_by_id[source_row_id]
+                ext_by_id = {e["id"]: e for e in endpoint["extensionAttributes"]}
+                dictionary = next(d for d in projection.dictionaries if d["id"] == endpoint["dictionaryId"])
+
+                for pm in dictionary["parameterMaps"]:
+                    tag = pm["tag"]
+                    target_id = re.search(r'id="([^"]+)"', pm["reference"]).group(1)
+                    host_value = (
+                        surrogates_by_id[target_id]["label"]
+                        if tag in ("measurement", "concept", "event")
+                        else ext_by_id[target_id]["valueString"]
+                    )
+                    if tag == "reference":
+                        sourced = rules.inline_label("reference", row.reference_id)
+                        if "reference" in derived:
+                            assert sourced is None, "a reference fallback fired despite a resolved reference"
+                            continue
+                        assert host_value == sourced
+                    elif tag == "measurement":
+                        assert host_value == rules.inline_label("measurement", row.measurement_id)
+                    elif tag == "event":
+                        assert host_value == rules.inline_label("event", row.event_id)
+                    elif tag == "scale":
+                        assert host_value == rules.inline_label("scale", row.scale_id)
+                    elif tag == "threshold":
+                        assert host_value == render_threshold(
+                            row.threshold_comparator, row.threshold_value, row.threshold_unit
+                        )
+                    elif tag == "timepoint":
+                        assert host_value == render_timepoint(
+                            row.timepoint_pattern, row.timepoint_extracted, row.time_frame_raw
+                        )
+
+
+def test_derived_flags_are_from_the_closed_set(usdm_con, reference_fallback_con):
+    """No endpoint or objective may announce a synthesis the vocabulary has
+    not signed off on (docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 2)."""
+    from clinical_endpoints.vocab.schema import DERIVED_ATTRIBUTES
+
+    projections = [
+        project(usdm_con, "NCT00000001", rules=load_projection_rules(usdm_con)),
+        project(usdm_con, "NCT00000002", rules=load_projection_rules(usdm_con)),
+        project(reference_fallback_con, "NCT03000000", rules=load_projection_rules(reference_fallback_con)),
+    ]
+    for projection in projections:
+        for endpoint in projection.endpoints():
+            for ext in endpoint["extensionAttributes"]:
+                if ext["url"].endswith(":derived"):
+                    assert ext["valueString"] in DERIVED_ATTRIBUTES
+        for objective in projection.objectives:
+            for ext in objective["extensionAttributes"]:
+                if ext["url"].endswith(":derived"):
+                    assert ext["valueString"] in DERIVED_ATTRIBUTES

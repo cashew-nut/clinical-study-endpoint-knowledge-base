@@ -35,7 +35,7 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         table="forms",
         columns=(
             "id", "label", "definition", "direction_rule", "analysable", "expects_threshold",
-            "event_family", "notes",
+            "event_family", "reference_entailed", "notes",
         ),
         list_references={"typical_reference": "reference", "typical_scale": "scale"},
     ),
@@ -88,7 +88,7 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         filename="timepoint_patterns.yaml",
         dimension="timepoint_pattern",
         table="timepoint_patterns",
-        columns=("id", "label", "definition", "priority", "notes"),
+        columns=("id", "label", "definition", "priority", "role", "notes"),
     ),
 )
 
@@ -145,6 +145,18 @@ MEASUREMENT_DOMAINS = frozenset(
 )
 EVENT_POLARITIES = frozenset({"harm", "benefit"})
 REFERENCE_KINDS = frozenset({"time_origin", "value_reference", "external_standard"})
+
+# docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 3: what a timepoint_pattern
+# category actually names, independent of what shape of text matched it.
+TIMEPOINT_ROLES = frozenset({"assessment_time", "observation_window", "event_horizon", "unresolved"})
+
+# docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 2: the closed set of
+# `derived` flag values the projection may emit, one per synthesized or
+# defaulted endpoint/objective attribute. Grows only by spec change --
+# an unlisted value means an announcement the vocabulary has not signed off
+# on, which is exactly the unannounced-default failure mode this spec exists
+# to make structurally unrepeatable.
+DERIVED_ATTRIBUTES = frozenset({"purpose", "reference", "objective"})
 
 # The closed set of tags a USDM syntax template may use. Each one has to be
 # resolvable to both a rendered value and a USDM instance to reference -- see

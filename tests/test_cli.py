@@ -354,6 +354,53 @@ def test_usdm_coverage_reports_the_tier_mix(usdm_warehouse_path):
     assert "templated" in result.output and "verbatim" in result.output
 
 
+def test_usdm_coverage_reports_defaulted_tag_counts(tmp_path):
+    """docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1: the tier mix alone
+    cannot show how much of `templated` is standing on an announced default --
+    a standalone warehouse with one reference-fallback-triggering endpoint
+    ("CFB in HbA1c", no reference in the text) exercises the count end to end
+    through the CLI."""
+    from clinical_endpoints.conform.pipeline import run_conform
+    from clinical_endpoints.db import SCHEMAS
+    from clinical_endpoints.ingest.design import STUDIES_DDL
+    from clinical_endpoints.ingest.pull_log import write_pull_log
+    from clinical_endpoints.vocab.loader import default_vocab_dir, load_vocab, write_vocab_tables
+
+    warehouse = tmp_path / "wh.duckdb"
+    con = duckdb.connect(str(warehouse))
+    for schema in SCHEMAS:
+        con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+    write_vocab_tables(con, load_vocab(default_vocab_dir()), vocab_dir=default_vocab_dir())
+    con.execute(f"CREATE TABLE raw.studies ({STUDIES_DDL})")
+    con.execute(
+        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 19) + ")",
+        [
+            "NCT03000000", "PHASE2", "COMPLETED", "INTERVENTIONAL", "2020-01-01", "2021-01-01",
+            "A diabetes trial", "A diabetes trial, officially",
+            "Single Group Assignment", "Treatment", "Non-Randomized", "None", 60, "Actual",
+            False, "All", "18 Years", "75 Years", "Adults with type 2 diabetes",
+        ],
+    )
+    con.execute(
+        "CREATE TABLE raw.design_outcomes (nct_id VARCHAR, outcome_type VARCHAR, measure VARCHAR, "
+        "time_frame VARCHAR, description VARCHAR, population VARCHAR)"
+    )
+    con.execute(
+        "INSERT INTO raw.design_outcomes VALUES (?, ?, ?, ?, ?, ?)",
+        ("NCT03000000", "primary", "CFB in HbA1c", "Week 24", None, None),
+    )
+    write_pull_log(
+        con, source="ctgov_api", filters={}, row_counts={"studies": 1, "design_outcomes": 1},
+        source_tables=("studies", "design_outcomes"),
+    )
+    run_conform(con)
+    con.close()
+
+    result = runner.invoke(app, ["usdm", "coverage", "--warehouse", str(warehouse)])
+    assert result.exit_code == 0, result.output
+    assert "reference defaulted: 1" in result.output
+
+
 def test_pull_reports_a_schema_migration(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     warehouse = tmp_path / "wh.duckdb"
