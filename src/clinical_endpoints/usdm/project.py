@@ -17,6 +17,7 @@ no signal.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from html import escape
 from typing import Any, Iterable
@@ -76,6 +77,10 @@ class ProjectionRules:
     measurement_domain: dict[str, str]
     event_family: dict[str, bool]
     event_concept: dict[str, str]
+    #: docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 3: timepoint_pattern id ->
+    #: its vocabulary-declared role (assessment_time, observation_window,
+    #: event_horizon, unresolved).
+    timepoint_role: dict[str, str] = field(default_factory=dict)
     vocab_version: str | None = None
 
     def inline_label(self, dimension: str, term_id: str | None) -> str | None:
@@ -138,6 +143,9 @@ def load_projection_rules(con: duckdb.DuckDBPyConnection) -> ProjectionRules:
     event_concept = {
         row[0]: row[1] for row in con.execute("SELECT id, concept FROM vocab.events").fetchall() if row[1]
     }
+    timepoint_role = {
+        row[0]: row[1] for row in con.execute("SELECT id, role FROM vocab.timepoint_patterns").fetchall() if row[1]
+    }
 
     return ProjectionRules(
         templates=templates,
@@ -157,6 +165,7 @@ def load_projection_rules(con: duckdb.DuckDBPyConnection) -> ProjectionRules:
         measurement_domain={m[0]: m[2] for m in measurements if m[2]},
         event_family=event_family,
         event_concept=event_concept,
+        timepoint_role=timepoint_role,
         vocab_version=_vocab_version(con),
     )
 
@@ -198,6 +207,10 @@ class SourceRow:
     named_endpoint_id: str | None = None
     analysable: bool | None = None
     review_reason: str | None = None
+    form_confidence: float | None = None
+    measurement_confidence: float | None = None
+    reference_confidence: float | None = None
+    event_confidence: float | None = None
 
     @property
     def level(self) -> str:
@@ -210,7 +223,8 @@ SELECT endpoint_id, outcome_type, measure_raw, description_raw, time_frame_raw, 
        timepoint_pattern, timepoint_extracted,
        threshold_comparator, threshold_value, threshold_unit,
        form_match_method, measurement_match_method, reference_match_method, analysable,
-       event_id, event_match_method, named_endpoint_id
+       event_id, event_match_method, named_endpoint_id,
+       form_confidence, measurement_confidence, reference_confidence, event_confidence
 FROM conformed.endpoints WHERE nct_id = ?
 """
 
@@ -245,6 +259,8 @@ def fetch_rows(con: duckdb.DuckDBPyConnection, nct_id: str) -> list[SourceRow]:
                 form_match_method=r[16], measurement_match_method=r[17],
                 reference_match_method=r[18], analysable=r[19],
                 event_id=r[20], event_match_method=r[21], named_endpoint_id=r[22],
+                form_confidence=r[23], measurement_confidence=r[24],
+                reference_confidence=r[25], event_confidence=r[26],
             )
         )
     if _table_exists(con, "conformed", "review_queue"):
@@ -285,6 +301,12 @@ class Projection:
     bc_surrogates: list[dict] = field(default_factory=list)
     analysis_populations: list[dict] = field(default_factory=list)
     tiers: dict[str, int] = field(default_factory=dict)
+    #: Per-tag count of endpoints whose host carries an announced default
+    #: (docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1) -- e.g. {"reference": 3}
+    #: for three endpoints whose reference host came from `reference_fallback`.
+    #: A subset of `tiers["templated"]`: the tier can no longer hide how much
+    #: of it is standing on defaults.
+    defaulted: dict[str, int] = field(default_factory=dict)
     endpoint_count: int = 0
 
     def endpoints(self) -> list[dict]:
@@ -318,14 +340,27 @@ def _humanise(term_id: str) -> str:
     return term_id.replace("_", " ")
 
 
-def _resolve_tags(row: SourceRow, spec: TemplateSpec, rules: ProjectionRules) -> dict[str, str | None]:
-    """Every tag's rendered value, or None where the dimension did not resolve."""
+def _resolve_tags(
+    row: SourceRow, spec: TemplateSpec, rules: ProjectionRules
+) -> tuple[dict[str, str | None], bool]:
+    """Every tag's rendered value, or None where the dimension did not resolve.
+
+    Also reports whether `reference` came from `spec.reference_fallback` --
+    the announced default docs/USDM_PROJECTION_INTEGRITY_SPEC.md requires a
+    `derived: reference` flag for. The caller still has to check the value
+    actually reached the rendered text (`_build_endpoint`): a fallback
+    resolved here but never used by the template (e.g. the endpoint degrades
+    to a template with no `{reference}` tag) minted no host, so no flag is
+    owed.
+    """
     measurement = rules.inline_label("measurement", row.measurement_id)
     concept_id = rules.measurement_concept.get(row.measurement_id or "")
     reference = rules.inline_label("reference", row.reference_id)
+    reference_defaulted = False
     if reference is None and spec.reference_fallback:
         reference = rules.inline_label("reference", spec.reference_fallback)
-    return {
+        reference_defaulted = reference is not None
+    values = {
         "measurement": measurement,
         "concept": _humanise(concept_id) if concept_id else None,
         "reference": reference,
@@ -334,6 +369,7 @@ def _resolve_tags(row: SourceRow, spec: TemplateSpec, rules: ProjectionRules) ->
         "timepoint": render_timepoint(row.timepoint_pattern, row.timepoint_extracted, row.time_frame_raw),
         "threshold": render_threshold(row.threshold_comparator, row.threshold_value, row.threshold_unit),
     }
+    return values, reference_defaulted
 
 
 def _verbatim_text(row: SourceRow) -> str:
@@ -385,42 +421,66 @@ class _SharedInstances:
         return self.populations[text]
 
 
+def _timepoint_extracted_fields(extracted: Any) -> list[tuple[str, str]]:
+    """`timepoint_extracted`'s parsed fields, as `timepoint<Field>` pairs --
+    the structured duration `conform` already parses (`{"value": 6, "unit":
+    "month"}`) but the projection used to discard. Sorted by key, so the
+    projection stays deterministic regardless of dict/JSON key order.
+    """
+    if isinstance(extracted, str):
+        try:
+            extracted = json.loads(extracted)
+        except (TypeError, ValueError):
+            extracted = None
+    if not extracted:
+        return []
+    fields: list[tuple[str, str]] = []
+    for key in sorted(extracted):
+        value = extracted[key]
+        if value is None or value == "":
+            continue
+        camel = "".join(part.capitalize() for part in key.split("_"))
+        fields.append((f"timepoint{camel}", str(value)))
+    return fields
+
+
 def _decomposition(
-    ids: IdFactory, row: SourceRow, tier: str, analysis_population_id: str | None = None
+    ids: IdFactory, row: SourceRow, rules: ProjectionRules, analysis_population_id: str | None = None
 ) -> dict:
-    """The vocabulary decomposition, as one nested ExtensionAttribute.
+    """What the endpoint MEANS, as one nested ExtensionAttribute: the resolved
+    vocabulary terms, never how confidently or by what method they were
+    resolved -- that lives in `_conformance` instead
+    (docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 4: two different questions,
+    kept apart on purpose).
 
     A standards-only consumer ignores it; a consumer of this warehouse gets the
     full decomposition without a second call.
     """
     inner: list[dict] = []
-    for url, value in (
-        ("form", row.form_id),
-        ("measurement", row.measurement_id),
-        ("reference", row.reference_id),
-        ("event", row.event_id),
-        ("direction", row.direction_id),
-        ("scale", row.scale_id),
-        ("timepointPattern", row.timepoint_pattern),
-        ("timepointRaw", row.time_frame_raw),
-        ("thresholdComparator", row.threshold_comparator),
-        ("thresholdUnit", row.threshold_unit),
-        ("formMatchMethod", row.form_match_method),
-        ("measurementMatchMethod", row.measurement_match_method),
-        ("referenceMatchMethod", row.reference_match_method),
-        ("eventMatchMethod", row.event_match_method),
-        ("namedEndpoint", row.named_endpoint_id),
-        ("reviewReason", row.review_reason),
-        ("fidelity", tier),
-        ("sourceRowId", row.endpoint_id),
-        ("analysisPopulationId", analysis_population_id),
-    ):
-        if value is not None and str(value) != "":
-            inner.append(_extension(ids, url, valueString=str(value)))
-    if row.threshold_value is not None:
-        inner.append(_extension(ids, "thresholdValue", valueString=str(row.threshold_value)))
+
+    def add(url: str, value: Any) -> None:
+        if value is None or str(value) == "":
+            return
+        inner.append(_extension(ids, url, valueString=str(value)))
+
+    add("form", row.form_id)
+    add("event", row.event_id)
+    add("measurement", row.measurement_id)
+    add("reference", row.reference_id)
+    add("direction", row.direction_id)
+    add("scale", row.scale_id)
+    add("namedEndpoint", row.named_endpoint_id)
+    add("thresholdComparator", row.threshold_comparator)
+    add("thresholdUnit", row.threshold_unit)
+    add("thresholdValue", row.threshold_value)
+    add("timepointPattern", row.timepoint_pattern)
+    add("timepointRole", rules.timepoint_role.get(row.timepoint_pattern or ""))
+    add("timepointRaw", row.time_frame_raw)
+    for url, value in _timepoint_extracted_fields(row.timepoint_extracted):
+        add(url, value)
     if row.analysable is not None:
         inner.append(_extension(ids, "analysable", valueBoolean=bool(row.analysable)))
+    add("analysisPopulationId", analysis_population_id)
 
     return {
         "id": ids.mint("ExtensionAttribute"),
@@ -435,16 +495,57 @@ def _decomposition(
     }
 
 
+def _conformance(ids: IdFactory, row: SourceRow, tier: str) -> dict:
+    """How the decomposition's semantics were decided: match methods and
+    confidences per dimension, the fidelity tier, and the sourcing
+    bookkeeping (`docs/USDM_PROJECTION_INTEGRITY_SPEC.md` change 4). A
+    consumer asking "what does this endpoint mean" reads `decomposition`
+    alone; one asking "how sure is the pipeline" reads this instead.
+    """
+    inner: list[dict] = []
+
+    def add(url: str, value: Any) -> None:
+        if value is None or str(value) == "":
+            return
+        inner.append(_extension(ids, url, valueString=str(value)))
+
+    add("formMatchMethod", row.form_match_method)
+    add("formMatchConfidence", row.form_confidence)
+    add("measurementMatchMethod", row.measurement_match_method)
+    add("measurementMatchConfidence", row.measurement_confidence)
+    add("referenceMatchMethod", row.reference_match_method)
+    add("referenceMatchConfidence", row.reference_confidence)
+    add("eventMatchMethod", row.event_match_method)
+    add("eventMatchConfidence", row.event_confidence)
+    add("fidelity", tier)
+    add("reviewReason", row.review_reason)
+    add("sourceRowId", row.endpoint_id)
+
+    return {
+        "id": ids.mint("ExtensionAttribute"),
+        "url": f"{codes.EXTENSION_NS}:conformance",
+        "instanceType": "ExtensionAttribute",
+        "valueExtensionClass": {
+            "id": ids.mint("ExtensionClass"),
+            "url": f"{codes.EXTENSION_NS}:conformance",
+            "extensionAttributes": inner,
+            "instanceType": "ExtensionClass",
+        },
+    }
+
+
 def _build_endpoint(
     row: SourceRow,
     rules: ProjectionRules,
     ids: IdFactory,
     shared: _SharedInstances,
     ordinal: int,
-) -> tuple[dict, dict | None, str]:
-    """One Endpoint, its dictionary (or None at verbatim tier), and its tier."""
+) -> tuple[dict, dict | None, str, frozenset[str]]:
+    """One Endpoint, its dictionary (or None at verbatim tier), its tier, and
+    the set of tags whose host carries an announced default (today, at most
+    `{"reference"}` -- docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1)."""
     spec = rules.templates.get(row.form_id or "")
-    values = _resolve_tags(row, spec, rules) if spec else {}
+    values, reference_defaulted = _resolve_tags(row, spec, rules) if spec else ({}, False)
     rendered = None
     degraded = False
     if row.conformed and spec and not spec.verbatim and spec.parts:
@@ -467,6 +568,15 @@ def _build_endpoint(
         tier = TIER_PARTIAL
     else:
         tier = TIER_TEMPLATED
+
+    # The flag is only owed once the default actually reached the document:
+    # a fallback the template never used (e.g. the row degraded to a
+    # template with no {reference} tag) minted no host, so nothing to flag.
+    defaulted: frozenset[str] = (
+        frozenset({"reference"})
+        if reference_defaulted and rendered is not None and "reference" in rendered.tags
+        else frozenset()
+    )
 
     name = f"END{ordinal}"
     endpoint_id = ids.mint("Endpoint")
@@ -525,8 +635,11 @@ def _build_endpoint(
 
     population = (row.population or "").strip()
     population_id = shared.population(population)["id"] if population else None
-    extensions.append(_decomposition(ids, row, tier, population_id))
+    extensions.append(_decomposition(ids, row, rules, population_id))
+    extensions.append(_conformance(ids, row, tier))
     extensions.append(_extension(ids, "derived", valueString="purpose"))
+    if "reference" in defaulted:
+        extensions.append(_extension(ids, "derived", valueString="reference"))
 
     domain = rules.measurement_domain.get(row.measurement_id or "")
     purpose = rules.purposes.get(domain) or rules.purposes.get("_default", "")
@@ -544,7 +657,7 @@ def _build_endpoint(
         "level": _code(ids, *codes.ENDPOINT_LEVEL_CODES[row.level]),
         "instanceType": "Endpoint",
     }
-    return endpoint, dictionary, tier
+    return endpoint, dictionary, tier, defaulted
 
 
 def _endpoint_concept(row: SourceRow, rules: ProjectionRules) -> str:
@@ -588,23 +701,25 @@ def project(
     study_id = ids.mint("Study")
     shared = _SharedInstances(ids, rules)
 
-    built: list[tuple[SourceRow, dict, dict | None, str]] = []
+    built: list[tuple[SourceRow, dict, dict | None, str, frozenset[str]]] = []
     for ordinal, row in enumerate(rows, start=1):
         if wanted_levels and row.level not in wanted_levels:
             continue
-        endpoint, dictionary, tier = _build_endpoint(row, rules, ids, shared, ordinal)
+        endpoint, dictionary, tier, defaulted = _build_endpoint(row, rules, ids, shared, ordinal)
         if wanted_tiers and tier not in wanted_tiers:
             continue
-        built.append((row, endpoint, dictionary, tier))
+        built.append((row, endpoint, dictionary, tier, defaulted))
 
     projection = Projection(nct_id=nct_id, study_id=study_id)
     projection.endpoint_count = len(built)
-    for _row, _endpoint, _dictionary, tier in built:
+    for _row, _endpoint, _dictionary, tier, defaulted in built:
         projection.tiers[tier] = projection.tiers.get(tier, 0) + 1
-    projection.dictionaries = [d for _r, _e, d, _t in built if d]
+        for tag in defaulted:
+            projection.defaulted[tag] = projection.defaulted.get(tag, 0) + 1
+    projection.dictionaries = [d for _r, _e, d, _t, _def in built if d]
 
     for level in codes.LEVEL_ORDER:
-        at_level = [(r, e) for r, e, _d, _t in built if r.level == level]
+        at_level = [(r, e) for r, e, _d, _t, _def in built if r.level == level]
         if not at_level:
             continue
         index = len(projection.objectives) + 1

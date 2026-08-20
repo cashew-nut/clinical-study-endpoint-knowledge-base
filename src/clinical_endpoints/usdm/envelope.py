@@ -120,6 +120,11 @@ def provenance(
         "vocabVersion": vocab_version,
         "projectedAt": _now(),
         "tiers": dict(sorted(projection.tiers.items())),
+        # docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1: per-tag count of
+        # endpoints whose host carries an announced default (a subset of
+        # tiers["templated"]), so the tier mix can no longer hide how much
+        # of it is standing on defaults.
+        "defaulted": dict(sorted(projection.defaulted.items())),
     }
 
 
@@ -140,6 +145,12 @@ def module_envelope(
     flatten: bool = False,
 ) -> dict:
     body: dict[str, Any] = {
+        # docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 5: first key, so the
+        # boundary between the knowledge-base envelope and USDM class
+        # instances is machine-readable from the artefact alone, not just
+        # implied by `systemName`. `envelope=wrapper` carries no `profile` --
+        # it is the standard's own shape.
+        "profile": codes.MODULE_PROFILE,
         "usdmVersion": codes.USDM_VERSION,
         "systemName": codes.SYSTEM_NAME,
         "study": {"id": projection.study_id, "nctId": projection.nct_id},

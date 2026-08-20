@@ -35,6 +35,19 @@
 #
 # `extract` names the fields a step-3 parser should populate from the named capture
 # groups, so this file is the parser spec, not just a classifier.
+#
+# `role` -- docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 3. Every category above
+# already states in its `definition` what KIND of thing it names; `role` is that
+# same judgment made machine-readable, closed set, validator-checked:
+#
+#   assessment_time    -- a point (or points) in time something was assessed
+#   observation_window -- a period over which something accumulated, not a visit
+#   event_horizon      -- no calendar timepoint at all; the analysis fires on events
+#   unresolved         -- unspecified, the honest non-answer
+#
+# The projection carries this alongside timepointPattern/timepointRaw so a consumer
+# does not have to re-derive "is 'over 6 months' a visit or a window?" from the
+# pattern id -- the vocabulary already knows and says so here.
 
 version: 1
 dimension: timepoint_pattern
@@ -98,6 +111,7 @@ terms:
   - id: event_driven
     label: "Event-driven"
     priority: 10
+    role: event_horizon
     definition: >-
       The analysis fires on accrual of a target number of events, not on the
       calendar. Any duration given is an administrative estimate of when that will
@@ -121,6 +135,7 @@ terms:
   - id: visit_window
     label: "Fixed timepoint with an explicit window"
     priority: 20
+    role: assessment_time
     definition: >-
       A single scheduled timepoint carrying a stated tolerance -- the protocol's
       visit window.
@@ -143,6 +158,7 @@ terms:
   - id: anchored_offset
     label: "Offset from a named anchor event"
     priority: 45
+    role: assessment_time
     definition: >-
       A fixed elapsed time measured from an explicitly named anchor other than
       study baseline -- randomisation, transplant, surgery, first dose, delivery,
@@ -191,6 +207,7 @@ terms:
   - id: multi_timepoint
     label: "Several fixed timepoints"
     priority: 35
+    role: assessment_time
     definition: >-
       Two or more named assessment timepoints joined by list separators, with or
       without a baseline. Repeated measures, not a single window.
@@ -229,6 +246,7 @@ terms:
   - id: baseline_to_timepoint
     label: "Baseline plus a single assessment timepoint"
     priority: 40
+    role: assessment_time
     definition: >-
       A baseline reference and exactly one post-baseline assessment -- the
       change-from-baseline signature.
@@ -289,6 +307,7 @@ terms:
   - id: single_fixed
     label: "Single fixed timepoint"
     priority: 50
+    role: assessment_time
     definition: >-
       One named assessment timepoint -- a unit label followed by a number -- with no
       baseline reference, no list, and no window.
@@ -312,6 +331,7 @@ terms:
   - id: bare_duration
     label: "Bare duration, no anchor"
     priority: 60
+    role: observation_window
     definition: >-
       A duration with no anchor and no accumulation keyword -- "7 months",
       "6 weeks", "24 months". Read as an observation period of that length starting
@@ -335,6 +355,7 @@ terms:
   - id: cumulative_window
     label: "Cumulative collection window"
     priority: 70
+    role: observation_window
     definition: >-
       Everything occurring across an interval is counted -- the signature of safety,
       exposure, and event-count endpoints. Triggered by "up to", "through",
@@ -368,6 +389,7 @@ terms:
   - id: event_relative
     label: "Relative to a clinical event, no calendar value"
     priority: 80
+    role: assessment_time
     definition: >-
       Anchored to something that happens rather than to a time -- "periprocedural",
       "at the time of delivery", "at discharge", "end of treatment".
@@ -387,6 +409,7 @@ terms:
   - id: baseline_only
     label: "Baseline only"
     priority: 90
+    role: assessment_time
     definition: >-
       The string names a baseline and nothing else. Usually a data-entry artefact --
       a baseline characteristic recorded as an outcome, or a truncated entry.
@@ -401,6 +424,7 @@ terms:
   - id: unspecified
     label: "Not parseable"
     priority: 999
+    role: unresolved
     definition: >-
       No pattern matched. The raw string is still kept in timepoint_raw; this
       category is the honest answer rather than a forced classification, and its

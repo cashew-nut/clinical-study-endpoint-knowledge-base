@@ -87,24 +87,29 @@ auditable. See [`docs/USDM_ENDPOINTS_API_SPEC.md`](docs/USDM_ENDPOINTS_API_SPEC.
 for the design and [Projecting to USDM 4.0](#projecting-to-usdm-40) below for
 how to run it.
 
-**Proposed, not implemented.** Three design specs are written but not built:
+Two response envelopes, both from the same projection: `envelope=module`
+(the default) is USDM class instances (`objectives[]`, `dictionaries[]`,
+`bcSurrogates[]`, `analysisPopulations[]`) inside a knowledge-base envelope
+(`profile`, `study`, `provenance`) -- its `profile` field states that boundary
+machine-readably; `envelope=wrapper` is a full, canonical USDM `Wrapper` for
+consumers whose tooling only eats one, with no `profile` key because it needs
+none.
 
-* [`docs/EVENT_SEMANTICS_SPEC.md`](docs/EVENT_SEMANTICS_SPEC.md) — **priority.**
-  The first live validation of the USDM projection (NCT01777919) rendered PFS
-  as "Time from randomisation to Tumour burden (RECIST)" and OS as "Time from
-  randomisation to vital status": time-to-event endpoints have no `event` axis,
-  so the assessment gets rendered in the event slot, and PFS/TTP/DoR collapse
-  to one identity. The spec adds `events.yaml`, `named_endpoints.yaml`, and
-  event resolution in `conform` — preserving the PFS↔ORR same-measurement join.
-* [`docs/USDM_PROJECTION_INTEGRITY_SPEC.md`](docs/USDM_PROJECTION_INTEGRITY_SPEC.md)
-  — companion, from the same validation: announced defaults (the projection
-  rendered a `reference_fallback` into the label while the decomposition said
-  `not_stated`, with no flag), per-attribute `derived` flags, timepoint
-  roles (a bare "6 months" is an observation window, not a timepoint), the
-  v2 extension profile, and the module-envelope boundary.
-* [`docs/COMPOSITE_ENDPOINTS_SPEC.md`](docs/COMPOSITE_ENDPOINTS_SPEC.md) —
-  decomposing composite endpoints into their components, and why that is the
-  one structure worth a recursive relation.
+Every endpoint's decomposition rides along in `extensionAttributes`, split
+into what it *means* (`decomposition`) and how confidently/by what method
+each dimension was decided (`conformance`) -- see
+[`docs/USDM_PROJECTION_INTEGRITY_SPEC.md`](docs/USDM_PROJECTION_INTEGRITY_SPEC.md)
+for the extension profile, and its **host contract**: a `tag:*` extension
+carries the *rendering* of the matching decomposition field, and the two may
+disagree only where a per-attribute `derived` flag says an endpoint attribute
+was synthesized or defaulted rather than sourced -- checked by a projection
+test over every fixture payload, so a fallback that forgets its flag fails CI
+rather than shipping a quiet contradiction.
+
+**Written but not built:**
+[`docs/COMPOSITE_ENDPOINTS_SPEC.md`](docs/COMPOSITE_ENDPOINTS_SPEC.md) —
+decomposing composite endpoints into their components, and why that is the
+one structure worth a recursive relation.
 
 ## Setup
 
@@ -327,14 +332,24 @@ of three fidelity tiers -- `templated` (every required tag resolved), `partial`
 (an optional group dropped, or the form was `not_stated`), or `verbatim` (the
 registry string passed through, for rows `conform` sent to the review queue).
 A trial whose endpoints did not conform is a trial whose endpoints render less
-richly, never one that appears to have fewer of them.
+richly, never one that appears to have fewer of them. `usdm coverage` also
+reports, per tag, how many `templated` endpoints are standing on an announced
+default rather than a value actually resolved from the source -- a fallback
+is legal at all only where the form's own meaning entails the value
+(`forms.yaml`'s `reference_entailed`, checked by `vocab validate`), never on
+corpus convention alone.
 
 Templates live in [`vocab/usdm_templates.yaml`](vocab/usdm_templates.yaml), one
 per form id, and are validated by `endpoints vocab validate` along with
 everything else. Objectives and `Endpoint.purpose` are absent from registry
-records, so both are derived from the vocabulary and flagged `derived` in
-`extensionAttributes`; the wrapper envelope names every attribute it had to
-default in `provenance.synthesized[]`.
+records, so both are derived from the vocabulary; every synthesized or
+defaulted attribute carries its own `derived` flag in `extensionAttributes`
+(`purpose`, `reference`, `objective`), not one blanket flag per endpoint, and
+the wrapper envelope names every attribute it had to default in
+`provenance.synthesized[]`. Timepoints carry a `timepointRole` alongside the
+matched pattern -- a bare "6 months" is an `observation_window`, not an
+`assessment_time` -- plus whatever structured fields (`timepointValue`,
+`timepointUnit`, ...) the pattern parsed out of the raw string.
 
 ## Querying the warehouse directly
 

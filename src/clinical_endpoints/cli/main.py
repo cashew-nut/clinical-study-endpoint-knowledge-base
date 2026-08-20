@@ -554,10 +554,13 @@ def usdm_coverage(
         if limit:
             nct_ids = nct_ids[:limit]
         totals: dict[str, int] = {}
+        defaulted_totals: dict[str, int] = {}
         for nct_id in nct_ids:
             projection = project(con, nct_id, rules=rules)
             for tier, count in projection.tiers.items():
                 totals[tier] = totals.get(tier, 0) + count
+            for tag, count in projection.defaulted.items():
+                defaulted_totals[tag] = defaulted_totals.get(tag, 0) + count
     finally:
         con.close()
 
@@ -575,6 +578,17 @@ def usdm_coverage(
         table.add_row(tier, str(count), f"{100 * count / grand:.1f}%")
     table.add_row("[bold]total", f"[bold]{grand}", "")
     console.print(table)
+
+    # docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1: how much of the
+    # templated tier is standing on an announced default, not a resolved
+    # value -- a subset of "templated", never hidden inside it.
+    if defaulted_totals:
+        templated = totals.get("templated", 0) or 1
+        parts = ", ".join(
+            f"{tag} defaulted: {count} ({100 * count / templated:.1f}% of templated)"
+            for tag, count in sorted(defaulted_totals.items())
+        )
+        console.print(f"[dim]{parts}[/dim]")
 
 
 @app.command()

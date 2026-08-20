@@ -21,6 +21,7 @@ def test_the_one_call_returns_every_endpoint_in_the_trial(client):
     assert response.status_code == 200
     assert response.headers["X-USDM-Version"] == "4.0.0"
     body = response.json()
+    assert list(body.keys())[0] == "profile"
     assert body["usdmVersion"] == "4.0.0"
     assert body["study"]["nctId"] == "NCT00000001"
     assert sum(len(o["endpoints"]) for o in body["objectives"]) == 5
@@ -83,6 +84,7 @@ def test_coverage_reports_the_tier_mix(client):
     body = client.get("/v4/studies/NCT00000001/endpoints/coverage").json()
     assert body["endpoints"] == 5
     assert body["tiers"]["templated"] == 3
+    assert body["defaulted"] == {}  # none of NCT00000001's endpoints needed a fallback
 
 
 def test_a_vocabulary_reference_resolves_over_http(client):

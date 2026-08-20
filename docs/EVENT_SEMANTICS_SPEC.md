@@ -1,10 +1,10 @@
 # Design spec: event semantics for time-to-event endpoints
 
-Status: **proposed, priority.** Written after the first validation of the USDM
+Status: **implemented.** Written after the first validation of the USDM
 projection against a live pull (NCT01777919, 2026-08-20) and an external USDM
 review of that payload. The defect it fixes surfaced on the first trial tried,
 is systematic rather than incidental, and affects the clinical correctness of
-every time-to-event endpoint the warehouse serves. Nothing here is implemented.
+every time-to-event endpoint the warehouse serves.
 
 Read alongside:
 

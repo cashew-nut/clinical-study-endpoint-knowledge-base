@@ -83,7 +83,13 @@ def create_app(warehouse: str = "warehouse.duckdb") -> FastAPI:
             "This service has no such repository -- it has a registry mirror, and "
             "the identifier its users hold is an NCT id -- so the route keys on "
             "that. A client holding a USDM study UUID from elsewhere will not "
-            "find it here."
+            "find it here.\n\n"
+            "Two response envelopes: `envelope=module` (default) is USDM class "
+            "instances (objectives[], dictionaries[], bcSurrogates[], "
+            "analysisPopulations[]) inside a knowledge-base envelope (profile, "
+            "study, provenance), its `profile` field naming that boundary; "
+            "`envelope=wrapper` is canonical USDM -- a full Wrapper, with no "
+            "`profile` key, for consumers whose tooling only eats one."
         ),
         version=codes.USDM_VERSION,
     )
@@ -135,6 +141,7 @@ def create_app(warehouse: str = "warehouse.duckdb") -> FastAPI:
                 "nctId": nct_id,
                 "endpoints": projection.endpoint_count,
                 "tiers": dict(sorted(projection.tiers.items())),
+                "defaulted": dict(sorted(projection.defaulted.items())),
             }
         )
 
