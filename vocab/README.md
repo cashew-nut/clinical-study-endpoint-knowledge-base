@@ -1,22 +1,23 @@
 # The vocabularies
 
 One YAML file per dimension, plus the MeSH mapping and the matching contract.
-Revised in vocabulary review round two against an unbiased sample of 13,542
-outcome rows. This file records the schema,
+Revised in vocabulary review round three against a 38,857-row pull whose two
+largest therapeutic areas are cardiovascular and respiratory; round two was
+against an unbiased sample of 13,542 outcome rows. This file records the schema,
 the judgment calls, and the things a reviewer should push back on.
 
 ```
 forms.yaml               18 terms   what kind of number the endpoint is
-measurements.yaml       165 terms   what quantity or event it is about
+measurements.yaml       234 terms   what quantity or event it is about
 references.yaml          17 terms   what it is measured against
 directions.yaml           7 terms   which way is better (derived, not matched)
-events.yaml               23 terms  what occurrence ends the clock, for a time-to-event endpoint
-scales.yaml              59 terms   the unit
+events.yaml              38 terms   what occurrence ends the clock, for a time-to-event endpoint
+scales.yaml              67 terms   the unit
 therapeutic_areas.yaml   24 terms   the TA, derived from MeSH
 timepoint_patterns.yaml  11 terms   time_frame categories + extraction regexes
 ta_mesh_mapping.yaml                MeSH condition/intervention -> TA
 matching.yaml                       HOW all of the above are matched
-named_endpoints.yaml                what a literature endpoint NAME (PFS, OS, DFS...) means
+named_endpoints.yaml     12 defs    what a literature endpoint NAME (PFS, OS, MACE...) means
 ```
 
 `matching.yaml` is not a term list. It is the contract the conforming pipeline
@@ -206,8 +207,12 @@ without anyone maintaining a priority list across 165 terms.
 
 ## Coverage, honestly
 
-These are round-two numbers, measured on the unbiased sample. **They are lower
-than round one's and they mean more.** Round one measured against the 500 most
+These are round-two numbers, measured on the unbiased sample, and they are left
+as they were measured: the round-three figures are reported separately under
+"What round three changed" below, because they answer a different question
+against a different corpus and averaging the two would hide the therapeutic-area
+gap that was the whole finding. **They are lower than round one's and they mean
+more.** Round one measured against the 500 most
 frequent distinct strings per field — almost pure head — and scored 96.6% /
 92%. Round two measures against every value occurring twice or more plus a
 seeded random draw from the singleton tail, then weights each sampled singleton
@@ -313,24 +318,176 @@ References are the mirror image: 17.4% of rows from `measure`, **44.2% from
 `time_frame`**. The time origin of an endpoint is written into the timing field,
 not the title, so the reference cascade reads `time_frame` first.
 
+## What round three changed: the vocabulary was oncology-shaped
+
+Rounds one and two were measured against samples drawn without regard to
+therapeutic area, and the vocabulary they produced was written the same way --
+which, given where the reference tables and the reviewers' attention came from,
+meant oncology. Round three is the first round measured on a corpus that is not:
+**38,857 outcome rows over 4,345 studies, whose two largest areas are
+cardiovascular (9,160 rows) and respiratory (7,322), against oncology's 6,588.**
+
+The bias was invisible in the headline coverage number and obvious the moment
+the number was cut by therapeutic area:
+
+| therapeutic area | rows | measurement conformed, before | after |
+|---|---|---|---|
+| cardiovascular | 9,160 | 53.0% | **73.5%** |
+| respiratory | 7,322 | 64.7% | **77.4%** |
+| oncology | 6,588 | 79.2% | 80.3% |
+| whole corpus | 38,857 | 61.7% | **70.5%** |
+
+Twenty-six points between the best-covered area and the worst is not a property
+of registry text. Cardiovascular endpoints are, if anything, *more* stereotyped
+than oncology ones -- the same adjudicated event list recurs trial after trial.
+The gap was the library.
+
+The same bias sat in the event axis, where being wrong is louder. Event
+resolution on event-family rows ran **72.0% in oncology against 48.8%
+cardiovascular and 47.7% respiratory**; it is now **73.2% / 72.9% / 59.2%**. An
+event-family row whose event does not resolve renders at `partial` tier, which
+is honest. One that resolves to the *wrong* event renders a confident,
+standards-conformant, clinically wrong sentence -- the disease
+`docs/EVENT_SEMANTICS_SPEC.md` was written to cure, and it was alive and well
+outside oncology:
+
+* `Major adverse cardiovascular events within 30 days (MACE30)` resolved its
+  event to `death_any_cause`, and `Major adverse cardiovascular event (MACE)` to
+  `stroke` -- both off the components spelled out in the description, because
+  the event cascade reads `description` when `measure` yields nothing and MACE
+  had no event of its own to yield.
+* An endpoint counting **cardiovascular** death resolved to `death_any_cause`,
+  the strictly wider event, for want of a narrower term.
+
+### What was added
+
+* **`measurements.yaml`: 69 terms** (165 → 234), 40 cardiovascular and 29
+  respiratory, every one of them from a repeated miss in the review queue rather
+  than from a textbook. The cardiovascular block leads with the adjudicated
+  events -- infarction, stroke, bleeding, revascularisation, stent thrombosis,
+  VTE, atrial fibrillation, arrhythmia, cardiac arrest, unstable angina, limb
+  events, LVAD/transplant, worsening heart failure -- then the quantities
+  (blood pressure unspecified, MAP, LV volume and mass, strain, diastolic
+  function, troponin, infarct size, cardiac output, the four missing lipid
+  fractions, KCCQ/MLHFQ/SAQ, peak VO2, platelet reactivity, arterial stiffness,
+  endothelial function, decongestion) and the serum chemistry every diuretic and
+  RAAS trial reports. The respiratory block covers what spirometry misses (PEF,
+  static lung volumes, oscillometry, LCI), the type-2 biomarkers (FeNO, blood
+  and sputum eosinophils), the PRO instruments that dominate COPD and asthma
+  (CAT, E-RS, ACT, the symptom diaries, mMRC, TDI, cough, K-BILD), sweat
+  chloride, corticosteroid-sparing, respiratory support and blood gases -- plus
+  the right-heart-catheter variables of pulmonary hypertension, which
+  `ta_mesh_mapping.yaml` deliberately routes to `respiratory`.
+* **`events.yaml`: 15 terms** (23 → 38) -- the cardiovascular event classes,
+  `cardiovascular_death`, the MACE composite, respiratory support escalation
+  and failure, and the two benefit events (`hospital_discharge`,
+  `ventilator_weaning`) the direction diff below forced. Per this file's
+  cross-file synonym discipline the wording lives on the measurement and the
+  event is reached through `implies_event`; the exceptions are argued in
+  place.
+* **`scales.yaml`: 8 units** (59 → 67) -- L/min, m/s, kPa, Wood units,
+  dyn·s·cm⁻⁵, µmol/L, ppb, mg/day.
+* **`named_endpoints.yaml`: 2 definitions** -- `ttcw` (time to clinical
+  worsening, the pulmonary-hypertension analogue of PFS) and `daoh`.
+* **Three existing measurements were wired to events that already existed** and
+  had simply never been pointed at: `hospitalisation` → `hospitalisation_event`
+  (279 rows), `treatment_discontinuation`, `intracranial_haemorrhage` →
+  `bleeding_event`. One line each, and between them a third of the
+  non-cardiovascular event-coverage gain above.
+* **`directions.yaml`** gained two cardio-respiratory harm cues, as the
+  documented fallback for rows whose event does not resolve.
+
+Of 234 measurement terms, **exactly one (`graves_orbitopathy_qol`) fails to fire
+anywhere in this pull** -- which also retires round two's "`fev1`, `easi`,
+`madrs`, `edss`, `womac` and 20 other terms have never fired on any sample"
+caveat. FEV1 alone carries 727 rows here.
+
+### MACE is a measurement, not a named endpoint
+
+The tempting move was to give MACE a `named_endpoints.yaml` definition, the way
+PFS has one. It is the wrong shape. A named-endpoint definition pins a *form*,
+and MACE is as often an incidence proportion as a time-to-first-event in this
+corpus -- pinning `time_to_event` would be exactly the lexical guess the cascade
+section below refuses to make for bare "Adverse Events". MACE stays a
+measurement whose `implies_event` reaches a MACE event, which also keeps the
+`SAME_MEASUREMENT_DIFFERENT_FORM` join between "incidence of MACE" and "time to
+first MACE" that this warehouse exists to build. All 97 event-family MACE rows
+in this corpus now resolve to the MACE event; before round three, none did.
+
+### Five over-matching synonyms, caught by diffing against the previous run
+
+Round two's lesson was that a coverage number cannot see a matching defect. So
+round three was measured the other way as well: every row conformed *before*
+these terms was re-conformed after, and the ~1,460 that changed measurement were
+read, along with every row whose DIRECTION changed while its measurement did
+not. Most were fixes -- "Transient ischemic attack" leaving `disease_exacerbation`
+(it had matched the synonym "attack"), "Lung Clearance Index" leaving
+`pk_clearance`, "Major bleeding" leaving `haemoglobin`. Five were defects in the
+new terms, and all five are the same failure mode as round two's `ess`:
+
+| synonym | what it also matched | fix |
+|---|---|---|
+| `Raw` (airway resistance) | "raw score", in 8 PROMIS/rating-scale descriptions | dropped; `sRaw`/`siRaw` kept |
+| `GCS` (global circumferential strain) | Glasgow Coma Scale, 4 of 5 occurrences | dropped, spelled out |
+| `NCS` (nasal congestion score) | "Abnormal Not Clinically Significant (NCS)", 8 of 25 | dropped, spelled out |
+| `RHI` (reactive hyperaemia index) | Robarts Histopathology Index, 4 of 14 | dropped, spelled out |
+| `exercise capacity` (peak VO2) | 10 rows that said only "Functional Exercise Capacity" | dropped: it names the shared *concept*, not this instrument |
+
+Two more were caught before they shipped, from the corpus rather than from a
+diff: `creatinine` is longer than both `UACR` and `eGFR` and so took
+"urine albumin-to-creatinine ratio" and "eGFR (CKD-EPI creatinine equation)"
+rows off them, fixed with two `not_if_matches` vetoes; and bare `sodium` /
+`potassium` are the commonest drug-salt suffix in pharmacology (`amogammadex
+sodium`, `sodium zirconium cyclosilicate`), so both are matched only with a
+`serum`/`plasma`/`urinary` qualifier.
+
+The direction half of that diff found the one defect a measurement diff cannot
+show. Wiring `hospitalisation` to `hospitalisation_event` (polarity `harm`) is
+right for an admission endpoint and wrong for "Time to discharge", which flipped
+from `shorter_is_better` to `longer_is_better` -- because direction is
+event-first, and the discharge had no event of its own to be first with. The fix
+is two benefit events, `hospital_discharge` and `ventilator_weaning`, not a
+retreat from the wiring: `directions.yaml` has listed "time to ... discharge"
+and "... extubation" among its benefit cues since it was written, so this is the
+same judgment moved to the layer that now decides ahead of the cues.
+
+Three acronyms were deliberately left out on the same evidence and are recorded
+in their terms' notes: `PE` (physical examination and plasma exchange as well as
+pulmonary embolism), `BDI` (the Beck Depression Inventory, in 54 of 56
+occurrences, not the Baseline Dyspnea Index) and `PCI` (as often the index
+procedure a trial enrols after as the outcome event). `MI`, `MALE`, `CAT`, `ACT`
+and `MAP` were kept but carry either a case-sensitive pattern, a
+`not_if_matches` veto, or both.
+
 ## Known gaps
 
-* **Live AACT/CT.gov access is still unavailable from this build sandbox.**
-  Everything below the vocabulary layer (`pull --ta`, the TA resolver,
-  `endpoints ta diff-tree`) is implemented and unit-tested against fakes, but has
-  never run against a real pull.
-* **The event-semantics work (`events.yaml`, `named_endpoints.yaml`, event
-  resolution, the `{event}` template flip) has the same limitation, one
-  measurement short.** `docs/EVENT_SEMANTICS_SPEC.md` gates the template flip
-  on event coverage measured from a real pull -- unmeasurable from this
-  sandbox, so it shipped on the strength of unit fixtures (including the
-  NCT01777919 regression case) rather than a corpus-wide number. Run
-  `endpoints usdm coverage` and a per-resolution-path event-coverage query
-  against `conformed.endpoints` (`event_id`, `event_match_method`) the first
-  time a real pull is possible, and expect `templated` to drop slightly even
-  at good coverage -- rows that were templated only because the old
-  `reference_fallback` filled the hole become honest partials, which is the
-  metric working, not regressing.
+* ~~**Live AACT/CT.gov access is still unavailable from this build sandbox.**~~
+  **Partly closed.** Round three was measured against a real pull's export --
+  38,857 `design_outcomes` rows over 4,345 studies, plus the TA resolver's own
+  output for those studies, in which all four `ta_mesh_mapping.yaml` rule layers
+  (`term_override`, `tree_prefixes`, `term_pattern`, `intervention_rule`) are
+  present. So the vocabulary, the matcher, the conforming pipeline and the TA
+  resolver have now all seen real registry text. `pull` itself and
+  `endpoints ta diff-tree` still have not been re-run from this sandbox.
+* ~~**The event-semantics work has the same limitation, one measurement
+  short.**~~ **Measured in round three.** `docs/EVENT_SEMANTICS_SPEC.md` gated
+  its phase D on event coverage from a real pull; here it is. Over the 10,154
+  event-family rows in this corpus, `event_match_method` splits
+  `named_endpoint` 2,739 / `implied` (a measurement's `implies_event`) 2,431 /
+  `exact` 966 / `syntactic_rule` 323, with 3,695 unresolved -- 63.6% resolved
+  overall, and the per-area split under "What round three changed" above.
+  `endpoints usdm coverage` over the same corpus moves from templated 33.0% /
+  partial 21.7% / verbatim 45.3% before round three to **38.0% / 24.8% /
+  37.2%** after, with `reference defaulted` steady at 4.3% → 4.5% of templated.
+  Two caveats on those figures. The pull's export carried no
+  `raw.studies.allocation`, so the randomisation gate on a named-endpoint
+  definition's `reference` never opened -- every PFS/OS/TTCW row here resolved
+  its reference through the ordinary cascade, and a pull that carries
+  allocation should show more templated rows and a different defaulting rate.
+  And phase D's own question -- whether `incidence_proportion`, `event_count`
+  and `event_rate` should switch from `{measurement}` to `{event}` -- is now
+  answerable and still unanswered: their corpus is no longer AE-dominated in
+  cardiovascular, where `implies_event` reaches a real event on most rows.
 * **The TA tree-vs-pattern diff was run against a hand-built truth set, not a
   live pull.** 80 real MeSH descriptors whose tree placement is known; 12
   disagreements, 9 of them defects now fixed (the three interstitial pneumonias
@@ -343,12 +500,29 @@ not the title, so the reference cascade reads `time_frame` first.
   `anaesthesia_critical_care`. Re-run `endpoints ta diff-tree` against a real
   pull when one is possible; a hand-built truth set finds what its author thought
   to test.
-* **Rheumatology and respiratory are still thin.** ACR20 and FEV1 are in the
-  vocabulary because the plan's reference table names them, not because the
-  corpus exercised them. `fev1`, `easi`, `madrs`, `edss`, `womac` and 20 other
-  terms have never fired on any sample. That is not evidence they are wrong — it
-  is an absence of evidence either way, and a therapeutic-area-weighted pull is
-  the way to close it.
+* ~~**Rheumatology and respiratory are still thin.**~~ **Closed for respiratory
+  and cardiovascular by round three; still open for rheumatology.** The
+  38,857-row pull exercised every one of the terms round two could not:
+  `fev1` carries 727 rows, `acr_response_composite` 44, `madrs` 33, `das28` 22,
+  `easi` 21, `womac` 11, `edss` 10. Exactly one measurement term
+  (`graves_orbitopathy_qol`) fails to fire anywhere in it. Rheumatology is a
+  541-row area here and conforms at 61.7%, so it is under-sampled rather than
+  demonstrably thin — the same "absence of evidence either way" this bullet
+  described, now narrowed to the areas the pull did not reach.
+* **`adverse_event` and `serious_adverse_event` have no event term**, and
+  between them account for 1,893 event-family rows carrying
+  `event: not_stated` — by a wide margin the largest remaining event-coverage
+  gap, and the reason respiratory event resolution (59.2%) still trails
+  cardiovascular (72.9%). Round three did not close it deliberately: an
+  adverse-event event term changes the projection for every therapeutic area at
+  once, which is a corpus-wide decision and not a cardio-respiratory one. It is
+  the next single highest-value edit in this file.
+* **Composite endpoints that name a union in free text still resolve to one
+  member.** "Time from randomisation to first occurrence of arterial thrombosis,
+  venous thromboembolism or cardiovascular death" gets `venous_thromboembolism`
+  by longest match, which is defensible and lossy. MACE is handled because it
+  has a NAME; unions written out in full are not, and
+  `docs/COMPOSITE_ENDPOINTS_SPEC.md` is where that belongs rather than here.
 * **The residual 6.9% of unclassified timepoints is genuine long tail** —
   multi-phase narrative schedules, per-cohort schedules, labelled study periods
   with no absolute horizon. Chasing it would overfit.

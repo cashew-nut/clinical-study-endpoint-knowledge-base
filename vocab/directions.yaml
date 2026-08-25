@@ -151,11 +151,20 @@ event_polarity_cues:
     - 'time to (disease |radiographic |confirmed )?(progression|death|relapse|recurrence|deterioration|worsening|failure|discontinuation|withdrawal|amputation|dialysis|transplant)'
     - 'time to first (adverse event|exacerbation|hospitali[sz]ation|bleed|seizure|fracture|event)'
     - 'time to (initiation of )?(rescue|subsequent|next) (medication|therapy|treatment)'
+    - 'time to (first |recurrent |unplanned |urgent )?(myocardial infarction|infarction|stroke|revascular\w*|bleed(ing)?|stent thrombosis|atrial fibrillation|cardiac arrest|heart failure|amputation)'
+    - 'time to (intubation|mechanical ventilation|invasive ventilation|respiratory failure|oxygen (therapy|requirement))'
     - '\b(mortality|death|progression|relapse|recurrence|exacerbation|hospitali[sz]ation)\b'
   notes: >-
     "Time to initiation of rescue medication" is deliberately in the harm list:
     needing rescue is the bad outcome, so later is better. That reading is easy to
     get backwards, which is why it is written down rather than inferred.
+
+    The two cardio-respiratory harm lines were added in round three, alongside
+    events.yaml's cardiovascular/respiratory terms. They are belt and braces, not
+    the primary evidence: direction is event-first, so a row whose event resolves
+    takes the event's own `polarity` and never reaches these regexes. They catch
+    the residue -- a time-to-first-infarction row whose measurement did not
+    resolve, and so has no `implies_event` to follow.
 
 # Direction is derived, never matched, so the fallback is on derivation: when
 # neither an event cue, the measurement's default_direction, nor its event_polarity

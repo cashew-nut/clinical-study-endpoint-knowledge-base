@@ -32,12 +32,12 @@ assembled from:
 | file | terms | what it names |
 |---|---|---|
 | `forms.yaml` | 18 | what kind of number the endpoint is (a change from baseline, a responder proportion, a time to event) |
-| `measurements.yaml` | 165 | what quantity or event it is about (FEV1, PASI, vital status) |
+| `measurements.yaml` | 234 | what quantity or event it is about (FEV1, PASI, vital status) |
 | `references.yaml` | 17 | what it is measured against (own baseline, randomisation, comparator arm) |
-| `events.yaml` | 23 | what occurrence stops the clock on a time-to-event endpoint |
-| `named_endpoints.yaml` | 10 | what a literature name means (PFS, OS, DFS) |
+| `events.yaml` | 38 | what occurrence stops the clock on a time-to-event endpoint |
+| `named_endpoints.yaml` | 12 | what a literature name means (PFS, OS, MACE) |
 | `directions.yaml` | 7 | which way is better -- derived from form + measurement, never matched |
-| `scales.yaml` | 59 | the unit |
+| `scales.yaml` | 67 | the unit |
 | `timepoint_patterns.yaml` | 11 | `time_frame` categories, and the regexes that extract values from them |
 | `therapeutic_areas.yaml` | 24 | therapeutic area, resolved from MeSH |
 | `usdm_templates.yaml` | 18 | one USDM syntax template per form |
@@ -148,9 +148,9 @@ uv run endpoints vocab validate
 ```
 
 ```
-Vocabulary valid (direction=7, event=23, form=18, measurement=165,
-reference=17, scale=59, therapeutic_area=24, timepoint_pattern=11)
-Wrote 2996 rows across 44 vocab.* tables -> warehouse.duckdb
+Vocabulary valid (direction=7, event=38, form=18, measurement=234,
+reference=17, scale=67, therapeutic_area=24, timepoint_pattern=11)
+Wrote 3940 rows across 44 vocab.* tables -> warehouse.duckdb
 ```
 
 **2. Ingest studies.** Filtered by phase, date, and -- because step 1 loaded the

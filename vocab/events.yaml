@@ -272,6 +272,210 @@ terms:
       - '\btime to (first )?fracture\b'
 
   # =========================================================================
+  # CARDIOVASCULAR AND RESPIRATORY EVENTS
+  # =========================================================================
+  # Added in round three, against a pull whose two largest areas are
+  # cardiovascular and respiratory. Before it, event resolution on event-family
+  # rows ran 72.0% in oncology and 48.8% / 47.7% in those two -- the same
+  # oncology bias measurements.yaml had, in the dimension where being wrong is
+  # loudest: an event-family row whose event does not resolve renders at
+  # `partial` tier, and one that resolves to the WRONG event renders a
+  # confident, standards-conformant, clinically wrong sentence. "Major adverse
+  # cardiovascular events within 30 days (MACE30)" resolved to
+  # `death_any_cause` before these terms existed.
+  #
+  # Every term here follows this file's cross-file synonym discipline: the
+  # wording lives on the measurement (measurements.yaml's cardiovascular and
+  # respiratory round-three blocks), which reaches the event through
+  # `implies_event`; what stays here is the residue that names the OCCURRENCE
+  # rather than the assessment of it -- "time to X" phrasings and composite
+  # unions with no text form of their own.
+
+  - id: myocardial_infarction
+    label: "Myocardial infarction"
+    inline_label: "myocardial infarction"
+    concept: cardiovascular_event
+    polarity: harm
+    ascertained_by: [myocardial_infarction]
+    patterns:
+      - '\btime to (first |recurrent )?(myocardial infarction|infarction)\b'
+
+  - id: stroke
+    label: "Stroke"
+    inline_label: "a stroke"
+    concept: cardiovascular_event
+    polarity: harm
+    ascertained_by: [stroke]
+    patterns:
+      - '\btime to (first |recurrent )?strokes?\b'
+
+  - id: cardiovascular_death
+    label: "Cardiovascular death"
+    inline_label: "cardiovascular death"
+    concept: survival
+    polarity: harm
+    ascertained_by: [vital_status]
+    synonyms: ["cardiovascular death", "CV death", "cardiac death", "death from cardiovascular causes",
+               "cardiovascular mortality"]
+    notes: >-
+      The one cardiovascular event that does carry its own synonyms rather than
+      arriving through a measurement's `implies_event`. It has to: the
+      measurement that ascertains it is `vital_status`, whose `implies_event` is
+      `death_any_cause`, and a trial's cardiovascular-death endpoint is a
+      strictly narrower event than its all-cause one. Leaving it to
+      `vital_status` would have rendered "Time from randomisation to death from
+      any cause" over a CV-death endpoint -- the same class of confident, wrong
+      sentence as the PFS defect that created this file. The measurement stays
+      `vital_status` either way, so the survival join is untouched.
+
+  - id: worsening_heart_failure
+    label: "Worsening heart failure"
+    inline_label: "worsening heart failure"
+    concept: cardiovascular_event
+    polarity: harm
+    ascertained_by: [worsening_heart_failure, heart_failure_hospitalisation]
+
+  - id: revascularisation
+    label: "Revascularisation"
+    inline_label: "revascularisation"
+    concept: cardiovascular_event
+    polarity: harm
+    ascertained_by: [coronary_revascularisation]
+    patterns:
+      - '\btime to (first |unplanned |urgent |repeat )?revascular\w*\b'
+
+  - id: stent_thrombosis
+    label: "Stent thrombosis"
+    inline_label: "stent thrombosis"
+    concept: thrombotic_event
+    polarity: harm
+    ascertained_by: [stent_thrombosis]
+
+  - id: venous_thromboembolism
+    label: "Venous thromboembolism"
+    inline_label: "venous thromboembolism"
+    concept: thrombotic_event
+    polarity: harm
+    ascertained_by: [venous_thromboembolism]
+
+  - id: atrial_fibrillation
+    label: "Atrial fibrillation or flutter"
+    inline_label: "atrial fibrillation"
+    concept: cardiac_arrhythmia
+    polarity: harm
+    ascertained_by: [atrial_fibrillation]
+    patterns:
+      - '\btime to (first |recurrent )?(atrial fibrillation|atrial flutter)\b'
+
+  - id: cardiac_arrest
+    label: "Cardiac arrest"
+    inline_label: "cardiac arrest"
+    concept: cardiovascular_event
+    polarity: harm
+    ascertained_by: [cardiac_arrest]
+
+  - id: unstable_angina
+    label: "Unstable angina"
+    inline_label: "unstable angina"
+    concept: cardiovascular_event
+    polarity: harm
+    ascertained_by: [unstable_angina]
+
+  - id: major_adverse_cardiovascular_event
+    label: "Major adverse cardiovascular event (MACE)"
+    inline_label: "a major adverse cardiovascular event"
+    concept: cardiovascular_event
+    polarity: harm
+    ascertained_by: [major_adverse_cardiovascular_event]
+    patterns:
+      - '(?-i:\bMACC?E\b)'
+      - '(?-i:\bNACE\b)'
+      - '\bmajor adverse (cardiovascular|cardiac)( and cerebrovascular)? events?\b'
+      - '\bnet adverse (clinical|event clinical) events?\b'
+    notes: >-
+      MACE is clinically a union of cardiovascular death, myocardial infarction
+      and stroke -- all three of which are event ids in this section -- and it
+      is deliberately NOT declared with `components`. This file's XOR rule
+      (`components` XOR match rules) draws exactly the right line, and MACE is
+      on the other side of it from `disease_progression_or_death`: that term has
+      no text form of its own and is reached only through the `pfs` definition,
+      whereas MACE is a name sponsors write down, so it has to match text. The
+      component list is recorded here in prose instead of in a field the
+      matcher would then have to be forbidden from using. The four- and
+      five-point variants (adding revascularisation, hospitalisation for
+      unstable angina) are the same event with a different adjudication
+      definition, which is a Threshold question rather than a second term --
+      the same call `tumour_burden_recist` makes about RECIST's response
+      criteria.
+
+      The two patterns are the one place this file matches text that a
+      measurement's synonyms already claim, and they are patterns rather than
+      synonyms for a reason beyond the validator's ambiguity rule: the event
+      cascade reads `measure` before `description`, and a MACE row's
+      description almost always spells the components out ("adjudicated as CV
+      death, nonfatal MI, and nonfatal stroke"). With no `measure`-level match
+      the cascade reached the description first and resolved the event to
+      whichever single component it found there -- "Major adverse
+      cardiovascular event (MACE)" came out as time to stroke, and "Major
+      adverse cardiovascular events within 30 days (MACE30)" as time to death
+      from any cause. Rows these patterns miss still fall through to the
+      measurement's `implies_event`, which reaches this same term.
+
+  - id: respiratory_support_escalation
+    label: "Escalation of respiratory support"
+    inline_label: "escalation of respiratory support"
+    concept: respiratory_support
+    polarity: harm
+    ascertained_by: [respiratory_support]
+    patterns:
+      - '\btime to (intubation|mechanical ventilation|invasive ventilation)\b'
+    notes: >-
+      The escalation, not the weaning: "time to extubation" is a benefit event
+      and directions.yaml's `event_polarity_cues` already reads it that way.
+
+  - id: respiratory_failure
+    label: "Respiratory failure"
+    inline_label: "respiratory failure"
+    concept: respiratory_failure
+    polarity: harm
+    ascertained_by: [respiratory_failure]
+
+  - id: hospital_discharge
+    label: "Hospital discharge"
+    inline_label: "hospital discharge"
+    concept: hospitalisation
+    polarity: benefit
+    ascertained_by: [hospitalisation, length_of_stay]
+    patterns:
+      - '\btime to (hospital |icu )?discharge\b'
+      - '\btime to (be )?discharged?\b'
+    notes: >-
+      The benefit half of the hospitalisation concept, and required rather than
+      optional once `hospitalisation` gained `implies_event:
+      hospitalisation_event` in round three. Direction is event-first, so
+      without a discharge event "Time to discharge" inherited the ADMISSION
+      event's `harm` polarity and came out `longer_is_better` -- a real
+      regression the round-three before/after direction diff caught on three
+      rows. directions.yaml's benefit cues have listed "time to ... discharge"
+      since they were written; this is the same judgment, moved to the layer
+      that now decides first.
+
+  - id: ventilator_weaning
+    label: "Weaning from respiratory support"
+    inline_label: "weaning from respiratory support"
+    concept: respiratory_support
+    polarity: benefit
+    ascertained_by: [respiratory_support]
+    patterns:
+      - '\btime to (successful )?(extubation|weaning|liberation from (mechanical )?ventilation)\b'
+      - '\btime to (be )?(extubated|weaned)\b'
+    notes: >-
+      Same shape as `hospital_discharge`, and for the same reason: the
+      `respiratory_support` measurement's `implies_event` names the ESCALATION,
+      so coming off support needs its own benefit event or it inherits the
+      wrong polarity.
+
+  # =========================================================================
   # BENEFIT EVENTS OUTSIDE ONCOLOGY
   # =========================================================================
   - id: virologic_response

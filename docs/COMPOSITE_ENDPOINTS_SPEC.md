@@ -34,7 +34,7 @@ question answerable, and it costs:
 * **Quadratic materialisation.** `SAME_MEASUREMENT_DIFFERENT_FORM` as a stored
   endpoint↔endpoint edge is a self-join inside each measurement group — order
   10⁵ edges even under a uniform distribution, far worse under the real
-  power-law skew, encoding what a `GROUP BY measurement_id` expresses in ~165
+  power-law skew, encoding what a `GROUP BY measurement_id` expresses in ~234
   rows.
 * **Type loss.** `WHERE threshold_value >= 30` becomes
   `WHERE CAST(json_extract_string(properties,'$.threshold_value') AS DOUBLE) >= 30`.

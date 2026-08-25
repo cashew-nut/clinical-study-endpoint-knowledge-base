@@ -200,7 +200,8 @@ terms:
     default_direction: increase_is_better
     default_scale: millilitres
     typical_ta: [respiratory]
-    synonyms: ["FVC", "forced vital capacity", "percent predicted FVC", "FVC% pred", "pFVC", "%pFVC"]
+    synonyms: ["FVC", "forced vital capacity", "percent predicted FVC", "FVC% pred", "pFVC", "%pFVC",
+               "ppFVC", "FVC%", "slow vital capacity"]
     patterns: ['\bFVC\b', '\bforced vital capacity\b']
 
   - id: dlco
@@ -323,6 +324,476 @@ terms:
     typical_ta: [anaesthesia_critical_care]
     synonyms: ["ventilator-free days", "vasopressor-free days", "ICU-free days", "organ support free days",
                "days alive and free of"]
+
+
+  # --- Round three: respiratory ---------------------------------------------
+  # Every term below is a repeated miss in the review queue of a 38,857-row pull
+  # whose two largest areas are cardiovascular (9,160 rows) and respiratory
+  # (7,322) -- the pull vocab/README.md's "rheumatology and respiratory are still
+  # thin" gap asked for. The count in each `notes` is unmatched `measure` rows in
+  # that pull, which is why the term is here rather than a guess at what a
+  # respiratory trial might measure.
+
+  - id: peak_expiratory_flow
+    label: "Peak expiratory flow (PEF)"
+    concept: airflow_obstruction
+    method: spirometry
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: litres_per_minute
+    typical_ta: [respiratory]
+    synonyms: ["PEF", "PEFR", "peak expiratory flow", "peak expiratory flow rate", "peak flow",
+               "morning PEF", "evening PEF", "AM PEF", "PM PEF"]
+    notes: >-
+      Shares `airflow_obstruction` with fev1 on purpose: a twice-daily diary PEF
+      and a clinic FEV1 are the same construct through different instruments,
+      which is exactly the concept-level join decision #2 describes. 64 rows.
+
+  - id: static_lung_volumes
+    label: "Static lung volumes (TLC, RV, FRC)"
+    inline_label: "static lung volumes"
+    concept: lung_volume
+    method: body_plethysmography
+    domain: efficacy
+    default_direction: neutral
+    default_scale: litres
+    typical_ta: [respiratory]
+    synonyms: ["total lung capacity", "TLC", "residual volume", "functional residual capacity", "FRC",
+               "inspiratory capacity", "RV/TLC", "RV/TLC ratio", "static lung volumes", "lung hyperinflation",
+               "body plethysmography"]
+    notes: >-
+      Direction is `neutral` and not increase_is_better because the constituents
+      disagree: a falling RV/TLC is deflation and good, a falling inspiratory
+      capacity is bad. The endpoint's own form and the reported constituent
+      decide, not this term. No bare "RV" or "IC" synonym -- "RV" is the right
+      ventricle throughout the cardiovascular corpus and "IC" appears as
+      "95%IC" (confidence interval) and as intermittent claudication. 59 rows.
+
+  - id: airway_resistance
+    label: "Airway resistance (oscillometry)"
+    inline_label: "airway resistance"
+    concept: airway_resistance
+    method: oscillometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    typical_ta: [respiratory]
+    synonyms: ["airway resistance", "impulse oscillometry", "oscillometry", "sRaw", "siRaw",
+               "specific airway resistance", "R5-R19", "R5-R20", "reactance area",
+               "specific image-based airway resistance"]
+    notes: >-
+      Small-airway function, reported by oscillometry (R5, R5-R19) and by
+      plethysmographic sRaw. Four bare tokens are deliberately omitted: "R5",
+      "X5" and "AX" are letter-digit fragments that collide with dose-level and
+      region labels, and "Raw" -- the plethysmographic symbol -- matched "raw
+      score" in eight PROMIS and rating-scale descriptions on its first run,
+      which is matching.yaml's whole-token rule doing its job and still not
+      being enough. 31 rows.
+
+  - id: lung_clearance_index
+    label: "Lung clearance index (LCI)"
+    concept: ventilation_inhomogeneity
+    method: multiple_breath_washout
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: dimensionless
+    typical_ta: [respiratory]
+    synonyms: ["LCI", "lung clearance index", "LCI2.5", "LCI 2.5", "LCI5.0", "LCI 5.0",
+               "multiple breath washout"]
+    notes: >-
+      The cystic-fibrosis and bronchiectasis lung-function endpoint, reported
+      where spirometry is normal or the participant is too young for it. Thin
+      in this pull (4 rows) but it travels with sweat chloride, which is not.
+
+  - id: sweat_chloride
+    label: "Sweat chloride"
+    concept: cftr_function
+    method: sweat_test
+    domain: pharmacodynamic
+    default_direction: decrease_is_better
+    default_scale: mmol_per_l
+    typical_ta: [respiratory, rare_genetic]
+    synonyms: ["sweat chloride", "SwCl", "sweat chloride concentration", "sweat test"]
+    notes: >-
+      The CFTR-modulator pharmacodynamic endpoint, and the single most frequent
+      unmatched respiratory string in the pull (57 rows). `domain:
+      pharmacodynamic` rather than efficacy: it measures channel function, not
+      how the participant is.
+
+  - id: fractional_exhaled_nitric_oxide
+    label: "Fractional exhaled nitric oxide (FeNO)"
+    inline_label: "FeNO"
+    concept: type_2_inflammation
+    method: exhaled_breath_analysis
+    domain: pharmacodynamic
+    default_direction: decrease_is_better
+    default_scale: parts_per_billion
+    typical_ta: [respiratory]
+    synonyms: ["FeNO", "FENO", "fractional exhaled nitric oxide", "exhaled nitric oxide", "eNO"]
+    notes: 19 rows. Shares `type_2_inflammation` with the two eosinophil terms below.
+
+  - id: blood_eosinophil_count
+    label: "Blood eosinophil count"
+    concept: type_2_inflammation
+    method: laboratory
+    domain: pharmacodynamic
+    default_direction: decrease_is_better
+    default_scale: cells_per_ul
+    typical_ta: [respiratory, immunology_inflammation]
+    synonyms: ["blood eosinophil count", "peripheral blood eosinophils", "blood eosinophils",
+               "absolute eosinophil count", "eosinophil count"]
+    notes: >-
+      Separate from `sputum_inflammatory_cells` because the compartment is the
+      whole point: a biologic can clear blood eosinophils without touching
+      airway ones. Same concept, different instrument -- the join decision #2
+      exists for. 57 rows across the two.
+
+  - id: sputum_inflammatory_cells
+    label: "Sputum inflammatory cell counts"
+    inline_label: "sputum inflammatory cell counts"
+    concept: type_2_inflammation
+    method: induced_sputum
+    domain: pharmacodynamic
+    default_direction: decrease_is_better
+    default_scale: percentage
+    typical_ta: [respiratory]
+    synonyms: ["sputum eosinophils", "sputum eosinophil count", "sputum eosinophil percentage",
+               "sputum neutrophils", "sputum neutrophil count", "sputum cell count",
+               "induced sputum", "sputum inflammatory biomarkers"]
+
+  - id: sputum_production
+    label: "Sputum production"
+    concept: airway_secretions
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    typical_ta: [respiratory]
+    synonyms: ["sputum production", "sputum volume", "sputum colour score", "sputum color score",
+               "sputum viscosity", "sputum characteristics", "expectoration"]
+    notes: >-
+      The symptom, kept apart from `sputum_inflammatory_cells`, which is the
+      same specimen read as a biomarker. Mucolytic trials measure this one.
+
+  - id: copd_assessment_test
+    label: "COPD Assessment Test (CAT)"
+    concept: copd_health_status
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 40]
+    mcid: 2
+    typical_ta: [respiratory]
+    synonyms: ["CAT", "COPD Assessment Test", "CAAT", "CAT total score"]
+    not_if_matches:
+      - '\bCAT scan\b'
+    notes: >-
+      51 rows, and the most common COPD patient-reported endpoint in the pull.
+      The veto keeps the three-letter acronym off "CAT scan"; every other
+      capitalised "CAT" in the corpus is this instrument.
+
+  - id: evaluating_respiratory_symptoms
+    label: "Evaluating Respiratory Symptoms in COPD (E-RS)"
+    inline_label: "E-RS:COPD"
+    concept: respiratory_symptom_severity
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 40]
+    mcid: 2
+    typical_ta: [respiratory]
+    synonyms: ["E-RS", "E-RS:COPD", "E-RS COPD", "Evaluating Respiratory Symptoms", "EXACT-RS",
+               "EXACT", "EXACT-PRO", "E-RS:IPF"]
+    notes: 31 rows in `measure` and 44 more in `description`.
+
+  - id: asthma_control_test
+    label: "Asthma Control Test (ACT)"
+    concept: asthma_control
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    score_range: [5, 25]
+    mcid: 3
+    typical_ta: [respiratory]
+    synonyms: ["ACT", "Asthma Control Test", "c-ACT", "Childhood Asthma Control Test"]
+    not_if_matches:
+      - '\bactivated clotting time\b'
+      - '\bacceptance and commitment therapy\b'
+      - '\badoptive cell (therapy|transfer)\b'
+    notes: >-
+      Shares `asthma_control` with the ACQ, and scores the opposite way round:
+      ACT rises with better control, ACQ falls. Three vetoes because "ACT" is
+      the corpus's worst-behaved capitalised acronym -- activated clotting time,
+      acceptance and commitment therapy, and TIL adoptive cell therapy all
+      appear in it.
+
+  - id: asthma_symptom_diary
+    label: "Asthma symptom diary score"
+    concept: asthma_symptom_severity
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [respiratory]
+    synonyms: ["asthma symptom score", "asthma daytime symptom diary", "ADSD",
+               "asthma nighttime symptom diary", "ANSD", "asthma night-time symptom diary",
+               "asthma symptom diary", "symptom-free days", "asthma daily diary"]
+    notes: >-
+      Distinct from `asthma_control_questionnaire`: a daily diary score is a
+      symptom count over the last 24 hours, an ACQ is a weekly recall
+      instrument that also asks about rescue use and lung function. 34 rows.
+
+  - id: mmrc_dyspnoea_scale
+    label: "mMRC dyspnoea scale"
+    inline_label: "mMRC dyspnoea grade"
+    concept: dyspnoea_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 4]
+    typical_ta: [respiratory]
+    synonyms: ["mMRC", "modified Medical Research Council", "MRC dyspnoea scale", "MRC dyspnea scale",
+               "mMRC dyspnoea scale", "mMRC dyspnea scale"]
+
+  - id: transition_dyspnoea_index
+    label: "Transition Dyspnoea Index (TDI)"
+    concept: dyspnoea_severity
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: score_points
+    score_range: [-9, 9]
+    mcid: 1
+    typical_ta: [respiratory]
+    synonyms: ["TDI", "Transition Dyspnea Index", "Transition Dyspnoea Index", "TDI focal score",
+               "Baseline Dyspnea Index", "Baseline Dyspnoea Index"]
+    notes: >-
+      increase_is_better, unlike every other dyspnoea instrument here: the TDI
+      is scored as a change from the BDI, so positive is improvement. Bare
+      "BDI" is deliberately NOT a synonym -- it is the Beck Depression
+      Inventory in 54 of the 56 places it appears in this corpus, and claiming
+      it here would route depression endpoints into a respiratory term.
+
+  - id: dyspnoea_severity_score
+    label: "Dyspnoea severity score"
+    inline_label: "dyspnoea severity"
+    concept: dyspnoea_severity
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    typical_ta: [respiratory, cardiovascular]
+    synonyms: ["dyspnea", "dyspnoea", "breathlessness", "shortness of breath",
+               "Borg dyspnea scale", "Borg dyspnoea scale", "modified Borg", "dyspnea severity",
+               "dyspnea score", "dyspnoea score", "dyspnea VAS"]
+    notes: >-
+      The unnamed-instrument catch-all for breathlessness, below the two named
+      instruments above on longest-match. 96 rows in `measure`, 51 more in
+      `description`, and it is a heart-failure symptom as often as a
+      respiratory one, hence the two typical_ta values.
+
+  - id: cough_severity
+    label: "Cough severity and frequency"
+    inline_label: "cough severity"
+    concept: cough_burden
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    typical_ta: [respiratory]
+    synonyms: ["cough", "cough frequency", "24-hour cough frequency", "objective cough frequency",
+               "cough severity", "Leicester Cough Questionnaire", "LCQ", "cough severity NRS",
+               "CS-NRS", "cough VAS", "McMaster Cough Severity Questionnaire", "MCSQ",
+               "cough-specific quality of life"]
+    notes: >-
+      Objective 24-hour cough counts and the cough PRO instruments share one
+      term rather than three: refractory-chronic-cough trials report them as a
+      matched set on the same participants, so the interesting comparison is
+      across studies, not across instruments within one. 63 rows.
+
+  - id: nasal_polyp_score
+    label: "Nasal polyp score (NPS)"
+    concept: sinonasal_disease_burden
+    method: nasal_endoscopy
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 8]
+    mcid: 1
+    typical_ta: [respiratory, otolaryngology_dental]
+    synonyms: ["NPS", "nasal polyp score", "total nasal polyp score", "endoscopic polyp score",
+               "Lund-Mackay score", "Lund Mackay score", "Lund-McKay score"]
+    notes: >-
+      Chronic rhinosinusitis with nasal polyps travels with severe asthma in
+      this corpus (shared type-2 biology, shared biologics), so it lands in the
+      respiratory TA rather than otolaryngology. 20 rows.
+
+  - id: nasal_symptom_score
+    label: "Nasal symptom score"
+    concept: sinonasal_disease_burden
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [respiratory, otolaryngology_dental]
+    synonyms: ["nasal congestion score", "nasal congestion", "SNOT-22", "SNOT 22",
+               "Sinonasal Outcome Test", "total nasal symptom score", "TNSS", "rTNSS",
+               "reflective total nasal symptom score",
+               "loss of smell score", "UPSIT", "University of Pennsylvania Smell Identification Test"]
+    notes: >-
+      "NCS" is not a synonym: eight of its 25 corpus occurrences are the
+      laboratory-reporting phrase "Abnormal Not Clinically Significant (NCS)"
+      against ten that are the Nasal Congestion Score, and a lab-abnormality row
+      landing in a rhinitis term is the kind of quiet mis-join
+      matching.yaml exists to prevent.
+
+  - id: kings_brief_ild_questionnaire
+    label: "King's Brief Interstitial Lung Disease questionnaire (K-BILD)"
+    inline_label: "K-BILD"
+    concept: respiratory_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    score_range: [0, 100]
+    typical_ta: [respiratory]
+    synonyms: ["K-BILD", "KBILD", "King's Brief Interstitial Lung Disease"]
+    notes: >-
+      Joins SGRQ, AQLQ and L-PF on `respiratory_quality_of_life`. Scored the
+      opposite way to SGRQ -- higher K-BILD is better health status.
+
+  - id: systemic_corticosteroid_dose
+    label: "Systemic corticosteroid dose"
+    inline_label: "systemic corticosteroid dose"
+    concept: corticosteroid_burden
+    method: medication_use
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mg_per_day
+    typical_ta: [respiratory, immunology_inflammation]
+    synonyms: ["oral corticosteroid dose", "OCS dose", "daily OCS dose", "corticosteroid dose",
+               "prednisone dose", "prednisolone dose", "steroid-sparing", "oral corticosteroid reduction",
+               "OCS reduction", "corticosteroid-sparing"]
+    notes: >-
+      The steroid-sparing endpoint of severe-asthma biologic trials, where the
+      reduction in maintenance prednisone is the efficacy claim rather than a
+      covariate. 39 rows.
+
+  - id: respiratory_support
+    label: "Respiratory support (ventilation, oxygen)"
+    inline_label: "respiratory support"
+    concept: respiratory_support
+    method: clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: respiratory_support_escalation
+    typical_ta: [respiratory, anaesthesia_critical_care]
+    synonyms: ["mechanical ventilation", "invasive mechanical ventilation", "intubation",
+               "endotracheal intubation", "non-invasive ventilation", "NIV", "high-flow nasal cannula",
+               "high-flow oxygen", "ECMO", "extracorporeal membrane oxygenation", "respiratory support",
+               "supplemental oxygen", "oxygen therapy", "oxygen requirement", "need for ventilation"]
+    notes: >-
+      104 rows in `measure`, the largest single respiratory gap after the PROs,
+      and cross-TA: COVID, pneumonia and critical-care trials all report it. One
+      term rather than an oxygen/ventilation pair because trials report it as
+      an ordered escalation ladder on one participant, not as two endpoints.
+
+  - id: respiratory_failure
+    label: "Respiratory failure"
+    concept: respiratory_failure
+    method: clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: respiratory_failure
+    typical_ta: [respiratory, anaesthesia_critical_care]
+    synonyms: ["respiratory failure", "acute respiratory distress syndrome", "ARDS",
+               "acute respiratory failure", "acute exacerbation of IPF", "AE-IPF"]
+
+  - id: arterial_blood_gas
+    label: "Arterial blood gas (PaO2, PaCO2)"
+    inline_label: "arterial blood gas"
+    concept: gas_exchange
+    method: blood_gas_analysis
+    domain: efficacy
+    default_direction: neutral
+    default_scale: mmhg
+    typical_ta: [respiratory, anaesthesia_critical_care]
+    synonyms: ["PaO2", "PaCO2", "arterial blood gas", "P/F ratio", "PaO2/FiO2", "PaO2/FiO2 ratio",
+               "end-tidal carbon dioxide", "end-tidal CO2", "EtCO2", "transcutaneous CO2", "PtcCO2",
+               "arterial oxygen tension", "arterial carbon dioxide tension"]
+    notes: >-
+      `neutral`, because the constituents run opposite ways -- a rising PaO2 is
+      good and a rising PaCO2 is not. Shares nothing with `oxygen_saturation`,
+      which is the non-invasive pulse-oximetry measure of the same physiology;
+      they are kept apart because a trial that reports both reports them as
+      different endpoints. 28 rows.
+
+  - id: respiratory_rate
+    label: "Respiratory rate"
+    concept: vital_sign
+    method: vital_signs
+    domain: safety
+    default_direction: target_range
+    default_scale: breaths_per_minute
+    synonyms: ["respiratory rate", "breathing rate"]
+    notes: 18 rows. Joins `heart_rate` on the `vital_sign` concept.
+
+  # --- Round three: pulmonary haemodynamics (pulmonary hypertension) --------
+  # ta_mesh_mapping.yaml deliberately routes pulmonary hypertension to
+  # `respiratory` rather than `cardiovascular` (recorded there as a caveat), so
+  # the right-heart catheter variables sit in the respiratory block even though
+  # every one of them is a cardiac measurement.
+
+  - id: pulmonary_vascular_resistance
+    label: "Pulmonary vascular resistance (PVR)"
+    concept: pulmonary_haemodynamics
+    method: right_heart_catheterisation
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: wood_units
+    typical_ta: [respiratory, cardiovascular]
+    synonyms: ["PVR", "pulmonary vascular resistance", "PVR index", "pulmonary vascular resistance index"]
+    notes: >-
+      The registrational endpoint of pulmonary arterial hypertension trials.
+      25 rows.
+
+  - id: pulmonary_arterial_pressure
+    label: "Pulmonary arterial pressure"
+    concept: pulmonary_haemodynamics
+    method: right_heart_catheterisation
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mmhg
+    typical_ta: [respiratory, cardiovascular]
+    synonyms: ["pulmonary arterial pressure", "pulmonary artery pressure", "mPAP",
+               "mean pulmonary arterial pressure", "PASP", "pulmonary artery systolic pressure",
+               "systolic pulmonary artery pressure"]
+
+  - id: right_heart_filling_pressure
+    label: "Right heart filling pressures (PCWP, RAP)"
+    inline_label: "right heart filling pressure"
+    concept: pulmonary_haemodynamics
+    method: right_heart_catheterisation
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mmhg
+    typical_ta: [respiratory, cardiovascular]
+    synonyms: ["pulmonary capillary wedge pressure", "PCWP", "right atrial pressure", "RAP",
+               "right ventricular pressure", "wedge pressure", "filling pressure"]
+
+  - id: right_ventricular_function
+    label: "Right ventricular function"
+    concept: cardiac_function
+    method: echocardiography
+    domain: efficacy
+    default_direction: increase_is_better
+    typical_ta: [respiratory, cardiovascular]
+    synonyms: ["TAPSE", "tricuspid annular plane systolic excursion", "right ventricular function",
+               "right heart function", "RVEF", "right ventricular ejection fraction",
+               "RV-PA coupling", "right ventricular systolic function"]
+    notes: >-
+      Shares `cardiac_function` with LVEF and global longitudinal strain. 20
+      rows, two thirds of them in pulmonary hypertension trials.
 
   # =========================================================================
   # METABOLIC AND ENDOCRINE
@@ -525,9 +996,24 @@ terms:
     domain: efficacy
     event_polarity: harm
     composite: true
+    implies_event: major_adverse_cardiovascular_event
     typical_ta: [cardiovascular]
-    synonyms: ["MACE", "major adverse cardiovascular events", "cardiovascular death, MI or stroke",
-               "composite vascular event", "3-point MACE"]
+    synonyms: ["MACE", "MACCE", "major adverse cardiovascular events", "major adverse cardiac events",
+               "major adverse cardiac and cerebrovascular events", "cardiovascular death, MI or stroke",
+               "composite vascular event", "3-point MACE", "4-point MACE", "5-point MACE",
+               "net adverse clinical events", "NACE"]
+    notes: >-
+      `implies_event` added in round three. Without it, "Major adverse
+      cardiovascular events within 30 days (MACE30)" resolved its event to
+      `death_any_cause` -- the composite has a death component, so the cascade
+      found a plausible event and stopped, and the projection then rendered a
+      MACE endpoint as time to death from any cause. Kept a MEASUREMENT rather
+      than moved to named_endpoints.yaml: MACE is the thing counted, and the
+      shared id is what makes a MACE incidence proportion and a time-to-first-
+      MACE the same-measurement-different-form pair. NACE (MACE plus bleeding)
+      rides along as a synonym rather than a separate term at 7 corpus rows;
+      split it out if a bleeding-inclusive composite ever needs to be
+      distinguished in analysis.
 
   - id: heart_failure_hospitalisation
     label: "Hospitalisation for heart failure"
@@ -535,8 +1021,11 @@ terms:
     method: clinical_event
     domain: efficacy
     event_polarity: harm
+    implies_event: worsening_heart_failure
     typical_ta: [cardiovascular]
-    synonyms: ["hospitalization for heart failure", "HHF", "heart failure hospitalization"]
+    synonyms: ["hospitalization for heart failure", "HHF", "heart failure hospitalization",
+               "heart failure hospitalisation", "hospitalisation for heart failure",
+               "hospitalization for worsening heart failure", "heart failure readmission"]
 
   - id: ecg_qtc
     label: "QT interval, corrected (QTc)"
@@ -579,6 +1068,680 @@ terms:
     default_direction: decrease_is_better
     typical_ta: [cardiovascular]
     synonyms: ["intraplaque haemorrhage", "IPH volume", "fibrous cap thickness", "plaque volume", "atheroma volume"]
+
+
+  # --- Round three: cardiovascular ------------------------------------------
+  # As with the respiratory block above, every term is a repeated miss in the
+  # review queue of the 38,857-row pull, and the count in `notes` is unmatched
+  # `measure` rows in it. Cardiovascular was the largest area in that pull
+  # (9,160 rows) and had the worst conformance of any large area (53.0%), which
+  # is what this block is answering.
+  #
+  # THE EVENT TERMS COME FIRST, and they are measurements rather than
+  # named_endpoints.yaml entries on purpose. A cardiovascular outcome trial
+  # counts adjudicated occurrences -- infarction, stroke, revascularisation,
+  # bleeding -- the way an oncology trial counts progressions, so each is an
+  # event-shaped measurement carrying `implies_event`, exactly as `vital_status`
+  # and `disease_exacerbation` already do. events.yaml gains the matching event
+  # ids; per that file's cross-file synonym discipline, the wording lives here
+  # and the event is reached through `implies_event` rather than by duplicating
+  # every synonym in two files.
+
+  - id: myocardial_infarction
+    label: "Myocardial infarction"
+    concept: cardiovascular_event
+    method: adjudicated_clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: myocardial_infarction
+    typical_ta: [cardiovascular]
+    synonyms: ["myocardial infarction", "nonfatal myocardial infarction", "non-fatal myocardial infarction",
+               "fatal myocardial infarction", "recurrent myocardial infarction", "STEMI", "NSTEMI",
+               "ST-elevation myocardial infarction", "periprocedural myocardial infarction",
+               "spontaneous myocardial infarction"]
+    patterns:
+      - '\bmyocardial infarction\b'
+      - '(?-i:\bMI\b)'
+    not_if_matches:
+      - '\bmultiple imputation\b'
+    notes: >-
+      140 rows. The bare acronym is a case-sensitive pattern rather than a
+      synonym so it can carry the veto: "multiple imputation (MI)" is the one
+      recurring non-cardiac expansion in this corpus (11 of 241 occurrences),
+      and it appears in statistical-methods prose where no cardiac reading is
+      available to rescue it.
+
+  - id: stroke
+    label: "Stroke"
+    concept: cardiovascular_event
+    method: adjudicated_clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: stroke
+    typical_ta: [cardiovascular, neurology]
+    synonyms: ["stroke", "ischemic stroke", "ischaemic stroke", "hemorrhagic stroke", "haemorrhagic stroke",
+               "nonfatal stroke", "non-fatal stroke", "cerebrovascular accident", "transient ischemic attack",
+               "transient ischaemic attack", "TIA", "systemic embolism", "stroke or systemic embolism"]
+    notes: >-
+      113 rows. Distinct from `nihss` and `modified_rankin_scale`, which grade
+      how bad a stroke was -- this term is the occurrence. "Stroke volume" is
+      not caught here: it is longer, and longest-match hands it to
+      `cardiac_output`.
+
+  - id: major_bleeding
+    label: "Major bleeding"
+    concept: bleeding_event
+    method: adjudicated_clinical_event
+    domain: safety
+    event_polarity: harm
+    implies_event: bleeding_event
+    typical_ta: [cardiovascular, haematology]
+    synonyms: ["major bleeding", "bleeding", "bleeding event", "minor bleeding",
+               "clinically relevant non-major bleeding", "CRNM bleeding", "CRNM",
+               "ISTH major bleeding", "BARC", "BARC bleeding", "TIMI major bleeding",
+               "TIMI minor bleeding", "major hemorrhage", "major haemorrhage",
+               "bleeding complications", "haemorrhagic complications", "hemorrhagic complications"]
+    notes: >-
+      269 rows, the single largest cardiovascular gap in the pull -- every
+      anticoagulant and antiplatelet trial carries a bleeding endpoint opposite
+      its thrombotic one. One term across all severity grades and all three
+      adjudication scales (ISTH, BARC, TIMI): the grade is a Threshold on this
+      measurement, parsed separately, the same call
+      `tumour_burden_recist` makes for the RECIST 30% rule. Shares
+      `bleeding_event` with `intracranial_haemorrhage` and
+      `annualised_bleeding_rate`.
+
+  - id: coronary_revascularisation
+    label: "Coronary revascularisation"
+    concept: cardiovascular_event
+    method: adjudicated_clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: revascularisation
+    typical_ta: [cardiovascular]
+    synonyms: ["revascularization", "revascularisation", "unplanned revascularization",
+               "urgent revascularization", "target vessel revascularization", "TVR",
+               "target lesion revascularization", "TLR", "repeat revascularization",
+               "percutaneous coronary intervention", "coronary artery bypass grafting",
+               "coronary artery bypass graft surgery", "CABG"]
+    notes: >-
+      126 rows. "PCI" is omitted as a synonym: in this corpus it is as often the
+      index procedure a trial enrols after ("participants undergoing PCI") as
+      the outcome event, and reading the enrolment criterion as an endpoint
+      would be worse than missing the endpoint.
+
+  - id: stent_thrombosis
+    label: "Stent thrombosis"
+    concept: cardiovascular_event
+    method: adjudicated_clinical_event
+    domain: safety
+    event_polarity: harm
+    implies_event: stent_thrombosis
+    typical_ta: [cardiovascular]
+    synonyms: ["stent thrombosis", "definite stent thrombosis", "definite or probable stent thrombosis",
+               "target vessel thrombosis"]
+
+  - id: venous_thromboembolism
+    label: "Venous thromboembolism (VTE)"
+    concept: thrombotic_event
+    method: adjudicated_clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: venous_thromboembolism
+    typical_ta: [cardiovascular, haematology]
+    synonyms: ["venous thromboembolism", "VTE", "recurrent venous thromboembolism",
+               "deep vein thrombosis", "DVT", "pulmonary embolism", "proximal deep vein thrombosis",
+               "venous thromboembolic event", "catheter-related thrombosis", "portal vein thrombosis",
+               "arterial thrombosis", "thromboembolic event"]
+    notes: >-
+      145 rows. Bare "PE" is deliberately not a synonym even under the
+      case-sensitive acronym rule: in this corpus capital "PE" is also the
+      physical examination ("including PE, vital sign, lab. test") and
+      plasma exchange ("initiation of daily PE"), and neither reading is
+      recoverable from surrounding text.
+
+  - id: atrial_fibrillation
+    label: "Atrial fibrillation or flutter"
+    inline_label: "atrial fibrillation"
+    concept: cardiac_arrhythmia
+    method: ecg_or_rhythm_monitoring
+    domain: efficacy
+    default_direction: decrease_is_better
+    event_polarity: harm
+    implies_event: atrial_fibrillation
+    typical_ta: [cardiovascular]
+    synonyms: ["atrial fibrillation", "AF", "atrial flutter", "AF burden", "AF recurrence",
+               "atrial fibrillation recurrence", "atrial tachyarrhythmia", "AF-free survival",
+               "new-onset atrial fibrillation", "postoperative atrial fibrillation"]
+    notes: >-
+      81 rows. Carries both a `default_direction` and an `event_polarity`
+      because both readings occur: "AF burden" is a continuous proportion of
+      monitored time, "time to AF recurrence" is an event -- the same
+      dual-natured term shape `tumour_burden_recist` has.
+
+  - id: cardiac_arrhythmia_event
+    label: "Cardiac arrhythmia or conduction event"
+    inline_label: "a cardiac arrhythmia"
+    concept: cardiac_arrhythmia
+    method: ecg_or_rhythm_monitoring
+    domain: safety
+    event_polarity: harm
+    typical_ta: [cardiovascular]
+    synonyms: ["arrhythmia", "ventricular tachycardia", "ventricular fibrillation", "heart block",
+               "atrioventricular block", "AV block", "bradyarrhythmia", "ventricular arrhythmia",
+               "pacemaker implantation", "appropriate ICD shock", "sustained ventricular tachycardia"]
+    notes: >-
+      50 rows. Kept separate from `atrial_fibrillation`, which is a therapeutic
+      target in its own right rather than a safety signal, and from
+      `vital_signs_abnormality`, where bradycardia and tachycardia as
+      vital-sign findings already live.
+
+  - id: cardiac_arrest
+    label: "Cardiac arrest"
+    concept: cardiovascular_event
+    method: adjudicated_clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: cardiac_arrest
+    typical_ta: [cardiovascular, anaesthesia_critical_care]
+    synonyms: ["cardiac arrest", "resuscitated cardiac arrest", "aborted cardiac arrest",
+               "sudden cardiac death", "sudden death", "return of spontaneous circulation", "ROSC"]
+    notes: >-
+      Thin on its own (17 rows across measure and description) but named as a
+      component in the MACE composites of this corpus often enough to be worth
+      resolving rather than queueing.
+
+  - id: unstable_angina
+    label: "Unstable angina"
+    concept: cardiovascular_event
+    method: adjudicated_clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: unstable_angina
+    typical_ta: [cardiovascular]
+    synonyms: ["unstable angina", "hospitalization for unstable angina", "angina",
+               "anginal episodes", "angina frequency", "acute coronary syndrome", "ACS"]
+
+  - id: major_adverse_limb_event
+    label: "Major adverse limb event (MALE)"
+    concept: cardiovascular_event
+    method: adjudicated_clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: amputation
+    typical_ta: [cardiovascular]
+    synonyms: ["major adverse limb event", "major adverse limb events", "amputation",
+               "major amputation", "acute limb ischemia", "acute limb ischaemia", "ALI",
+               "critical limb ischemia", "chronic limb-threatening ischemia", "claudication",
+               "intermittent claudication"]
+    patterns:
+      - '(?-i:\bMALE\b)'
+    notes: >-
+      The peripheral-artery-disease counterpart of MACE. The acronym is a
+      case-sensitive pattern, not a synonym: lower-case "male" is the sex, and
+      it is everywhere in registry text.
+
+  - id: advanced_heart_failure_therapy
+    label: "Ventricular assist device or heart transplant"
+    inline_label: "ventricular assist device or heart transplant"
+    concept: cardiovascular_event
+    method: adjudicated_clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: transplantation
+    typical_ta: [cardiovascular]
+    synonyms: ["ventricular assist device", "LVAD", "left ventricular assist device",
+               "orthotopic heart transplant", "heart transplant", "heart transplantation",
+               "mechanical circulatory support", "durable mechanical circulatory support"]
+    notes: >-
+      38 rows, all of them in the same trials -- these are the two terminal
+      states a heart-failure endpoint censors at, and they are reported as one
+      composite ("LVAD/OHT") rather than separately.
+
+  - id: worsening_heart_failure
+    label: "Worsening heart failure event"
+    inline_label: "a worsening heart failure event"
+    concept: cardiovascular_event
+    method: adjudicated_clinical_event
+    domain: efficacy
+    event_polarity: harm
+    implies_event: worsening_heart_failure
+    typical_ta: [cardiovascular]
+    synonyms: ["worsening heart failure", "heart failure event", "acute decompensated heart failure",
+               "decompensated heart failure", "urgent heart failure visit",
+               "heart failure requiring intravenous diuretics"]
+    patterns:
+      - '\btime to (first |worsening )?heart failure\b'
+    notes: >-
+      Separate from `heart_failure_hospitalisation`, which is the same
+      deterioration only when it reaches an admission -- modern heart-failure
+      trials count the urgent outpatient visit too, and the two are reported
+      side by side as distinct endpoints. No bare "heart failure" synonym: it
+      is the enrolled population's disease name on most of the rows it appears
+      in, which is why the event wording is a pattern instead.
+
+  # Quantities.
+
+  - id: blood_pressure
+    label: "Blood pressure (unspecified)"
+    inline_label: "blood pressure"
+    concept: blood_pressure
+    method: sphygmomanometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    direction_by_ta: {anaesthesia_critical_care: target_range}
+    default_scale: mmhg
+    typical_ta: [cardiovascular]
+    synonyms: ["blood pressure", "BP", "blood pressure control", "ambulatory blood pressure",
+               "ABPM", "ambulatory blood pressure monitoring", "office blood pressure",
+               "home blood pressure", "blood pressure target", "24-hour blood pressure"]
+    notes: >-
+      121 rows said "blood pressure" and named neither systole nor diastole --
+      "proportion of subjects achieving blood pressure control", "blood pressure
+      response rate" -- and every one of them went to the review queue, because
+      the vocabulary had only the two specific terms. Longest-match keeps this
+      term below them: "systolic blood pressure" is the longer span, so the
+      specific reading still wins wherever the text offers one.
+
+  - id: mean_arterial_pressure
+    label: "Mean arterial pressure (MAP)"
+    concept: blood_pressure
+    method: sphygmomanometry
+    domain: efficacy
+    default_direction: target_range
+    default_scale: mmhg
+    typical_ta: [cardiovascular, anaesthesia_critical_care]
+    synonyms: ["mean arterial pressure", "MAP", "mean blood pressure"]
+    not_if_matches:
+      - '\bmethotrexate\b'
+      - '\bDisruptive Behavior\b'
+      - '\bAddiction Profile\b'
+    notes: >-
+      `target_range`, not decrease_is_better: MAP is a perfusion target in the
+      critical-care and shock trials that report it, where too low is the
+      failure. The vetoes are the three non-haemodynamic MAPs in this corpus --
+      the cisplatin/doxorubicin/methotrexate regimen, MAP-DB and MAP-HSS.
+
+  - id: pulse_pressure
+    label: "Pulse pressure"
+    concept: blood_pressure
+    method: sphygmomanometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mmhg
+    typical_ta: [cardiovascular]
+    synonyms: ["pulse pressure", "mean pulse blood pressure"]
+
+  - id: left_ventricular_volume
+    label: "Left ventricular volume and mass"
+    inline_label: "left ventricular volume"
+    concept: cardiac_remodelling
+    method: echocardiography
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: millilitres
+    typical_ta: [cardiovascular]
+    synonyms: ["left ventricular end-diastolic volume", "LVEDV", "left ventricular end-systolic volume",
+               "LVESV", "LVEDVI", "LVESVI", "left ventricular end-diastolic diameter", "LVEDD",
+               "left ventricular end-systolic diameter", "LVESD", "left ventricular mass",
+               "left ventricular mass index", "LVMI", "left ventricular remodeling",
+               "left ventricular remodelling", "end-diastolic volume", "end-systolic volume"]
+    notes: >-
+      48 rows. Reverse remodelling -- a shrinking ventricle -- is the benefit,
+      hence decrease_is_better, which is the opposite of its companion LVEF and
+      the reason the two are separate terms rather than one `cardiac_function`
+      catch-all.
+
+  - id: global_longitudinal_strain
+    label: "Global longitudinal strain (GLS)"
+    concept: cardiac_function
+    method: speckle_tracking_echocardiography
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: percentage
+    typical_ta: [cardiovascular, oncology]
+    synonyms: ["global longitudinal strain", "GLS", "myocardial strain", "longitudinal strain",
+               "global circumferential strain", "strain imaging"]
+    notes: >-
+      23 rows, a third of them cardio-oncology (anthracycline cardiotoxicity),
+      where GLS is the endpoint precisely because it falls before LVEF does.
+      Reported as a negative percentage that becomes less negative with
+      improvement; `increase_is_better` reads the magnitude convention trials
+      state, which is what the direction rule is for. "GCS" is not a synonym:
+      four of its five corpus occurrences are the Glasgow Coma Scale and only
+      one is global circumferential strain.
+
+  - id: cardiac_diastolic_function
+    label: "Left ventricular diastolic function"
+    inline_label: "diastolic function"
+    concept: cardiac_function
+    method: echocardiography
+    domain: efficacy
+    default_direction: decrease_is_better
+    typical_ta: [cardiovascular]
+    synonyms: ["diastolic function", "E/e'", "E/e' ratio", "E/A ratio", "left atrial volume",
+               "left atrial volume index", "LAVI", "diastolic dysfunction", "filling pressures echo"]
+    notes: >-
+      decrease_is_better because the reported quantities (E/e', LA volume index)
+      rise with worsening filling pressure; the label names the function, the
+      numbers grade the dysfunction.
+
+  - id: cardiac_troponin
+    label: "Cardiac troponin"
+    concept: cardiac_biomarker
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: ng_per_ml
+    typical_ta: [cardiovascular]
+    synonyms: ["troponin", "cardiac troponin", "high-sensitivity troponin", "hs-cTnT", "hs-cTnI",
+               "hscTnT", "troponin I", "troponin T", "cTnI", "cTnT"]
+    notes: 44 rows. Joins NT-proBNP on `cardiac_biomarker`.
+
+  - id: myocardial_infarct_size
+    label: "Myocardial infarct size"
+    concept: myocardial_injury
+    method: imaging_cardiac_mri
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: percentage
+    typical_ta: [cardiovascular]
+    synonyms: ["infarct size", "myocardial infarct size", "myocardial salvage index",
+               "area at risk", "microvascular obstruction", "myocardial blush grade"]
+    notes: >-
+      22 rows. The imaging quantity, not the event -- a reperfusion trial's
+      infarct size is a continuous outcome measured after the infarction that
+      enrolled the participant, so it must not resolve to
+      `myocardial_infarction`; longest-match gives it to this term.
+
+  - id: cardiac_output
+    label: "Cardiac output and stroke volume"
+    inline_label: "cardiac output"
+    concept: cardiac_haemodynamics
+    method: haemodynamic_measurement
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: litres_per_minute
+    typical_ta: [cardiovascular, anaesthesia_critical_care]
+    synonyms: ["cardiac output", "cardiac index", "stroke volume", "stroke volume index",
+               "cardiac power output", "systemic vascular resistance"]
+    notes: 23 rows, plus 19 more in pulmonary hypertension trials filed under respiratory.
+
+  - id: total_cholesterol
+    label: "Total cholesterol"
+    concept: lipid_profile
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mmol_per_l
+    typical_ta: [metabolic_endocrine, cardiovascular]
+    synonyms: ["total cholesterol", "TC", "serum cholesterol"]
+
+  - id: hdl_cholesterol
+    label: "HDL cholesterol"
+    concept: lipid_profile
+    method: laboratory
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: mmol_per_l
+    typical_ta: [metabolic_endocrine, cardiovascular]
+    synonyms: ["HDL-C", "HDL cholesterol", "high-density lipoprotein cholesterol", "HDL"]
+    notes: >-
+      The one lipid fraction whose direction is the other way round, which is
+      why it is its own term rather than a synonym of `non_hdl_cholesterol`.
+
+  - id: apolipoprotein_b
+    label: "Apolipoprotein B"
+    concept: lipid_profile
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mg_per_dl
+    typical_ta: [metabolic_endocrine, cardiovascular]
+    synonyms: ["apolipoprotein B", "ApoB", "apo B"]
+
+  - id: lipoprotein_a
+    label: "Lipoprotein(a)"
+    inline_label: "lipoprotein(a)"
+    concept: lipid_profile
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: mg_per_dl
+    typical_ta: [metabolic_endocrine, cardiovascular]
+    synonyms: ["lipoprotein(a)", "Lp(a)", "lipoprotein a"]
+    notes: >-
+      Kept apart from `ldl_cholesterol` because the whole point of the
+      Lp(a)-lowering trials now in the corpus is that it is a separate,
+      independently inherited risk particle.
+
+  - id: kansas_city_cardiomyopathy_questionnaire
+    label: "Kansas City Cardiomyopathy Questionnaire (KCCQ)"
+    inline_label: "KCCQ score"
+    concept: heart_failure_health_status
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    score_range: [0, 100]
+    mcid: 5
+    typical_ta: [cardiovascular]
+    synonyms: ["KCCQ", "Kansas City Cardiomyopathy Questionnaire", "KCCQ-CSS", "KCCQ-OSS",
+               "KCCQ clinical summary score", "KCCQ overall summary score", "KCCQ-TSS"]
+    notes: >-
+      30 rows, and the primary endpoint of several of them -- heart-failure
+      trials increasingly report health status alongside events. Higher is
+      better, the opposite of the NYHA class it often accompanies.
+
+  - id: minnesota_living_with_heart_failure
+    label: "Minnesota Living with Heart Failure Questionnaire (MLHFQ)"
+    inline_label: "MLHFQ score"
+    concept: heart_failure_health_status
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 105]
+    mcid: 5
+    typical_ta: [cardiovascular]
+    synonyms: ["MLHFQ", "MLWHF", "Minnesota Living with Heart Failure"]
+    notes: >-
+      The older heart-failure PRO, scored the opposite way to the KCCQ. Thin in
+      this pull (3 rows) but it shares `heart_failure_health_status` with it,
+      and a same-concept-different-instrument pair is worth having even when
+      one arm of it is rare -- that comparison is the reason the concept field
+      exists.
+
+  - id: seattle_angina_questionnaire
+    label: "Seattle Angina Questionnaire (SAQ)"
+    inline_label: "SAQ score"
+    concept: angina_health_status
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    score_range: [0, 100]
+    typical_ta: [cardiovascular]
+    synonyms: ["SAQ", "Seattle Angina Questionnaire", "SAQ-7", "SAQ angina frequency"]
+
+  - id: peak_oxygen_uptake
+    label: "Peak oxygen uptake (peak VO2)"
+    inline_label: "peak VO2"
+    concept: exercise_capacity
+    method: cardiopulmonary_exercise_test
+    domain: efficacy
+    default_direction: increase_is_better
+    typical_ta: [cardiovascular, respiratory]
+    synonyms: ["peak VO2", "pVO2", "VO2 peak", "VO2 max", "peak oxygen uptake",
+               "peak oxygen consumption", "cardiopulmonary exercise testing", "CPET",
+               "VE/VCO2 slope", "treadmill test", "treadmill testing", "shuttle walk test",
+               "exercise treadmill test"]
+    notes: >-
+      29 rows. Shares `exercise_capacity` with `six_minute_walk_distance`: the
+      6MWT is the field version of the same construct, and the two are the
+      commonest pair of interchangeable endpoints across heart failure,
+      pulmonary hypertension and COPD. Bare "exercise capacity" and "exercise
+      tolerance" are NOT synonyms here: they name that shared CONCEPT, not this
+      instrument, and listing them stole ten rows off 6MWD whose text said
+      "Functional Exercise Capacity" and nothing about a gas-exchange test.
+      Where a row names only the concept, no measurement should win on it.
+
+  - id: platelet_reactivity
+    label: "Platelet reactivity"
+    concept: platelet_function
+    method: platelet_function_test
+    domain: pharmacodynamic
+    default_direction: decrease_is_better
+    typical_ta: [cardiovascular]
+    synonyms: ["platelet reactivity", "high platelet reactivity", "platelet aggregation",
+               "P2Y12 reaction units", "PRU", "platelet inhibition", "platelet function test"]
+    notes: 25 rows. The antiplatelet pharmacodynamic endpoint.
+
+  - id: arterial_stiffness
+    label: "Arterial stiffness"
+    concept: vascular_function
+    method: applanation_tonometry
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: metres_per_second
+    typical_ta: [cardiovascular]
+    synonyms: ["pulse wave velocity", "PWV", "carotid-femoral pulse wave velocity",
+               "arterial stiffness", "augmentation index", "central aortic pressure"]
+
+  - id: endothelial_function
+    label: "Endothelial function"
+    concept: vascular_function
+    method: flow_mediated_dilatation
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: percentage
+    typical_ta: [cardiovascular]
+    synonyms: ["endothelial function", "flow-mediated dilation", "flow-mediated dilatation", "FMD",
+               "reactive hyperemia index", "reactive hyperaemia index", "microvascular function"]
+    notes: >-
+      "RHI" is spelled out rather than listed as an acronym: four of its 14
+      corpus occurrences are the Robarts Histopathology Index.
+
+  - id: decongestion_response
+    label: "Decongestion and diuretic response"
+    inline_label: "decongestion"
+    concept: volume_status
+    method: clinical_assessment
+    domain: efficacy
+    default_direction: increase_is_better
+    typical_ta: [cardiovascular]
+    synonyms: ["decongestion", "diuretic response", "net fluid loss", "cumulative urine output",
+               "urine output", "natriuresis", "urinary sodium", "spot urinary sodium",
+               "clinical congestion score", "congestion score", "freedom from congestion",
+               "jugular venous pressure", "orthopnea", "orthopnoea"]
+    notes: >-
+      22 rows. The acute-heart-failure endpoint family: what came out, and
+      whether the participant stopped looking congested.
+
+  # Serum chemistry that the cardiovascular corpus carries. Not
+  # cardiovascular-specific quantities, but every diuretic, RAAS and
+  # heart-failure trial reports them as safety endpoints, and they were 155
+  # unmatched rows between them.
+
+  - id: serum_creatinine
+    label: "Serum creatinine"
+    concept: kidney_function
+    method: laboratory
+    domain: safety
+    default_direction: decrease_is_better
+    default_scale: umol_per_l
+    typical_ta: [nephrology_urology, cardiovascular]
+    synonyms: ["serum creatinine", "creatinine", "plasma creatinine"]
+    not_if_matches:
+      - '\balbumin[\s\-]?(to[\s\-])?creatinine ratio\b'
+      - '\b(u?ACR|eGFR|CKD-EPI|MDRD)\b'
+    notes: >-
+      80 rows, the largest single chemistry gap. Shares `kidney_function` with
+      `egfr`, which is computed from it -- the same-concept join that makes a
+      creatinine safety endpoint comparable with an eGFR efficacy one. The two
+      vetoes are that same closeness read backwards: where the text says
+      "urine albumin-to-creatinine ratio" or "eGFR (CKD-EPI creatinine
+      equation)", creatinine is an INPUT to the reported quantity and not the
+      endpoint, and this term is longer than `albuminuria`'s "UACR" and
+      `egfr`'s "eGFR", so without the vetoes it wins both. "Creatinine
+      clearance" is likewise not listed here -- it is a GFR estimate, and lives
+      on `egfr`.
+
+  - id: serum_potassium
+    label: "Serum potassium"
+    concept: electrolytes
+    method: laboratory
+    domain: safety
+    default_direction: target_range
+    default_scale: mmol_per_l
+    typical_ta: [cardiovascular, nephrology_urology]
+    synonyms: ["serum potassium", "hyperkalemia", "hyperkalaemia",
+               "hypokalemia", "hypokalaemia", "plasma potassium", "blood potassium"]
+    patterns:
+      - '\b(serum|plasma|blood|urinary|urine) potassium\b'
+    notes: >-
+      `target_range`, not a direction: RAAS-inhibitor and MRA trials report both
+      tails as endpoints ("serum potassium <3.5 mmol/L and >=5.5 mmol/L"), and
+      calling either one "better" would be wrong half the time. 32 rows. Bare
+      "potassium" is not a synonym, here or on `serum_sodium`: "<drug>
+      potassium" and "<drug> sodium" are the commonest salt-naming convention
+      in pharmacology (losartan potassium, amogammadex sodium, sodium zirconium
+      cyclosilicate all appear in this corpus), so the qualifier is required.
+
+  - id: serum_sodium
+    label: "Serum sodium"
+    concept: electrolytes
+    method: laboratory
+    domain: safety
+    default_direction: target_range
+    default_scale: mmol_per_l
+    typical_ta: [cardiovascular, nephrology_urology]
+    synonyms: ["serum sodium", "hyponatremia", "hyponatraemia", "hypernatremia", "hypernatraemia",
+               "plasma sodium", "blood sodium", "urinary spot sodium"]
+    patterns:
+      - '\b(serum|plasma|blood|urinary|urine|spot urinary) sodium\b'
+
+  - id: blood_urea_nitrogen
+    label: "Blood urea nitrogen"
+    concept: kidney_function
+    method: laboratory
+    domain: safety
+    default_direction: decrease_is_better
+    default_scale: mmol_per_l
+    typical_ta: [cardiovascular, nephrology_urology]
+    synonyms: ["blood urea nitrogen", "BUN", "blood urea", "serum urea", "urea nitrogen"]
+
+  - id: serum_uric_acid
+    label: "Serum uric acid"
+    concept: urate
+    method: laboratory
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: umol_per_l
+    typical_ta: [cardiovascular, rheumatology]
+    synonyms: ["serum uric acid", "uric acid", "urate", "serum urate"]
+
+  - id: days_alive_out_of_hospital
+    label: "Days alive and out of hospital"
+    inline_label: "days alive and out of hospital"
+    concept: organ_support_free_days
+    method: clinical_event_count
+    domain: efficacy
+    default_direction: increase_is_better
+    default_scale: days
+    typical_ta: [cardiovascular, anaesthesia_critical_care]
+    synonyms: ["days alive and outside of the ICU", "days alive out of critical care",
+               "days alive without mechanical ventilation", "days out of hospital",
+               "hospital-free days", "days alive and free from"]
+    notes: >-
+      A win-ratio-era composite that folds mortality and length of stay into one
+      count, so a death scores zero rather than dropping out of the analysis.
+      Shares `organ_support_free_days`' concept -- and 17 of its 24 rows are
+      cardiovascular, which is why it sits here rather than in that term. The
+      literature NAME ("days alive and out of hospital", "DAOH") is not a synonym
+      here: it is a named_endpoints.yaml definition, which resolves the form as
+      well and reaches this id through `default_measurement`. What is left here
+      is the wording that names the count without naming the endpoint.
 
   # =========================================================================
   # OPHTHALMOLOGY
@@ -985,7 +2148,8 @@ terms:
     default_scale: score_points
     score_range: [0, 42]
     typical_ta: [neurology]
-    synonyms: ["NIHSS", "National Institute of Health Stroke Scale", "NIH Stroke Scale"]
+    synonyms: ["NIHSS", "National Institute of Health Stroke Scale",
+               "National Institutes of Health Stroke Scale", "NIH Stroke Scale"]
 
   - id: modified_rankin_scale
     label: "Modified Rankin Scale (mRS)"
@@ -1005,8 +2169,10 @@ terms:
     method: imaging_confirmed_event
     domain: safety
     event_polarity: harm
+    implies_event: bleeding_event
     typical_ta: [neurology]
-    synonyms: ["symptomatic intracranial hemorrhage", "sICH", "intracranial haemorrhage", "ICH"]
+    synonyms: ["symptomatic intracranial hemorrhage", "sICH", "intracranial haemorrhage",
+               "intracranial hemorrhage", "ICH"]
 
   - id: seizure_frequency
     label: "Seizure frequency"
@@ -1411,7 +2577,8 @@ terms:
     default_direction: increase_is_better
     default_scale: dimensionless
     typical_ta: [nephrology_urology]
-    synonyms: ["eGFR", "estimated glomerular filtration rate", "GFR", "eGFR slope"]
+    synonyms: ["eGFR", "estimated glomerular filtration rate", "GFR", "eGFR slope",
+               "creatinine clearance", "CrCl", "measured GFR"]
 
   - id: albuminuria
     label: "Albuminuria (UACR)"
@@ -1421,7 +2588,10 @@ terms:
     default_direction: decrease_is_better
     default_scale: ratio
     typical_ta: [nephrology_urology]
-    synonyms: ["UACR", "urine albumin-to-creatinine ratio", "proteinuria", "albuminuria"]
+    synonyms: ["UACR", "uACR", "ACR", "urine albumin-to-creatinine ratio",
+               "urine albumin creatinine ratio", "urinary albumin-to-creatinine ratio",
+               "urinary albumin creatinine ratio", "urine albumin", "urinary albumin excretion",
+               "proteinuria", "albuminuria"]
 
   - id: acute_kidney_injury
     label: "Acute kidney injury"
@@ -1581,6 +2751,7 @@ terms:
 
   - id: treatment_discontinuation
     label: "Treatment discontinuation"
+    implies_event: treatment_discontinuation
     concept: treatment_discontinuation
     method: clinical_event
     domain: safety
@@ -1795,8 +2966,22 @@ terms:
     method: clinical_event
     domain: healthcare_utilisation
     event_polarity: harm
+    implies_event: hospitalisation_event
     synonyms: ["hospitalization", "hospitalisation", "rate of respiratory hospitalizations",
-               "readmission", "re-hospitalization", "admission"]
+               "readmission", "re-hospitalization", "admission", "rehospitalization",
+               "all-cause hospitalization", "unplanned hospitalization"]
+    notes: >-
+      `implies_event` wired in round three. events.yaml has had
+      `hospitalisation_event` since it was written, and this measurement --
+      which is what ascertains it -- was never pointed at it, so 279
+      event-family rows carried `event: not_stated` for want of one line (324
+      resolve through it now, the difference being rows the new cardiovascular
+      and respiratory measurements took over). Found while measuring the
+      cardio-respiratory event gap, where heart-failure and COPD
+      hospitalisation endpoints made it the third most common cause of an
+      unresolved event. `hospital_discharge` is the benefit counterpart, added
+      immediately afterwards when this wiring flipped "Time to discharge" to
+      longer_is_better -- see that event's notes.
 
   - id: length_of_stay
     label: "Length of stay"
@@ -2014,11 +3199,15 @@ concepts:
   - adhd_symptom_severity
   - adverse_event
   - airflow_obstruction
+  - airway_resistance
+  - airway_secretions
   - ambulatory_function
   - analgesic_consumption
+  - angina_health_status
   - anti_drug_immunogenicity
   - anxiety_severity
   - asthma_control
+  - asthma_symptom_severity
   - atopic_dermatitis_severity
   - axial_spondyloarthritis_activity
   - behavioural_symptom_severity
@@ -2031,24 +3220,34 @@ concepts:
   - body_weight
   - bone_density
   - brain_connectivity
+  - cardiac_arrhythmia
   - cardiac_biomarker
   - cardiac_function
+  - cardiac_haemodynamics
+  - cardiac_remodelling
   - cardiac_repolarisation
   - cardiovascular_event
+  - cftr_function
   - cognitive_function
+  - copd_health_status
   - coronary_physiology
+  - corticosteroid_burden
+  - cough_burden
   - depression_severity
   - disease_exacerbation
   - disease_progression
   - disease_recurrence
   - drug_disposition
   - drug_exposure
+  - dyspnoea_severity
+  - electrolytes
   - energy_expenditure
   - exercise_capacity
   - extrapyramidal_symptoms
   - fatigue
   - functional_class
   - functional_disability
+  - gas_exchange
   - gas_transfer
   - global_clinical_change
   - global_clinical_severity
@@ -2057,6 +3256,7 @@ concepts:
   - haemoglobin
   - headache_burden
   - health_related_quality_of_life
+  - heart_failure_health_status
   - hepatic_injury
   - hospitalisation
   - humoral_immune_response
@@ -2075,6 +3275,7 @@ concepts:
   - lung_fibrosis_extent
   - lung_volume
   - ms_disability
+  - myocardial_injury
   - neurodegeneration
   - not_stated
   - nutritional_status
@@ -2091,14 +3292,19 @@ concepts:
   - physical_function
   - plaque_burden
   - platelet_count
+  - platelet_function
   - pregnancy_duration
   - pruritus_severity
   - psoriasis_severity
   - psychosocial_functioning
   - ptsd_symptom_severity
+  - pulmonary_haemodynamics
   - rescue_medication
   - residual_disease
+  - respiratory_failure
   - respiratory_quality_of_life
+  - respiratory_support
+  - respiratory_symptom_severity
   - retinal_fluid
   - retinal_perfusion
   - retinal_thickness
@@ -2107,6 +3313,7 @@ concepts:
   - schizophrenia_symptom_severity
   - seizure_burden
   - sickle_cell_crisis
+  - sinonasal_disease_burden
   - skin_disease_extent
   - skin_disease_global_severity
   - skin_lesion_burden
@@ -2119,6 +3326,7 @@ concepts:
   - surgical_completeness
   - survival
   - systemic_inflammation
+  - thrombotic_event
   - transfusion_dependence
   - treatment_adherence
   - treatment_burden
@@ -2128,11 +3336,16 @@ concepts:
   - tumour_burden
   - tumour_marker
   - tumour_response
+  - type_2_inflammation
+  - urate
+  - vascular_function
+  - ventilation_inhomogeneity
   - viral_load
   - vision_related_quality_of_life
   - visual_acuity
   - vital_sign
   - vitiligo_extent
+  - volume_status
 
 # Unlike the other dimensions, MEASUREMENT has no automatic fallback. A measure
 # string that matches nothing here must go to conformed.review_queue unmatched --
