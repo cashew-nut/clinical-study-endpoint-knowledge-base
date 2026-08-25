@@ -2269,6 +2269,22 @@ terms:
     typical_ta: [psychiatry]
     synonyms: ["HAM-D", "HAMD", "HAM-D17", "Hamilton Depression Rating Scale", "HDRS"]
 
+  - id: phq8
+    label: "Patient Health Questionnaire-8 (PHQ-8)"
+    concept: depression_severity
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 24]
+    typical_ta: [psychiatry]
+    synonyms: ["PHQ-8", "PHQ8", "Patient Health Questionnaire-8", "Patient Health Questionnaire 8"]
+    notes: >-
+      Self-administered, unlike HAM-D/MADRS -- shares `depression_severity` with
+      both, since it is the same construct read by a different rater. PHQ-9 (the
+      9-item version with the suicidal-ideation item) is a distinct, more common
+      instrument not covered here; add it separately if the corpus shows it.
+
   - id: hamilton_anxiety_rating_scale
     label: "Hamilton Anxiety Rating Scale (HAM-A)"
     concept: anxiety_severity
@@ -2279,6 +2295,21 @@ terms:
     score_range: [0, 56]
     typical_ta: [psychiatry]
     synonyms: ["HAM-A", "HAMA", "Hamilton Anxiety Rating Scale"]
+
+  - id: gad7
+    label: "Generalized Anxiety Disorder 7-item scale (GAD-7)"
+    concept: anxiety_severity
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 21]
+    typical_ta: [psychiatry]
+    synonyms: ["GAD-7", "GAD7", "Generalized Anxiety Disorder 7-item scale",
+               "Generalised Anxiety Disorder scale", "Generalized Anxiety Disorder scale"]
+    notes: >-
+      Self-administered, unlike HAM-A -- shares `anxiety_severity` with it, since
+      it is the same construct read by a different rater.
 
   - id: panss
     label: "Positive and Negative Syndrome Scale (PANSS)"
@@ -2444,6 +2475,23 @@ terms:
       used; in practice it appears as an incidence_proportion, where benefit
       polarity correctly yields increase_is_better.
 
+  - id: cannabis_use_disorder_severity
+    label: "Self-Reported Symptoms of Cannabis Use Disorder (SR-SCUD)"
+    concept: substance_use_disorder_severity
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    typical_ta: [substance_use]
+    synonyms: ["SR-SCUD", "SRSCUD", "Self-Reported Symptoms of Cannabis Use Disorder",
+               "cannabis use disorder"]
+    notes: >-
+      A 13-item DSM-5-symptom-based continuous severity measure, not a
+      diagnosis. "cannabis use disorder" alone (without an instrument name) is
+      kept as a synonym here rather than sent to a generic catch-all, since the
+      corpus has no other cannabis-specific severity instrument to disambiguate
+      against.
+
   # =========================================================================
   # INFECTIOUS DISEASE AND VACCINES
   # =========================================================================
@@ -2565,6 +2613,27 @@ terms:
     default_scale: cells_per_ul
     typical_ta: [haematology]
     synonyms: ["platelet count", "platelets", "PLT"]
+
+  - id: lymphocyte_count
+    label: "Lymphocyte count"
+    concept: lymphocyte_count
+    method: laboratory
+    domain: safety
+    default_direction: neutral
+    default_scale: cells_per_ul
+    typical_ta: [haematology, oncology]
+    synonyms: ["lymphocyte count", "lymphocytes", "absolute lymphocyte count", "ALC",
+               "dosage of immune markers", "immune marker assay"]
+    notes: >-
+      Direction is genuinely context-dependent rather than underivable: a falling
+      count is the harm being monitored in immunosuppression/lymphodepletion
+      trials (fingolimod, CAR-T), while a falling count is the efficacy signal in
+      CLL, where transient lymphocytosis on treatment start is expected. Left
+      `neutral` rather than guessing either way. "Dosage of immune markers" is a
+      broader, vaguer phrase (immune-marker panels can mean cytokines or
+      immunoglobulins as well as lymphocyte subsets); kept as a synonym here on
+      the evidence available, flagged for a reviewer who can confirm what those
+      corpus rows actually assayed.
 
   # =========================================================================
   # RENAL AND HEPATIC
@@ -2688,14 +2757,23 @@ terms:
     event_polarity: harm
     synonyms: ["adverse event", "AE", "TEAE", "treatment-emergent adverse event", "adverse events",
                "AESI", "adverse event of special interest", "treatment emergent adverse event",
-               "severity of TEAEs", "AE/ADR", "adverse drug reaction"]
-    patterns: ['\b(TE)?AEs?\b', '\badverse (event|reaction|experience)s?\b', '\bAESIs?\b', '\bsafety and tolerability\b']
+               "severity of TEAEs", "AE/ADR", "adverse drug reaction", "toxicity", "toxicities",
+               "treatment-related toxicity", "treatment related toxicity"]
+    patterns: ['\b(TE)?AEs?\b', '\badverse (event|reaction|experience)s?\b', '\bAESIs?\b', '\bsafety and tolerability\b',
+               '\btoxicit(y|ies)\b']
     notes: >-
       The single most common measurement in a registry-wide sample. Under
       incidence_proportion it is "number of participants with a TEAE"; under
       event_count, "number of TEAEs"; under time_to_event, "time to first AESI" --
       three forms of one measurement, and a clean demonstration of the
       SAME_MEASUREMENT_DIFFERENT_FORM edge outside efficacy.
+
+      "toxicity" is a bare word rather than a phrase, but whole-token matching
+      makes it safe: `\btoxicit(y|ies)\b` requires a word boundary before the
+      match, so it does not fire inside "hepatotoxicity", "cardiotoxicity",
+      "neurotoxicity" or "nephrotoxicity", which are organ-specific and belong
+      elsewhere (or to `not_stated` where no organ-specific term exists yet)
+      rather than to this generic bucket.
 
   - id: serious_adverse_event
     label: "Serious adverse event"
@@ -2922,6 +3000,26 @@ terms:
     typical_ta: [oncology]
     synonyms: ["FACT-G", "FACT", "Functional Assessment of Cancer Therapy"]
 
+  - id: fact_es
+    label: "FACT-Endocrine Symptoms (FACT-ES)"
+    inline_label: "FACT-ES"
+    concept: health_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    default_scale: score_points
+    typical_ta: [oncology]
+    synonyms: ["FACT-ES", "Functional Assessment of Cancer Therapy - Endocrine Symptoms",
+               "Functional Assessment of Cancer Therapy-Endocrine Symptoms"]
+    notes: >-
+      FACT-G plus an 18-item endocrine-symptom subscale, used in breast cancer
+      trials of endocrine therapy. Kept apart from `fact_g` (a different
+      instrument, not just a longer version of it) even though it shares the
+      same `concept` -- the same "instrument-level id, concept for the family"
+      split this file already uses for PASI/sPGA. "FACT-ES" out-spans fact_g's
+      bare "FACT" synonym (7 chars vs. 4) so longest-match resolves it correctly
+      with no veto needed.
+
   - id: iwqol_lite
     label: "Impact of Weight on Quality of Life (IWQOL-Lite)"
     concept: health_related_quality_of_life
@@ -2931,6 +3029,44 @@ terms:
     default_scale: score_points
     typical_ta: [metabolic_endocrine]
     synonyms: ["IWQOL-Lite", "IWQOL-Lite-CT", "Impact of Weight on Quality of Life"]
+
+  - id: cankado_qlq
+    label: "Quality of life via CANKADO ePRO"
+    inline_label: "quality of life via CANKADO"
+    concept: health_related_quality_of_life
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: increase_is_better
+    typical_ta: [oncology]
+    synonyms: ["CANKADO", "CANKADO active", "CANKADO PRO-React", "CANKADO PRO-React eHealth"]
+    notes: >-
+      CANKADO is not itself a validated psychometric instrument -- it is an
+      ePRO/eHealth platform (self-detecting symptom questionnaires, an EQ-VAS-style
+      daily slider) used to capture HRQoL in a recurring family of breast-cancer
+      trials (e.g. the AGO-B WSG PreCycle trial, NCT03220178), whose registered
+      endpoints read like "time to deterioration of quality of life via CANKADO
+      active". Given its own id rather than folded into the generic catch-all
+      because "CANKADO" recurs by name across that trial family and is worth
+      keeping queryable as its own edge; the instrument it delivers underneath is
+      usually still unnamed in the registry text, hence no `score_range`.
+
+  - id: fear_of_cancer_recurrence
+    label: "Fear of Cancer Recurrence Inventory - Short Form (FCRI-SF)"
+    inline_label: "fear of cancer recurrence"
+    concept: fear_of_cancer_recurrence
+    method: patient_reported_instrument
+    domain: patient_reported
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 36]
+    typical_ta: [oncology]
+    synonyms: ["FCRI-SF", "Fear of Cancer Recurrence Inventory", "Fear of Cancer Recurrence",
+               "Fear of Cancer Recurrence Inventory - Short Form", "Fear of Cancer Recurrence Inventory-Short Form"]
+    notes: >-
+      A distinct construct from `health_related_quality_of_life` (fear/worry
+      about relapse, not overall QoL), so it gets its own `concept` rather than
+      sharing that one -- despite being reported alongside EORTC/FACT in the
+      same oncology survivorship trials.
 
   - id: patient_global_impression
     label: "Patient Global Impression (PGIS / PGIC)"
@@ -2951,11 +3087,63 @@ terms:
     domain: patient_reported
     default_direction: increase_is_better
     synonyms: ["quality of life", "QoL", "HRQoL", "health-related quality of life", "quality of life assessment"]
+    not_if_matches:
+      - '\bEORTC\b'
+      - '\bQLQ-[A-Z0-9]+\b'
+      - '\bFACT-[A-Za-z0-9]+\b'
+      - '\bCANKADO\b'
+      - '\bEQ-5D(-\w+)?\b'
+      - '\bEQ5D\w*\b'
+      - '\bSF-(36|12)\b'
+      - '\bFCRI\b'
     notes: >-
       A deliberate catch-all for the very common bare "Quality of life assessment".
       Conforming to it is honest -- the concept is known, the instrument is not --
       and it keeps those rows out of the review queue while remaining easy to filter
       out of any analysis that needs a named instrument.
+
+      The vetoes stop this catch-all from beating a named instrument on span:
+      registry text routinely names the instrument alongside the generic phrase,
+      e.g. "... Health-Related Quality of Life (HRQoL) as Assessed by the EORTC
+      QLQ-C30", where "health-related quality of life" (30 chars) is a longer
+      matched span than "EORTC QLQ-C30" (13 chars) even though the instrument is
+      explicit and strictly more specific -- and the literature does write FACT-ES
+      the same way ("... quality of life ... in the ... FACT-ES score ..."), so
+      this is not an EORTC-only failure mode. Longest-match assumes span tracks
+      specificity; here two different terms match two different true substrings
+      of the same string, so the assumption breaks and has to be vetoed rather
+      than out-spanned. `iwqol_lite` needs no veto -- its own long-form synonym
+      ("Impact of Weight on Quality of Life", 36 chars) already out-spans this
+      catch-all's longest synonym (30) on its own, which is why it alone was
+      spared in round two's version of the same fix (see matching.yaml).
+
+  # =========================================================================
+  # FUNCTIONAL / PERFORMANCE STATUS
+  # =========================================================================
+  - id: ecog_performance_status
+    label: "ECOG Performance Status"
+    concept: performance_status
+    method: clinician_rated_instrument
+    domain: efficacy
+    default_direction: decrease_is_better
+    default_scale: score_points
+    score_range: [0, 5]
+    typical_ta: [oncology]
+    synonyms: ["ECOG", "ECOG Performance Status", "ECOG PS", "Eastern Cooperative Oncology Group",
+               "Eastern Cooperative Oncology Group Performance Status", "WHO Performance Status"]
+    notes: >-
+      0 = fully active, 5 = dead, so lower is better. WHO Performance Status is
+      the same 0-5 scale under a different sponsor name and is folded in as a
+      synonym. Karnofsky Performance Status (0-100, higher is better) is
+      deliberately NOT a synonym here despite describing the same construct: it
+      is inverse-scored, and this file keeps oppositely-scored siblings as
+      separate terms rather than one catch-all (see `left_ventricular_volume`'s
+      notes on why reverse remodelling stays apart from LVEF) rather than risk a
+      silent direction flip -- add Karnofsky as its own term if the corpus needs
+      it. Most of this measurement's occurrences will be in eligibility/
+      inclusion-criteria text rather than a reported outcome, but where it IS
+      the outcome ("Change from Baseline in ECOG Performance Status", "Time to
+      ECOG Deterioration") it needed a term to conform to.
 
   # =========================================================================
   # HEALTHCARE UTILISATION
@@ -3245,6 +3433,7 @@ concepts:
   - exercise_capacity
   - extrapyramidal_symptoms
   - fatigue
+  - fear_of_cancer_recurrence
   - functional_class
   - functional_disability
   - gas_exchange
@@ -3274,6 +3463,7 @@ concepts:
   - liver_fibrosis
   - lung_fibrosis_extent
   - lung_volume
+  - lymphocyte_count
   - ms_disability
   - myocardial_injury
   - neurodegeneration
@@ -3288,6 +3478,7 @@ concepts:
   - pain_intensity
   - pain_interference
   - pathogen_clearance
+  - performance_status
   - perinatal_outcome
   - physical_function
   - plaque_burden
@@ -3322,6 +3513,7 @@ concepts:
   - sleep_quality
   - stroke_severity
   - substance_abstinence
+  - substance_use_disorder_severity
   - suicidality
   - surgical_completeness
   - survival

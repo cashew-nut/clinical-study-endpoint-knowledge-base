@@ -126,6 +126,57 @@ def test_reference_table_fixtures_conform_end_to_end(con):
         )
 
 
+# ------------------------------------------------- specific-vs-generic instrument
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Change From Baseline in Health-Related Quality of Life (HRQoL) as Assessed by the EORTC QLQ-C30",
+        "Quality of Life as measured by EORTC QLQ-C30",
+    ],
+)
+def test_eortc_qlq_c30_beats_the_generic_hrqol_catch_all(con, text):
+    """The generic `health_related_quality_of_life_unspecified` catch-all lists
+    "health-related quality of life" (30 chars) among its synonyms, which is a
+    longer matched span than "EORTC QLQ-C30" (13 chars) -- so before its
+    `not_if_matches` veto, longest-match-wins handed rows that explicitly name
+    the instrument to the catch-all instead. See that term's notes."""
+    _insert_outcomes(con, [("NCT000900", "primary", text, None, None, None)])
+    run_conform(con)
+    measurement_id = con.execute(
+        "SELECT measurement_id FROM conformed.endpoints WHERE nct_id = 'NCT000900'"
+    ).fetchone()[0]
+    assert measurement_id == "eortc_qlq_c30"
+
+
+@pytest.mark.parametrize(
+    "text,expected_measurement",
+    [
+        # Same failure mode as EORTC above, now guarded for the other named
+        # instruments sharing `health_related_quality_of_life_unspecified`'s
+        # generic synonyms.
+        ("Health-Related Quality of Life as Measured by FACT-ES", "fact_es"),
+        ("Time to Deterioration of Health-Related Quality of Life via CANKADO active", "cankado_qlq"),
+        ("Quality of Life and Fear of Cancer Recurrence (FCRI-SF)", "fear_of_cancer_recurrence"),
+        # New terms added from the missing-measures review.
+        ("ECOG Performance Status", "ecog_performance_status"),
+        ("Generalized Anxiety Disorder scale (GAD-7)", "gad7"),
+        ("Patient Health Questionnaire-8 (PHQ8)", "phq8"),
+        ("Self-Reported Symptoms of Cannabis Use Disorder (SR-SCUD)", "cannabis_use_disorder_severity"),
+        ("Absolute Lymphocyte Count", "lymphocyte_count"),
+        ("Incidence of Treatment-Related Toxicity", "adverse_event"),
+    ],
+)
+def test_missing_measures_review_terms_conform(con, text, expected_measurement):
+    _insert_outcomes(con, [("NCT000901", "primary", text, None, None, None)])
+    run_conform(con)
+    measurement_id = con.execute(
+        "SELECT measurement_id FROM conformed.endpoints WHERE nct_id = 'NCT000901'"
+    ).fetchone()[0]
+    assert measurement_id == expected_measurement
+
+
 # ------------------------------------------------------------- review queue
 
 
