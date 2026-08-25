@@ -20,11 +20,13 @@ Each spec states its own status at the top. In short:
 | [`EVENT_SEMANTICS_SPEC.md`](EVENT_SEMANTICS_SPEC.md) | **implemented** (phases A–C; phase D unscheduled) | the event axis for time-to-event endpoints: what stops the clock, and why "PFS" is not "tumour burden" |
 | [`USDM_PROJECTION_INTEGRITY_SPEC.md`](USDM_PROJECTION_INTEGRITY_SPEC.md) | **implemented** | announced defaults, per-attribute `derived` flags, timepoint roles, and the v2 extension profile |
 | [`COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) | **not implemented** | decomposing composite endpoints into their components — a proposal, gated on a measurement that needs a live pull |
+| [`RESULTS_CORRELATION_ROADMAP.md`](RESULTS_CORRELATION_ROADMAP.md) | **proposal** | what public data can be joined to the conformed endpoints once they are a grouping key — results ingestion, an endpoint variability reference, and the external sources worth correlating |
 
 Read them in that order if you are new to the project: the first two explain
 how the pipeline gets its data and what it emits, the next two are corrections
-made after validating the projection against a real trial, and the last is a
-proposal.
+made after validating the projection against a real trial, and the last two are
+proposals — the first scoped to one relation inside the vocabulary, the second to
+where the project goes after it.
 
 ### Conventions
 
