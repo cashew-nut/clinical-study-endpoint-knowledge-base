@@ -206,6 +206,16 @@ terms:
     inline_label: "L/s"
     kind: flow
     synonyms: ["L/s", "L/sec", "litres per second"]
+  - id: litres_per_minute
+    label: "Litres per minute (L/min)"
+    inline_label: "L/min"
+    kind: flow
+    synonyms: ["L/min", "l/min", "litres per minute", "liters per minute", "LPM"]
+  - id: metres_per_second
+    label: "Metres per second (m/s)"
+    inline_label: "m/s"
+    kind: velocity
+    synonyms: ["m/s", "m/sec", "metres per second", "meters per second"]
   - id: metres
     label: "Metres (m)"
     inline_label: "m"
@@ -263,6 +273,26 @@ terms:
     inline_label: "mmHg"
     kind: pressure
     synonyms: ["mmHg", "mm Hg", "millimetres of mercury"]
+  - id: kilopascals
+    label: "Kilopascals (kPa)"
+    inline_label: "kPa"
+    kind: pressure
+    synonyms: ["kPa", "kilopascals", "kilopascal"]
+  - id: wood_units
+    label: "Wood units (WU)"
+    inline_label: "Wood units"
+    kind: vascular_resistance
+    synonyms: ["Wood units", "WU", "Wood unit"]
+    notes: >-
+      Pulmonary vascular resistance is reported in either Wood units or
+      dyn·s·cm⁻⁵, 80 of the latter to one of the former, in the same trials.
+      Two terms rather than one because the numbers are not interchangeable and
+      the projection prints the unit it was given.
+  - id: dyn_s_per_cm5
+    label: "dyn·s·cm⁻⁵"
+    inline_label: "dyn·s·cm⁻⁵"
+    kind: vascular_resistance
+    synonyms: ["dyn.s/cm5", "dyn·s/cm5", "dyn*s/cm5", "dynes-sec/cm5", "dyn s cm-5", "dyn.sec.cm-5"]
   - id: beats_per_minute
     label: "Beats per minute (bpm)"
     inline_label: "bpm"
@@ -331,6 +361,17 @@ terms:
     inline_label: "pg/mL"
     kind: concentration
     synonyms: ["pg/mL", "pg/ml", "picograms per millilitre"]
+  - id: umol_per_l
+    label: "µmol/L"
+    inline_label: "µmol/L"
+    kind: concentration
+    synonyms: ["µmol/L", "umol/L", "micromol/L", "micromoles per litre", "μmol/l"]
+  - id: parts_per_billion
+    label: "Parts per billion (ppb)"
+    inline_label: "ppb"
+    kind: concentration
+    synonyms: ["ppb", "parts per billion"]
+    notes: The unit of exhaled nitric oxide (FeNO).
   - id: units_per_l
     label: "U/L"
     inline_label: "U/L"
@@ -400,6 +441,14 @@ terms:
     inline_label: "MME"
     kind: dose_equivalent
     synonyms: ["MME", "morphine milligram equivalents", "morphine equivalent dose"]
+  - id: mg_per_day
+    label: "mg/day"
+    inline_label: "mg/day"
+    kind: dose_equivalent
+    synonyms: ["mg/day", "mg per day", "mg/d", "milligrams per day"]
+    notes: >-
+      Carried for oral-corticosteroid-sparing endpoints, where the reduction in
+      prednisone-equivalent daily dose is the endpoint rather than a covariate.
   - id: kcal_per_day
     label: "kcal/day"
     inline_label: "kcal/day"

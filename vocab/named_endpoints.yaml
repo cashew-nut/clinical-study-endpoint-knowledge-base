@@ -197,3 +197,52 @@ definitions:
     notes: >-
       TFST, TSST and TTNT are folded into one definition: they differ only in
       which line of subsequent therapy starts the clock, not in shape.
+
+  # --- Round three: cardiovascular and respiratory --------------------------
+  # These two are the only cardio-respiratory endpoint NAMES in the corpus that
+  # pin a whole bundle the way PFS does. MACE deliberately is NOT here: it names
+  # what is counted, not a form/origin/event triple (a MACE endpoint is as often
+  # an incidence proportion as a time-to-first), so it stays a measurement whose
+  # `implies_event` reaches the composite event. Annualised exacerbation rate is
+  # not here either -- `disease_exacerbation` plus forms.yaml's `event_rate`
+  # already resolve it from the ordinary cascade, and a definition that only
+  # restated them would be a second place to keep in step for no gain.
+
+  - id: ttcw
+    label: "Time to clinical worsening"
+    synonyms:
+      - "time to clinical worsening"
+      - "TTCW"
+      - "time to first clinical worsening"
+      - "clinical worsening"
+      - "time to clinical failure"
+    form: time_to_event
+    event: clinical_deterioration
+    reference: randomisation
+    citation: >-
+      Galiè N et al., "Clinical Worsening in Trials of Pulmonary Arterial
+      Hypertension", Eur Respir J 2010;36:191-6 -- the composite-worsening
+      endpoint definition PAH registration trials have used since.
+    notes: >-
+      The pulmonary-hypertension and heart-failure counterpart of PFS: a
+      composite of death, hospitalisation for the disease, and objective
+      deterioration, with the clock from randomisation. No
+      `default_measurement` -- what is assessed varies by trial (6MWD, WHO
+      functional class, haemodynamics), and the ordinary cascade reads whichever
+      the row names. 44 corpus rows, 29 of them respiratory (pulmonary
+      hypertension routes there, per ta_mesh_mapping.yaml's caveat).
+
+  - id: daoh
+    label: "Days alive and out of hospital"
+    synonyms:
+      - "days alive and out of hospital"
+      - "DAOH"
+      - "days alive out of hospital"
+    form: event_free_days
+    default_measurement: days_alive_out_of_hospital
+    notes: >-
+      No `event` and no `reference`: DAOH is a count over a fixed window, not a
+      time-to-first, and the window is stated in `time_frame` rather than by a
+      named time origin. Carried as a definition anyway because the name pins
+      the FORM -- without it the bare noun phrase resolves `not_stated`, which
+      is what 41 of its 70 corpus rows did.
