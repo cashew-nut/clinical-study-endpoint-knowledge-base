@@ -459,6 +459,41 @@ procedure a trial enrols after as the outcome event). `MI`, `MALE`, `CAT`, `ACT`
 and `MAP` were kept but carry either a case-sensitive pattern, a
 `not_if_matches` veto, or both.
 
+## What round four changed: `scales.yaml` became a conversion table
+
+Round four served [`docs/ENDPOINT_RESULTS_SPEC.md`](../docs/ENDPOINT_RESULTS_SPEC.md)'s
+dispersion normaliser (D6). On the protocol side a scale is mostly a label; on
+the results side it decides whether two trials' numbers can be pooled at all,
+because `unit_of_measure` is sponsor-written free text and FEV1 arrives in both
+litres and millilitres.
+
+* **`factor_to_si` went from 21 of 59 terms to 58 of 67.** Every family whose
+  conversion is exact unit algebra now has one -- flow, velocity, pressure,
+  vascular resistance, mass concentration, molar concentration, BMI, %BSA --
+  and the singleton families self-anchor at factor 1 so a converted SD column
+  is populated rather than null for them.
+* **Nine terms stay unconvertible on purpose**, each with the reason on the
+  term: `percent_change` and `ratio` are different quantities rather than two
+  spellings of one; `percent_hba1c` ↔ `mmol_per_mol` is affine, not a factor;
+  the mass-concentration and molar-concentration families are *not* linked,
+  because `mg/dL ↔ mmol/L` needs the analyte's molar mass, which is a property
+  of the measurement and not of the unit; the immunogenicity titres and
+  `count_per_period` are left for a reviewer; `dimensionless` and `not_stated`
+  are catch-alls.
+* **Anchors are now validated.** A term naming another as its `si_equivalent`
+  requires that term to declare `si_equivalent: <itself>` and
+  `factor_to_si: 1`. Without it, a conversion could land in a unit that is
+  itself expressed in something else -- one silent factor out, in the column
+  whose whole job is making two trials comparable.
+* **Synonyms gained the results register**: the plural and American spellings
+  the `unit_of_measure` field uses, and the phrases that are units only in that
+  field ("units on a scale", "number of participants"). Note that a unit
+  *field* can be matched whole, so `results/units.py` resolves a bare `L`
+  that `matching.yaml`'s `min_synonym_length` rule rightly refuses to match
+  inside a sentence.
+
+No new scale terms were added, so the count stays at 67.
+
 ## Known gaps
 
 * ~~**Live AACT/CT.gov access is still unavailable from this build sandbox.**~~
