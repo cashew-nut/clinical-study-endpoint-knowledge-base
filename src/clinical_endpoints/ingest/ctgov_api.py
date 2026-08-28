@@ -39,6 +39,12 @@ from clinical_endpoints.ingest.design import (
 )
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
 from clinical_endpoints.ingest.pull_log import write_pull_log
+from clinical_endpoints.ingest.results import (
+    RESULTS_TABLE_NAMES,
+    RESULTS_TABLES,
+    extract_ctgov_results,
+    has_results,
+)
 from clinical_endpoints.ingest.upsert import SchemaReconciler, replace_children, upsert_rows
 from clinical_endpoints.ta.resolver import (
     branch_abbrev_to_tree_prefix,
@@ -62,6 +68,11 @@ SOURCE_TABLES = (
     "browse_interventions",
     "browse_condition_branches",
 )
+
+# ...plus the results section, when `--no-results` was not given. Recorded
+# separately so raw._pull_log.source_tables says which of the two shapes a
+# given pull actually landed -- a warehouse can hold both.
+RESULTS_SOURCE_TABLES = RESULTS_TABLE_NAMES
 
 PAGE_SIZE = 200
 REQUEST_TIMEOUT_S = 30
@@ -216,6 +227,8 @@ def _extract_study_row(study: dict) -> dict:
         # The *lead* sponsor only, never a collaborator -- matches the
         # AREA[LeadSponsorName] filter `_build_query_term` applies server-side.
         "organization": _get_path(proto, "sponsorCollaboratorsModule", "leadSponsor", "name"),
+        # The registry's own flag, landed regardless of `--no-results`.
+        "has_results": has_results(study),
     }
 
 
@@ -358,6 +371,7 @@ def run_pull(
 
     studies: list[dict] = []
     outcomes_by_nct: dict[str, list[dict]] = {}
+    results_by_nct: dict[str, dict[str, list[tuple]]] = {}
     arms_by_nct: dict[str, list[dict]] = {}
     conditions_by_nct: dict[str, list[dict]] = {}
     browse_conditions_by_nct: dict[str, list[dict]] = {}
@@ -419,6 +433,12 @@ def run_pull(
             seen_nct_ids.add(nct_id)
             studies.append(row)
             outcomes_by_nct[nct_id] = _extract_outcome_rows(study)
+            if filters.with_results:
+                # Parsed here rather than after truncation because the payload
+                # is only in hand while the page is: `studies` is truncated to
+                # `--limit` below, and rows for the dropped studies are simply
+                # never read back out of this dict.
+                results_by_nct[nct_id] = extract_ctgov_results(study)
             arms_by_nct[nct_id] = _extract_arm_rows(study)
             conditions_by_nct[nct_id] = _extract_condition_rows(study)
             browse_conditions_by_nct[nct_id] = browse_conditions
@@ -544,6 +564,17 @@ def run_pull(
         [(b["nct_id"], b["branch_abbrev"], b["branch_name"]) for b in condition_branches],
     )
 
+    results_rows: dict[str, list[tuple]] = {name: [] for name in RESULTS_TABLE_NAMES}
+    if filters.with_results:
+        for nct_id in kept_nct_ids:
+            for name, rows in (results_by_nct.get(nct_id) or {}).items():
+                results_rows[name].extend(rows)
+        for table, ddl, columns in RESULTS_TABLES:
+            schema.ensure(table, ddl)
+            replace_children(
+                con, table, list(columns), "nct_id", kept_nct_ids, results_rows[table]
+            )
+
     row_counts = {
         "studies": len(studies),
         "design_outcomes": len(outcomes),
@@ -553,8 +584,14 @@ def run_pull(
         "browse_interventions": len(browse_interventions),
         "browse_condition_branches": len(condition_branches),
     }
+    if filters.with_results:
+        row_counts.update({name: len(rows) for name, rows in results_rows.items()})
     log_entry = write_pull_log(
-        con, source=SOURCE, filters=filters.as_dict(), row_counts=row_counts, source_tables=SOURCE_TABLES
+        con,
+        source=SOURCE,
+        filters=filters.as_dict(),
+        row_counts=row_counts,
+        source_tables=SOURCE_TABLES + (RESULTS_SOURCE_TABLES if filters.with_results else ()),
     )
     return {
         **log_entry,

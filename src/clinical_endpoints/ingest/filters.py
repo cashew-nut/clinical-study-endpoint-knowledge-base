@@ -47,6 +47,12 @@ class PullFilters:
     #: any earlier pull, with any filters, are discarded. False (upsert) is the
     #: default everywhere else in this codebase assumes.
     replace: bool = False
+    #: Whether to land the results section (raw.outcome_*) alongside the
+    #: protocol section. True by default: the CT.gov API returns the results
+    #: section in the same payload the pull already fetches, so skipping it
+    #: saves no network at all -- only warehouse size, which is what
+    #: `--no-results` is for. See docs/ENDPOINT_RESULTS_SPEC.md.
+    with_results: bool = True
 
     def as_dict(self) -> dict:
         d = {
@@ -60,4 +66,6 @@ class PullFilters:
             d["org"] = list(self.org)
         if self.replace:
             d["replace"] = True
+        if not self.with_results:
+            d["with_results"] = False
         return d

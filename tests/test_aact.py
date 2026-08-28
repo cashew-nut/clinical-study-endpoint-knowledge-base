@@ -31,6 +31,12 @@ def test_run_pull_lands_filtered_studies_and_outcomes(fake_aact_con):
         "browse_conditions": 3,  # NCT001 has two MeSH conditions, NCT002 one; NCT003 excluded (PHASE1)
         "browse_interventions": 2,
         "mesh_terms": 0,  # AACT's mesh_terms is empty in the fake, same as the real database today
+        # The results section (D4), landed by default. Only NCT001 posted one.
+        "outcome_measures": 2,
+        "outcome_groups": 4,
+        "outcome_measurements": 4,
+        "outcome_analyses": 2,
+        "baseline_measurements": 1,
     }
     assert result["has_mesh_tree_numbers"] is False
 
@@ -89,6 +95,11 @@ def test_run_pull_logs_every_invocation(fake_aact_con):
         "browse_conditions",
         "browse_interventions",
         "mesh_terms",
+        "outcome_measures",
+        "outcome_groups",
+        "outcome_measurements",
+        "outcome_analyses",
+        "baseline_measurements",
     }
     assert json.loads(row_counts) == {
         "studies": 2,
@@ -98,6 +109,11 @@ def test_run_pull_logs_every_invocation(fake_aact_con):
         "browse_conditions": 3,
         "browse_interventions": 2,
         "mesh_terms": 0,
+        "outcome_measures": 2,
+        "outcome_groups": 4,
+        "outcome_measurements": 4,
+        "outcome_analyses": 2,
+        "baseline_measurements": 1,
     }
 
 
@@ -309,7 +325,7 @@ def test_run_pull_ta_filter_scans_past_non_matching_batches(ta_fake_aact_con, mo
     ta_fake_aact_con.execute(
         "INSERT INTO aact.ctgov.studies VALUES "
         "('NCT004', 'PHASE3', 'RECRUITING', 'INTERVENTIONAL', '2022-01-01', NULL, "
-        "'Trial D', 'Trial D official', NULL, NULL)"
+        "'Trial D', 'Trial D official', NULL, NULL, NULL)"
     )
     ta_fake_aact_con.execute("INSERT INTO aact.ctgov.browse_conditions VALUES ('NCT004', 'Asthma')")
 

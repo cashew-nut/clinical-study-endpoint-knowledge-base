@@ -14,6 +14,23 @@
 # `si_equivalent` / `factor_to_si` allow safe conversion within a kind, which is
 # what makes "the same measurement reported in different units" a findable case
 # rather than a silent mismatch (FEV1 in L vs mL; HbA1c in % vs mmol/mol).
+#
+# ROUND FOUR (docs/ENDPOINT_RESULTS_SPEC.md, D6) completed `factor_to_si` for
+# every family where the conversion is exact unit algebra, and self-anchored
+# the families with only one member, so that an SD pooled across two trials
+# reporting the same endpoint in different units is convertible rather than
+# silently mixed. Three cases are deliberately left unconvertible, and each
+# says so on the term:
+#   * mg/dL <-> mmol/L needs the analyte's molar mass, which is a property of
+#     the measurement and not of the unit;
+#   * HbA1c NGSP % <-> IFCC mmol/mol is affine, not a factor;
+#   * percent_change and ratio are different quantities, not two spellings of
+#     one (a 10% change is not a ratio of 0.1).
+# Synonyms also gained the spellings the *results* section uses, which is a
+# different register from protocol prose: `unit_of_measure` is a field whose
+# whole content is the unit, so "L" and "mL" appear bare there in a way
+# matching.yaml's min_synonym_length rule rightly refuses to match in a
+# sentence. See results/units.py for how the two registers are kept apart.
 
 version: 1
 dimension: scale
@@ -146,7 +163,10 @@ terms:
     label: "Score points"
     inline_label: "points"
     kind: score
-    synonyms: ["points", "score", "total score", "score units", "rated from"]
+    si_equivalent: score_points
+    factor_to_si: 1
+    synonyms: ["points", "score", "total score", "score units", "rated from",
+               "units on a scale", "score on a scale"]
     notes: >-
       The most common scale in the corpus by a wide margin -- instrument scores
       (PASI, EASI, DLQI, MADRS, NIHSS, WOMAC, CGI, ...). The instrument's range and
@@ -156,33 +176,45 @@ terms:
     label: "Z-score (SD units)"
     inline_label: "z-score"
     kind: score
+    si_equivalent: z_score
+    factor_to_si: 1
     synonyms: ["z-score", "z score", "standard deviation score", "SD score"]
   - id: t_score
     label: "T-score (mean 50, SD 10)"
     inline_label: "t-score"
     kind: score
+    si_equivalent: t_score
+    factor_to_si: 1
     synonyms: ["t-score", "t score", "PROMIS t-score"]
   - id: letters_etdrs
     label: "ETDRS letters"
     inline_label: "ETDRS letters"
     kind: score
+    si_equivalent: letters_etdrs
+    factor_to_si: 1
     synonyms: ["ETDRS letters", "letters", "letter score", "BCVA letters"]
     notes: "Ophthalmology visual acuity; 5 letters = 1 line on the ETDRS chart."
   - id: logmar
     label: "logMAR"
     inline_label: "logMAR"
     kind: score
+    si_equivalent: logmar
+    factor_to_si: 1
     synonyms: ["logMAR", "log MAR"]
     notes: "Inverse polarity to letters_etdrs -- lower logMAR is better vision."
   - id: steps_drss
     label: "DRSS steps"
     inline_label: "DRSS steps"
     kind: score
+    si_equivalent: steps_drss
+    factor_to_si: 1
     synonyms: ["steps", "DRSS steps", "step improvement"]
   - id: grade_ctcae
     label: "CTCAE grade"
     inline_label: "CTCAE grade"
     kind: score
+    si_equivalent: grade_ctcae
+    factor_to_si: 1
     synonyms: ["CTCAE grade", "grade", "toxicity grade", "NCI-CTCAE"]
 
   # --- volume, flow, distance ----------------------------------------------
@@ -200,21 +232,31 @@ terms:
     kind: volume
     si_equivalent: litres
     factor_to_si: 0.001
-    synonyms: ["mL", "ml", "millilitre", "milliliter"]
+    synonyms: ["mL", "ml", "millilitre", "milliliter", "millilitres", "milliliters"]
   - id: litres_per_second
     label: "Litres per second (L/s)"
     inline_label: "L/s"
     kind: flow
-    synonyms: ["L/s", "L/sec", "litres per second"]
+    si_equivalent: litres_per_second
+    factor_to_si: 1
+    synonyms: ["L/s", "L/sec", "litres per second", "liters per second"]
   - id: litres_per_minute
     label: "Litres per minute (L/min)"
     inline_label: "L/min"
     kind: flow
+    si_equivalent: litres_per_second
+    factor_to_si: 0.016666667
     synonyms: ["L/min", "l/min", "litres per minute", "liters per minute", "LPM"]
+    notes: >-
+      Peak expiratory flow is reported in L/min by some sponsors and L/s by
+      others, in trials of the same drug class -- the case factor_to_si exists
+      for.
   - id: metres_per_second
     label: "Metres per second (m/s)"
     inline_label: "m/s"
     kind: velocity
+    si_equivalent: metres_per_second
+    factor_to_si: 1
     synonyms: ["m/s", "m/sec", "metres per second", "meters per second"]
   - id: metres
     label: "Metres (m)"
@@ -260,11 +302,15 @@ terms:
     label: "kg/m² (BMI)"
     inline_label: "kg/m²"
     kind: composite_unit
+    si_equivalent: kg_per_m2
+    factor_to_si: 1
     synonyms: ["kg/m2", "kg/m^2", "kg/m²", "BMI units"]
   - id: percent_body_surface_area
     label: "% body surface area"
     inline_label: "% BSA"
     kind: proportion
+    si_equivalent: proportion
+    factor_to_si: 0.01
     synonyms: ["% BSA", "percent BSA", "body surface area (%)"]
 
   # --- pressure, rate, electrical ------------------------------------------
@@ -272,16 +318,27 @@ terms:
     label: "Millimetres of mercury (mmHg)"
     inline_label: "mmHg"
     kind: pressure
-    synonyms: ["mmHg", "mm Hg", "millimetres of mercury"]
+    si_equivalent: mmhg
+    factor_to_si: 1
+    synonyms: ["mmHg", "mm Hg", "millimetres of mercury", "millimeters of mercury"]
+    notes: >-
+      mmHg anchors the pressure family rather than the SI pascal, for the same
+      reason `hours` anchors time and `litres` volume: it is the unit blood
+      pressure is actually reported in, and an anchor nobody reports in makes
+      every stored conversion a round-trip.
   - id: kilopascals
     label: "Kilopascals (kPa)"
     inline_label: "kPa"
     kind: pressure
+    si_equivalent: mmhg
+    factor_to_si: 7.50062
     synonyms: ["kPa", "kilopascals", "kilopascal"]
   - id: wood_units
     label: "Wood units (WU)"
     inline_label: "Wood units"
     kind: vascular_resistance
+    si_equivalent: wood_units
+    factor_to_si: 1
     synonyms: ["Wood units", "WU", "Wood unit"]
     notes: >-
       Pulmonary vascular resistance is reported in either Wood units or
@@ -292,17 +349,27 @@ terms:
     label: "dyn·s·cm⁻⁵"
     inline_label: "dyn·s·cm⁻⁵"
     kind: vascular_resistance
+    si_equivalent: wood_units
+    factor_to_si: 0.0125
     synonyms: ["dyn.s/cm5", "dyn·s/cm5", "dyn*s/cm5", "dynes-sec/cm5", "dyn s cm-5", "dyn.sec.cm-5"]
   - id: beats_per_minute
     label: "Beats per minute (bpm)"
     inline_label: "bpm"
     kind: rate_per_minute
+    si_equivalent: beats_per_minute
+    factor_to_si: 1
     synonyms: ["bpm", "beats per minute", "heart rate"]
+    notes: >-
+      Self-anchored rather than sharing an anchor with breaths_per_minute:
+      they are the same unit algebra and different quantities, and a shared
+      anchor would make heart rate and respiratory rate look poolable.
   - id: breaths_per_minute
     label: "Breaths per minute"
     inline_label: "breaths/min"
     kind: rate_per_minute
-    synonyms: ["breaths per minute", "respiratory rate"]
+    si_equivalent: breaths_per_minute
+    factor_to_si: 1
+    synonyms: ["breaths per minute", "respiratory rate", "breaths/min"]
   - id: milliseconds
     label: "Milliseconds (ms)"
     inline_label: "ms"
@@ -330,62 +397,92 @@ terms:
     inline_label: "mmol/mol"
     kind: concentration
     si_equivalent: mmol_per_mol
+    factor_to_si: 1
     synonyms: ["mmol/mol", "IFCC"]
+  # Mass concentration. One family, anchored on mg/dL because that is the unit
+  # most of its members are reported alongside; every factor below is exact
+  # unit algebra. Deliberately NOT linked to the molar family (mmol/L, µmol/L):
+  # mg/dL <-> mmol/L needs the analyte's molar mass, which is a property of the
+  # measurement and not of the unit, and inventing one factor here would pool
+  # glucose with creatinine.
   - id: mg_per_dl
     label: "mg/dL"
     inline_label: "mg/dL"
     kind: concentration
-    synonyms: ["mg/dL", "mg/dl", "milligrams per decilitre"]
+    si_equivalent: mg_per_dl
+    factor_to_si: 1
+    synonyms: ["mg/dL", "mg/dl", "milligrams per decilitre", "milligrams per deciliter"]
   - id: mmol_per_l
     label: "mmol/L"
     inline_label: "mmol/L"
     kind: concentration
-    synonyms: ["mmol/L", "mmol/l", "millimoles per litre"]
+    si_equivalent: mmol_per_l
+    factor_to_si: 1
+    synonyms: ["mmol/L", "mmol/l", "millimoles per litre", "millimoles per liter"]
+    notes: "Anchors the molar family; see mg_per_dl for why the two are not linked."
   - id: g_per_dl
     label: "g/dL"
     inline_label: "g/dL"
     kind: concentration
-    synonyms: ["g/dL", "g/dl", "grams per decilitre"]
+    si_equivalent: mg_per_dl
+    factor_to_si: 1000
+    synonyms: ["g/dL", "g/dl", "grams per decilitre", "grams per deciliter"]
   - id: ng_per_ml
     label: "ng/mL"
     inline_label: "ng/mL"
     kind: concentration
-    synonyms: ["ng/mL", "ng/ml", "nanograms per millilitre"]
+    si_equivalent: mg_per_dl
+    factor_to_si: 0.0001
+    synonyms: ["ng/mL", "ng/ml", "nanograms per millilitre", "nanograms per milliliter"]
   - id: ug_per_ml
     label: "µg/mL"
     inline_label: "µg/mL"
     kind: concentration
-    synonyms: ["µg/mL", "ug/mL", "mcg/mL", "micrograms per millilitre"]
+    si_equivalent: mg_per_dl
+    factor_to_si: 0.1
+    synonyms: ["µg/mL", "ug/mL", "mcg/mL", "micrograms per millilitre", "μg/mL"]
   - id: pg_per_ml
     label: "pg/mL"
     inline_label: "pg/mL"
     kind: concentration
-    synonyms: ["pg/mL", "pg/ml", "picograms per millilitre"]
+    si_equivalent: mg_per_dl
+    factor_to_si: 0.0000001
+    synonyms: ["pg/mL", "pg/ml", "picograms per millilitre", "picograms per milliliter"]
   - id: umol_per_l
     label: "µmol/L"
     inline_label: "µmol/L"
     kind: concentration
+    si_equivalent: mmol_per_l
+    factor_to_si: 0.001
     synonyms: ["µmol/L", "umol/L", "micromol/L", "micromoles per litre", "μmol/l"]
   - id: parts_per_billion
     label: "Parts per billion (ppb)"
     inline_label: "ppb"
     kind: concentration
+    si_equivalent: parts_per_billion
+    factor_to_si: 1
     synonyms: ["ppb", "parts per billion"]
     notes: The unit of exhaled nitric oxide (FeNO).
   - id: units_per_l
     label: "U/L"
     inline_label: "U/L"
     kind: concentration
+    si_equivalent: units_per_l
+    factor_to_si: 1
     synonyms: ["U/L", "IU/L", "units per litre"]
   - id: copies_per_ml
     label: "copies/mL"
     inline_label: "copies/mL"
     kind: concentration
+    si_equivalent: copies_per_ml
+    factor_to_si: 1
     synonyms: ["copies/mL", "copies/ml", "viral load units"]
   - id: cells_per_ul
     label: "cells/µL"
     inline_label: "cells/µL"
     kind: concentration
+    si_equivalent: cells_per_ul
+    factor_to_si: 1
     synonyms: ["cells/µL", "cells/uL", "cells per microlitre", "/mm3"]
 
   # --- pharmacokinetics ----------------------------------------------------
@@ -393,12 +490,16 @@ terms:
     label: "ng·h/mL (AUC)"
     inline_label: "ng·h/mL"
     kind: pk_exposure
-    synonyms: ["ng*h/mL", "ng.h/mL", "ng·h/mL", "ng*hr/mL"]
+    si_equivalent: ng_h_per_ml
+    factor_to_si: 1
+    synonyms: ["ng*h/mL", "ng.h/mL", "ng·h/mL", "ng*hr/mL", "ng·hr/mL"]
   - id: litres_per_hour
     label: "L/h (clearance)"
     inline_label: "L/h"
     kind: pk_clearance
-    synonyms: ["L/h", "L/hr", "litres per hour", "clearance units"]
+    si_equivalent: litres_per_hour
+    factor_to_si: 1
+    synonyms: ["L/h", "L/hr", "litres per hour", "liters per hour", "clearance units"]
 
   # --- immunogenicity ------------------------------------------------------
   - id: titre
@@ -422,12 +523,22 @@ terms:
     label: "Count (events or participants)"
     inline_label: "count"
     kind: count
-    synonyms: ["count", "number", "number of events", "n"]
+    si_equivalent: count
+    factor_to_si: 1
+    synonyms: ["count", "number", "number of events", "n", "participants", "events",
+               "number of participants"]
+    notes: >-
+      Self-anchored so a count-scaled row still carries an SI value; what stops
+      "number of participants" pooling with "number of exacerbations" is the
+      measurement, not the unit.
   - id: events_per_year
     label: "Events per person-year"
     inline_label: "events per person-year"
     kind: rate
-    synonyms: ["per year", "annualized rate", "annualised rate", "events per patient-year", "per person-year"]
+    si_equivalent: events_per_year
+    factor_to_si: 1
+    synonyms: ["per year", "annualized rate", "annualised rate", "events per patient-year",
+               "per person-year", "events per year"]
   - id: count_per_period
     label: "Count per stated period"
     inline_label: "count per period"
@@ -440,11 +551,15 @@ terms:
     label: "Morphine milligram equivalents (MME)"
     inline_label: "MME"
     kind: dose_equivalent
+    si_equivalent: mme
+    factor_to_si: 1
     synonyms: ["MME", "morphine milligram equivalents", "morphine equivalent dose"]
   - id: mg_per_day
     label: "mg/day"
     inline_label: "mg/day"
     kind: dose_equivalent
+    si_equivalent: mg_per_day
+    factor_to_si: 1
     synonyms: ["mg/day", "mg per day", "mg/d", "milligrams per day"]
     notes: >-
       Carried for oral-corticosteroid-sparing endpoints, where the reduction in
@@ -453,6 +568,8 @@ terms:
     label: "kcal/day"
     inline_label: "kcal/day"
     kind: energy
+    si_equivalent: kcal_per_day
+    factor_to_si: 1
     synonyms: ["kcal/day", "kilocalories per day", "resting metabolic rate units"]
   - id: dimensionless
     label: "Dimensionless"

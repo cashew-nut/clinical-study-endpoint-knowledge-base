@@ -9,6 +9,7 @@ from typing import Callable, Optional
 
 import duckdb
 
+from clinical_endpoints.ingest import aact_results
 from clinical_endpoints.ingest.design import (
     DESIGN_GROUPS_COLUMNS,
     DESIGN_GROUPS_DDL,
@@ -17,6 +18,7 @@ from clinical_endpoints.ingest.design import (
 from clinical_endpoints.ingest.design import STUDIES_DDL as SHARED_STUDIES_DDL
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
 from clinical_endpoints.ingest.pull_log import write_pull_log
+from clinical_endpoints.ingest.results import RESULTS_TABLE_NAMES, RESULTS_TABLES
 from clinical_endpoints.ingest.upsert import SchemaReconciler
 from clinical_endpoints.ta.resolver import TaMapping, load_ta_mapping, resolve_study_ta_matches
 
@@ -34,6 +36,11 @@ SOURCE_TABLES = (
     "browse_interventions",
     "mesh_terms",
 )
+
+# ...plus the results section, when `--no-results` was not given and AACT
+# actually exposes it (see ingest/aact_results.py). Recorded separately so
+# raw._pull_log.source_tables says which of the two shapes a pull landed.
+RESULTS_SOURCE_TABLES = RESULTS_TABLE_NAMES
 
 # Shared with the ctgov_api backend so both land the same shape -- see
 # ingest/design.py for the CDISC ct-gov_mapping.xlsx rows these columns serve.
@@ -74,6 +81,7 @@ PULL_STEPS = (
     "browse_conditions",
     "browse_interventions",
     "mesh_terms",
+    "results",
 )
 
 # AACT has no server-side notion of this project's therapeutic areas either
@@ -105,7 +113,10 @@ _PULLED_STUDIES_SELECT = """
         END AS healthy_volunteers,
         e.gender, e.minimum_age, e.maximum_age,
         e.population AS population_description,
-        sp.organization
+        sp.organization,
+        -- AACT has no `hasResults` column; the registry's own claim is
+        -- equivalently "results have been submitted at least once".
+        (s.results_first_submitted_date IS NOT NULL) AS has_results
     FROM aact.ctgov.studies s
     LEFT JOIN aact.ctgov.designs d ON d.nct_id = s.nct_id
     LEFT JOIN aact.ctgov.eligibilities e ON e.nct_id = s.nct_id
@@ -161,6 +172,9 @@ def run_pull(
     schema.ensure("browse_conditions", BROWSE_CONDITIONS_DDL)
     schema.ensure("browse_interventions", BROWSE_INTERVENTIONS_DDL)
     schema.ensure("mesh_terms", MESH_TERMS_DDL)
+    if filters.with_results:
+        for table, ddl, _columns in RESULTS_TABLES:
+            schema.ensure(table, ddl)
 
     ta_scanned: Optional[int] = None
     ta_hit_scan_cap = False
@@ -279,6 +293,19 @@ def run_pull(
     has_tree_numbers, mesh_terms_count = _pull_mesh_terms(con)
     _step("mesh_terms")
 
+    # The results section, last: everything above is the protocol half of the
+    # pull, which must stand on its own if AACT turns out not to expose the
+    # results tables in the shape ingest/aact_results.py needs (it introspects
+    # rather than assumes, and says so rather than raising).
+    results_counts: dict[str, int] = {}
+    results_warning: Optional[str] = None
+    if filters.with_results:
+        try:
+            results_counts = aact_results.pull_results(con)
+        except aact_results.ResultsUnavailable as exc:
+            results_warning = str(exc)
+    _step("results")
+
     pulled_nct_ids = [row[0] for row in con.execute("SELECT nct_id FROM _pulled_studies").fetchall()]
     row_counts = {
         "studies": con.execute("SELECT count(*) FROM _pulled_studies").fetchone()[0],
@@ -292,6 +319,7 @@ def run_pull(
             "SELECT count(*) FROM _pulled_browse_interventions"
         ).fetchone()[0],
         "mesh_terms": mesh_terms_count,
+        **results_counts,
     }
 
     log_entry = write_pull_log(
@@ -299,12 +327,13 @@ def run_pull(
         source=SOURCE,
         filters=filters.as_dict(),
         row_counts=row_counts,
-        source_tables=SOURCE_TABLES,
+        source_tables=SOURCE_TABLES + (RESULTS_SOURCE_TABLES if results_counts else ()),
     )
     return {
         **log_entry,
         "row_counts": row_counts,
         "has_mesh_tree_numbers": has_tree_numbers,
+        "results_warning": results_warning,
         "nct_ids": pulled_nct_ids,
         "migrations": schema.changes,
         "studies_scanned": ta_scanned,

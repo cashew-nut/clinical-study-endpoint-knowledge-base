@@ -135,8 +135,8 @@ def test_post_upsert_table_gains_only_the_design_columns(raw_con):
     assert change.added == tuple(STUDY_COLUMNS[8:])
     assert change.rows_kept == 1
     assert change.describe() == (
-        "raw.studies: added 12 columns (intervention_model, primary_purpose, allocation, "
-        "masking, +8 more) -- 1 row preserved"
+        "raw.studies: added 13 columns (intervention_model, primary_purpose, allocation, "
+        "masking, +9 more) -- 1 row preserved"
     )
 
 
