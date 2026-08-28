@@ -3,6 +3,12 @@ semantic fallback -> review queue, over every raw.design_outcomes row, writing
 conformed.endpoints (only rows with a resolved measurement) and
 conformed.review_queue (everything else -- never auto-conformed at any
 confidence, per measurements.yaml's `on_unmatched: review_queue`).
+
+conformed.endpoints.usdm_text is populated by rendering each resolved row
+through usdm/project.py's syntax-template renderer -- the same rendering
+`usdm show` does live from these columns -- so the parameterized text (the
+HTML fragment with unresolved `<usdm:tag>` markup) is queryable by SQL
+without projecting a whole trial.
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ from clinical_endpoints.conform import direction as direction_mod
 from clinical_endpoints.conform import resolve, semantic, text, threshold, timepoint
 from clinical_endpoints.conform.rules import ConformRules, load_rules
 from clinical_endpoints.db import bulk_insert
+from clinical_endpoints.usdm.project import SourceRow, load_projection_rules, render_endpoint_text
 
 
 def _table_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str) -> bool:
@@ -278,6 +285,7 @@ CREATE OR REPLACE TABLE conformed.endpoints (
     timepoint_extracted JSON,
     threshold_comparator VARCHAR, threshold_value DOUBLE, threshold_unit VARCHAR,
     analysable BOOLEAN,
+    usdm_text VARCHAR,
     conformed_at TIMESTAMP
 )
 """
@@ -414,10 +422,12 @@ def run_conform(
 
     now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
     if endpoints:
+        projection_rules = load_projection_rules(con)
+        usdm_texts = [render_endpoint_text(_source_row(e), projection_rules) for e in endpoints]
         bulk_insert(
             con, "conformed.endpoints",
-            list(ConformedEndpoint.__dataclass_fields__) + ["conformed_at"],
-            [(*_astuple(e), now) for e in endpoints],
+            list(ConformedEndpoint.__dataclass_fields__) + ["usdm_text", "conformed_at"],
+            [(*_astuple(e), usdm_text, now) for e, usdm_text in zip(endpoints, usdm_texts)],
         )
     if review_queue:
         bulk_insert(
@@ -436,3 +446,21 @@ def run_conform(
 
 def _astuple(obj) -> tuple:
     return tuple(getattr(obj, f) for f in obj.__dataclass_fields__)
+
+
+def _source_row(e: ConformedEndpoint) -> SourceRow:
+    """Just enough of usdm/project.py's SourceRow to render `Endpoint.text` --
+    the same shape `usdm show` builds from `conformed.endpoints` at request
+    time, built here directly from the row this conform pass just produced so
+    `usdm_text` never has to be re-read back out of the table it is written
+    to."""
+    return SourceRow(
+        endpoint_id=e.endpoint_id, outcome_type=e.outcome_type,
+        measure_raw=e.measure_raw, description_raw=e.description_raw, time_frame_raw=e.time_frame_raw,
+        population=e.population, conformed=True,
+        form_id=e.form_id, measurement_id=e.measurement_id, reference_id=e.reference_id,
+        event_id=e.event_id, scale_id=e.scale_id, direction_id=e.direction_id,
+        timepoint_pattern=e.timepoint_pattern, timepoint_extracted=e.timepoint_extracted,
+        threshold_comparator=e.threshold_comparator, threshold_value=e.threshold_value,
+        threshold_unit=e.threshold_unit, analysable=e.analysable,
+    )

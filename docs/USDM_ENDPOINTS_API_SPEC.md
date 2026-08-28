@@ -437,6 +437,19 @@ which is what every endpoint in all three CDISC examples does today.
 | `level` | CT `Code`, below | |
 | `dictionaryId` | this endpoint's dictionary, or `null` at verbatim tier | |
 
+**`text` is also materialized as `conformed.endpoints.usdm_text`.** `conform`
+renders it at conform time by calling this module's own renderer
+(`usdm/project.py`'s `render_endpoint_text`, factored out of `_build_endpoint`
+for exactly this reuse) over the row it just resolved, so the parameterized
+template is queryable directly by SQL -- `SELECT usdm_text FROM
+conformed.endpoints` -- without projecting a whole trial through `usdm show`.
+One rendering path serves both call sites, so the stored column and what
+`usdm show` serves live can never drift apart. `label` and the fidelity tier
+are not similarly materialized: both are one function call away
+(`usdm/project.py::project`) for a consumer who needs the full projection,
+and duplicating them as columns would be a second place for `usdm_text`-style
+drift to creep in for no query this project's users have asked for.
+
 The earlier draft of this spec treated "does `text` carry tags or resolved
 values?" as an open question, on the grounds that CT C207578 ("structured text…
 interspersed with user-defined parameter values") admits both readings. **The
@@ -888,19 +901,25 @@ vocab/{references,scales,measurements}.yaml
                                      gained `inline_label` on tag-reachable terms
 src/clinical_endpoints/ingest/
   design.py      the design/eligibility columns both backends land, and why
+src/clinical_endpoints/conform/
+  pipeline.py    writes conformed.endpoints.usdm_text via usdm/project.py's
+                 render_endpoint_text -- the one other caller of the renderer
 src/clinical_endpoints/usdm/
   codes.py       CT codes, codeSystem/version, outcome_type -> level (one place)
   ids.py         ClassName_N ids + the usdm:ref element
   templates.py   grammar parser, renderer, optional-group elision
   tags.py        tag -> (rendered value, reference host); timepoint/threshold rendering
-  project.py     conformed.endpoints + review_queue -> USDM objects
+  project.py     conformed.endpoints + review_queue -> USDM objects;
+                 render_endpoint_text is the text-only entry point conform uses
   envelope.py    module / wrapper envelopes, provenance, announced placeholders
   api.py         FastAPI app (optional extra)
   schema/        USDM 4.0.0 JSON Schema, vendored from DDF-RA for validation
 tests/
   test_usdm_templates.py  grammar
-  test_usdm_project.py    invariants + schema conformance
+  test_usdm_project.py    invariants + schema conformance; usdm_text vs. the
+                           live projection
   test_usdm_api.py        routes
+  test_conform.py         conformed.endpoints.usdm_text is populated
 ```
 
 `vocab/loader.py` gained a `usdm_templates` load path alongside
