@@ -123,7 +123,10 @@ interchangeable backends that land the same `raw.*` shape: the public
 [CT.gov API v2](https://clinicaltrials.gov/data-api/api) (default, no auth) or
 [AACT](https://aact.ctti-clinicaltrials.org) (`--source aact`, needs free
 credentials). It is a thin fetch-and-upsert, deliberately -- everything
-downstream is source-agnostic. See
+downstream is source-agnostic. `pull` filters by phase, date, therapeutic area
+(`--ta`) and lead-sponsor organisation (`--org`), all applied server-side
+before `--limit`; `--replace` opts out of the upsert to replace raw.* with
+just that one pull instead. See
 [`docs/USAGE.md`](docs/USAGE.md#ingesting-studies) for the backends and their
 trade-offs.
 
@@ -160,11 +163,14 @@ MeSH → therapeutic-area mapping -- therapeutic area. This creates
 
 ```bash
 uv run endpoints pull --phase 3 --limit 500                 # 500 most recent Phase 3 studies
-uv run endpoints pull --phase 3 --limit 500 --ta oncology   # ...only oncology
+uv run endpoints pull --phase 3 --limit 500 --ta oncology    # ...only oncology
+uv run endpoints pull --phase 3 --limit 500 --org "Pfizer"  # ...only Pfizer-led studies
 ```
 
 Re-running `pull` upserts: studies matched by *this* pull are refreshed in
-place, studies landed by earlier pulls with other filters are left alone.
+place, studies landed by earlier pulls with other filters are left alone. Add
+`--replace` to opt out of that and land only this pull's studies instead --
+see [`docs/USAGE.md`](docs/USAGE.md#what-a-pull-does-to-what-is-already-there).
 
 **3. Conform the endpoints.** Reads `raw.design_outcomes` and `vocab.*`, writes
 `conformed.endpoints` and `conformed.review_queue`.

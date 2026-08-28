@@ -41,6 +41,10 @@ uv run endpoints pull --phase 3 --limit 500
 # Multiple phases, with a date floor
 uv run endpoints pull --phase "2,3" --since 2023-01-01 --limit 500
 
+# Only studies led by a given organisation (comma-separated, OR'd)
+uv run endpoints pull --phase 3 --limit 500 --org "Pfizer"
+uv run endpoints pull --phase 3 --limit 500 --org "Pfizer,AbbVie"
+
 # Explicitly use AACT instead of the public API
 uv run endpoints pull --phase 3 --limit 500 --source aact
 ```
@@ -70,6 +74,30 @@ which is normally enough to identify a changed field or parameter name --
 `src/clinical_endpoints/ingest/ctgov_api.py` is the one place to fix it. An
 `--source aact` pull that cannot connect is almost always credentials or a
 firewall on port 5432.
+
+### Filtering by organisation
+
+`--org` filters to studies whose *lead* sponsor -- never a collaborator --
+matches one of the given fragments, case-insensitively:
+
+```bash
+uv run endpoints pull --phase 3 --limit 500 --org "Pfizer"
+uv run endpoints pull --phase 3 --limit 500 --org "Pfizer,AbbVie"   # either sponsor
+```
+
+Unlike `--ta`, both backends can express this directly: the CT.gov API backend
+adds `AREA[LeadSponsorName]` to `query.term`, and the AACT backend joins
+`ctgov.sponsors` (filtered to `lead_or_collaborator = 'lead'`). Both apply it
+server-side, *before* `--limit`, the same as `--phase`/`--since` -- so there's
+none of `--ta`'s scan-cap widening to worry about, and no `vocab validate`
+precondition, since `--org` doesn't touch the vocabulary at all. The matched
+lead sponsor name lands in `raw.studies.organization` for every pull, whether
+or not `--org` was given.
+
+`--org` composes with `--ta` (both narrow the same pull, before `--limit`) and
+follows the same upsert invariant as every other filter: it only ever affects
+studies *this* pull lands, never pruning a study an earlier pull with
+different filters already landed.
 
 ### AACT credentials (only for `--source aact`)
 
@@ -103,6 +131,27 @@ different `--source`, whatever -- are left untouched. So:
 Each pull is logged to `raw._pull_log` (`pull_id`, `pulled_at`, `source`,
 `filters_json`, `source_tables`, `row_counts`); `source_tables` differs by
 backend, as the table above notes.
+
+`--replace` is the explicit opt-out of all of the above: it drops and
+recreates every raw.* table this pull would otherwise upsert into, *before*
+landing this pull's rows, so raw.* ends up holding only what this one pull
+found -- studies from any earlier pull, with any filters or `--source`, are
+gone, not just left unmatched:
+
+```bash
+uv run endpoints pull --phase 3 --limit 500 --org "Pfizer" --replace
+```
+
+Use it when you want the warehouse to mirror exactly one set of filters
+rather than accumulate across runs -- e.g. after deciding an earlier pull's
+filters were wrong and you don't want its studies lingering. It is silent
+about *which* studies it drops (they are simply gone, not migrated or
+reported row by row) but the CLI prints one clear warning that it happened;
+`raw._pull_log` still accumulates a row for the replacing pull itself, with
+`"replace": true` in `filters_json`, so the fact that a replace occurred stays
+in the audit trail even though its rows don't. This bypasses schema
+reconciliation too (there is nothing to migrate when the table is about to be
+dropped anyway), so a `--replace` pull never reports a "Migrated raw.X" line.
 
 > `raw._pull_log.pulled_at` is a `TIMESTAMPTZ`, and DuckDB's Python client can
 > only materialise one as a `datetime` if `pytz` is importable. A query of your

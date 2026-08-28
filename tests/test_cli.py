@@ -12,9 +12,10 @@ runner = CliRunner()
 
 
 def _make_study(
-    nct_id, start_date, *, condition_meshes=None, intervention_meshes=None, browse_branches=None, outcomes=None
+    nct_id, start_date, *, condition_meshes=None, intervention_meshes=None, browse_branches=None,
+    outcomes=None, lead_sponsor=None,
 ):
-    return {
+    study = {
         "protocolSection": {
             "identificationModule": {"nctId": nct_id, "briefTitle": nct_id, "officialTitle": nct_id},
             "statusModule": {"overallStatus": "RECRUITING", "startDateStruct": {"date": start_date}},
@@ -30,6 +31,11 @@ def _make_study(
             "interventionBrowseModule": {"meshes": intervention_meshes or []},
         },
     }
+    if lead_sponsor is not None:
+        study["protocolSection"]["sponsorCollaboratorsModule"] = {
+            "leadSponsor": {"name": lead_sponsor, "class": "INDUSTRY"}
+        }
+    return study
 
 
 class _FakeResponse:
@@ -215,6 +221,60 @@ def test_pull_rejects_bad_since_date(tmp_path, monkeypatch):
     assert "YYYY-MM-DD" in result.output
 
 
+def test_pull_org_filter_lands_only_matching_studies_and_reports(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    studies = [
+        _make_study("NCT001", "2024-01-01", lead_sponsor="Pfizer Inc."),
+        _make_study("NCT002", "2024-02-01", lead_sponsor="AbbVie Inc."),
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: _FakeResponse(studies))
+
+    result = runner.invoke(app, ["pull", "--phase", "3", "--org", "Pfizer"])
+    assert result.exit_code == 0, result.output
+    assert "Filtered to --org ['Pfizer']" in result.output
+
+    con = duckdb.connect("warehouse.duckdb")
+    try:
+        assert con.execute("SELECT nct_id FROM raw.studies").fetchall() == [("NCT001",)]
+    finally:
+        con.close()
+
+
+def test_pull_replace_discards_an_earlier_pull_and_warns(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse = tmp_path / "wh.duckdb"
+
+    monkeypatch.setattr(
+        ctgov_api.requests, "get", lambda *a, **k: _FakeResponse([_make_study("NCT001", "2024-01-01")])
+    )
+    first = runner.invoke(app, ["pull", "--phase", "3", "--warehouse", str(warehouse)])
+    assert first.exit_code == 0, first.output
+
+    monkeypatch.setattr(
+        ctgov_api.requests, "get", lambda *a, **k: _FakeResponse([_make_study("NCT002", "2024-02-01")])
+    )
+    second = runner.invoke(app, ["pull", "--phase", "3", "--replace", "--warehouse", str(warehouse)])
+    assert second.exit_code == 0, second.output
+    assert "--replace: raw.* tables were replaced" in second.output
+
+    con = duckdb.connect(str(warehouse))
+    try:
+        nct_ids = {r[0] for r in con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+        assert nct_ids == {"NCT002"}  # NCT001, from the first pull, is gone
+    finally:
+        con.close()
+
+
+def test_pull_without_replace_does_not_print_the_replace_warning(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ctgov_api.requests, "get", lambda *a, **k: _FakeResponse([_make_study("NCT001", "2024-01-01")])
+    )
+    result = runner.invoke(app, ["pull", "--phase", "3"])
+    assert result.exit_code == 0, result.output
+    assert "--replace" not in result.output
+
+
 def test_vocab_validate_check_only_passes_on_shipped_vocabulary():
     result = runner.invoke(app, ["vocab", "validate", "--check-only"])
     assert result.exit_code == 0, result.output
@@ -388,12 +448,12 @@ def test_usdm_coverage_reports_defaulted_tag_counts(tmp_path):
     write_vocab_tables(con, load_vocab(default_vocab_dir()), vocab_dir=default_vocab_dir())
     con.execute(f"CREATE TABLE raw.studies ({STUDIES_DDL})")
     con.execute(
-        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 19) + ")",
+        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 20) + ")",
         [
             "NCT03000000", "PHASE2", "COMPLETED", "INTERVENTIONAL", "2020-01-01", "2021-01-01",
             "A diabetes trial", "A diabetes trial, officially",
             "Single Group Assignment", "Treatment", "Non-Randomized", "None", 60, "Actual",
-            False, "All", "18 Years", "75 Years", "Adults with type 2 diabetes",
+            False, "All", "18 Years", "75 Years", "Adults with type 2 diabetes", None,
         ],
     )
     con.execute(

@@ -36,6 +36,17 @@ class PullFilters:
     limit: int
     since: date | None = None
     ta: tuple[str, ...] | None = None
+    #: Case-insensitive substring fragments matched against the *lead* sponsor's
+    #: name only (never collaborators) -- OR'd together, same as `ta`. Unlike
+    #: `ta`, both backends can apply this server-side (AREA[LeadSponsorName] /
+    #: a `ctgov.sponsors` join), so it needs none of `ta`'s client-side scan-cap
+    #: machinery.
+    org: tuple[str, ...] | None = None
+    #: `--replace`: drop and recreate raw.* rather than upsert into it, so this
+    #: pull's results are all the warehouse holds afterward -- studies landed by
+    #: any earlier pull, with any filters, are discarded. False (upsert) is the
+    #: default everywhere else in this codebase assumes.
+    replace: bool = False
 
     def as_dict(self) -> dict:
         d = {
@@ -45,4 +56,8 @@ class PullFilters:
         }
         if self.ta:
             d["ta"] = list(self.ta)
+        if self.org:
+            d["org"] = list(self.org)
+        if self.replace:
+            d["replace"] = True
         return d

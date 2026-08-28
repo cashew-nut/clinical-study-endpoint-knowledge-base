@@ -135,8 +135,8 @@ def test_post_upsert_table_gains_only_the_design_columns(raw_con):
     assert change.added == tuple(STUDY_COLUMNS[8:])
     assert change.rows_kept == 1
     assert change.describe() == (
-        "raw.studies: added 11 columns (intervention_model, primary_purpose, allocation, "
-        "masking, +7 more) -- 1 row preserved"
+        "raw.studies: added 12 columns (intervention_model, primary_purpose, allocation, "
+        "masking, +8 more) -- 1 row preserved"
     )
 
 
@@ -233,6 +233,58 @@ def test_reconciler_collects_only_the_tables_it_changed(raw_con):
     schema.ensure("conditions", "nct_id VARCHAR, name VARCHAR")
 
     assert [c.table for c in schema.changes] == ["studies"]
+
+
+# --------------------------------------------------------------- --replace
+
+
+def test_replace_empties_a_table_already_on_the_current_schema(raw_con):
+    """`replace=True` isn't just "skip if already correct" -- even a table that
+    already matches `ddl` and holds rows gets emptied, because the whole point
+    is discarding whatever an earlier pull landed."""
+    ensure_table(raw_con, "studies", STUDIES_DDL)
+    upsert_rows(raw_con, "studies", list(STUDY_COLUMNS), ["nct_id"], [a_study_row()])
+    assert raw_con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 1
+
+    change = ensure_table(raw_con, "studies", STUDIES_DDL, replace=True)
+
+    assert change is None  # a deliberate wipe is not a migration
+    assert raw_con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 0
+    assert columns_of(raw_con) == list(STUDY_COLUMNS)
+
+
+def test_replace_discards_a_shape_mismatch_instead_of_migrating_it(raw_con):
+    """A table replace would otherwise have had to migrate (generation 1: no
+    key, eight columns) is instead just dropped -- no SchemaChange, no
+    rows_kept/rows_dropped bookkeeping, because nothing was carried across."""
+    raw_con.execute(GENERATION_1_DDL)
+    assert raw_con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 2
+
+    change = ensure_table(raw_con, "studies", STUDIES_DDL, replace=True)
+
+    assert change is None
+    assert raw_con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 0
+    assert columns_of(raw_con) == list(STUDY_COLUMNS)
+    assert primary_key_of(raw_con) == ["nct_id"]
+
+
+def test_replace_on_a_table_that_does_not_exist_yet_just_creates_it(raw_con):
+    assert ensure_table(raw_con, "studies", STUDIES_DDL, replace=True) is None
+    assert columns_of(raw_con) == list(STUDY_COLUMNS)
+
+
+def test_reconciler_replace_empties_every_table_it_ensures(raw_con):
+    raw_con.execute(GENERATION_1_DDL)
+    raw_con.execute("CREATE TABLE raw.conditions (nct_id VARCHAR, name VARCHAR)")
+    raw_con.execute("INSERT INTO raw.conditions VALUES ('NCT001', 'Asthma')")
+
+    schema = SchemaReconciler(raw_con, replace=True)
+    schema.ensure("studies", STUDIES_DDL)
+    schema.ensure("conditions", "nct_id VARCHAR, name VARCHAR")
+
+    assert schema.changes == []  # replace never reports as a migration
+    assert raw_con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 0
+    assert raw_con.execute("SELECT count(*) FROM raw.conditions").fetchone()[0] == 0
 
 
 def test_unsafe_table_name_is_refused(raw_con):

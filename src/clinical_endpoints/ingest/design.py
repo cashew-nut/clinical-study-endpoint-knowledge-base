@@ -46,6 +46,11 @@ STUDY_DESIGN_COLUMNS: tuple[tuple[str, str], ...] = (
     ("minimum_age", "VARCHAR"),
     ("maximum_age", "VARCHAR"),
     ("population_description", "VARCHAR"),
+    # Not part of the CDISC mapping above -- the *lead* sponsor's name (never a
+    # collaborator's), sourced so `pull --org` has something to filter on. CT.gov
+    # API: sponsorCollaboratorsModule.leadSponsor.name. AACT: ctgov.sponsors
+    # where lead_or_collaborator = 'lead'.
+    ("organization", "VARCHAR"),
 )
 
 STUDY_BASE_COLUMNS: tuple[str, ...] = (

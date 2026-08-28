@@ -104,10 +104,21 @@ _PULLED_STUDIES_SELECT = """
             ELSE NULL
         END AS healthy_volunteers,
         e.gender, e.minimum_age, e.maximum_age,
-        e.population AS population_description
+        e.population AS population_description,
+        sp.organization
     FROM aact.ctgov.studies s
     LEFT JOIN aact.ctgov.designs d ON d.nct_id = s.nct_id
     LEFT JOIN aact.ctgov.eligibilities e ON e.nct_id = s.nct_id
+    -- ctgov.sponsors carries one row per (nct_id, lead-or-collaborator); the
+    -- GROUP BY/MIN collapses it to the one lead sponsor this project cares
+    -- about (never a collaborator) and guards against a study somehow having
+    -- more than one 'lead' row fanning this join out into duplicate study rows.
+    LEFT JOIN (
+        SELECT nct_id, MIN(name) AS organization
+        FROM aact.ctgov.sponsors
+        WHERE lower(lead_or_collaborator) = 'lead'
+        GROUP BY nct_id
+    ) sp ON sp.nct_id = s.nct_id
 """
 
 
@@ -122,8 +133,15 @@ def run_pull(
     and every child table (design_outcomes, conditions, browse_*) has its rows
     for *this pull's* nct_ids replaced with a scoped delete-then-insert --
     studies landed by earlier pulls with different filters are never touched.
+    `filters.replace` overrides this -- see `ingest/upsert.py`'s `ensure_table`.
     raw._pull_log accumulates one row per invocation regardless, so the pull
     history stays auditable.
+
+    `filters.org`, if given, filters to studies whose *lead* sponsor (never a
+    collaborator) matches one of the given fragments, case-insensitively --
+    applied as a plain SQL predicate (`_org_filter_sql`) alongside phase/since,
+    in both branches below. Unlike `ta`, AACT (like the CT.gov API) can express
+    this directly in SQL, so it needs no batch-scan machinery of its own.
 
     `on_step`, if given, is called as `on_step(step_name, index, total)` right
     after each of PULL_STEPS lands.
@@ -135,7 +153,7 @@ def run_pull(
 
     aact_phases = normalize_phases(list(filters.phases))
 
-    schema = SchemaReconciler(con)
+    schema = SchemaReconciler(con, replace=filters.replace)
     schema.ensure("studies", STUDIES_DDL)
     schema.ensure("design_outcomes", DESIGN_OUTCOMES_DDL)
     schema.ensure("design_groups", DESIGN_GROUPS_DDL)
@@ -160,9 +178,11 @@ def run_pull(
         )
     else:
         since_clause = "AND s.start_date >= ?" if filters.since else ""
+        org_clause, org_params = _org_filter_sql(filters, nct_id_column="s.nct_id")
         params: list = [aact_phases]
         if filters.since:
             params.append(filters.since)
+        params += org_params
         params.append(filters.limit)
 
         con.execute(
@@ -171,6 +191,7 @@ def run_pull(
             {_PULLED_STUDIES_SELECT}
             WHERE s.phase = ANY(?)
             {since_clause}
+            {org_clause}
             ORDER BY s.start_date DESC
             LIMIT ?
             """,
@@ -412,40 +433,71 @@ def _ta_matches_in_batch(
     return matched
 
 
+def _org_filter_sql(filters: PullFilters, *, nct_id_column: str) -> tuple[str, list]:
+    """SQL predicate (empty, with no params, if `filters.org` wasn't given) that
+    keeps only studies whose *lead* sponsor -- never a collaborator, the same
+    distinction ingest/ctgov_api.py's AREA[LeadSponsorName] draws -- matches
+    one of `filters.org` case-insensitively. `nct_id_column` lets one predicate
+    serve both call sites: `run_pull`'s aliased main query (`s.nct_id`) and the
+    unaliased candidate scan `_ta_filtered_nct_ids` runs (`nct_id`).
+
+    Built as one `LIKE ?` per fragment, OR'd together, rather than a single
+    `LIKE ANY(?)` bound to a list parameter -- DuckDB parses `ANY(?)` there as
+    the ANY(subquery) form, which doesn't support LIKE ("Unsupported
+    comparison '~~' for ANY/ALL subquery"), not the ANY(array) form this needs.
+    """
+    if not filters.org:
+        return "", []
+    patterns = [f"%{o.lower()}%" for o in filters.org]
+    like_clauses = " OR ".join("lower(name) LIKE ?" for _ in patterns)
+    predicate = (
+        f"AND {nct_id_column} IN ("
+        "SELECT nct_id FROM aact.ctgov.sponsors "
+        f"WHERE lower(lead_or_collaborator) = 'lead' AND ({like_clauses})"
+        ")"
+    )
+    return predicate, patterns
+
+
 def _ta_filtered_nct_ids(
     con: duckdb.DuckDBPyConnection, aact_phases: list[str], filters: PullFilters
 ) -> tuple[list[str], int, bool]:
-    """Which AACT studies (phase/since-matching, most-recent-first) also match
-    one of `filters.ta` -- (matched_nct_ids, studies_scanned, hit_scan_cap).
+    """Which AACT studies (phase/since/org-matching, most-recent-first) also
+    match one of `filters.ta` -- (matched_nct_ids, studies_scanned, hit_scan_cap).
 
     AACT has no server-side way to express this project's therapeutic areas
-    either, so this fetches phase/since-matching candidates in batches, most
+    either, so this fetches phase/since/org-matching candidates in batches, most
     recent first, and keeps only the ones `_ta_matches_in_batch` confirms,
     continuing until `filters.limit` matches are found, the candidates run
     out, or `TA_MAX_SCANNED` is hit -- the same reasoning as
     ingest/ctgov_api.py's `MAX_PAGES_TA_FILTERED`: recency alone skews toward
     whichever conditions dominate trial registrations generally, so `--ta`
     has to keep scanning past non-matching studies rather than filtering only
-    the first `filters.limit` studies of any area.
+    the first `filters.limit` studies of any area. `--org`, if also given,
+    narrows the candidate pool itself (a plain SQL predicate, unlike `--ta`)
+    rather than needing its own scan/batch logic.
     """
     mapping = load_ta_mapping(con)
     wanted_ta_ids = set(filters.ta)
     since_clause = "AND start_date >= ?" if filters.since else ""
+    org_clause, org_params = _org_filter_sql(filters, nct_id_column="nct_id")
 
     matched: list[str] = []
     scanned = 0
     offset = 0
-    exhausted = False  # every phase/since-matching candidate has been scanned
+    exhausted = False  # every phase/since/org-matching candidate has been scanned
     while len(matched) < filters.limit and scanned < TA_MAX_SCANNED:
         params: list = [aact_phases]
         if filters.since:
             params.append(filters.since)
+        params += org_params
         params += [TA_BATCH_SIZE, offset]
         batch = con.execute(
             f"""
             SELECT nct_id FROM aact.ctgov.studies
             WHERE phase = ANY(?)
             {since_clause}
+            {org_clause}
             ORDER BY start_date DESC, nct_id
             LIMIT ? OFFSET ?
             """,

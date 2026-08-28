@@ -150,6 +150,21 @@ def pull(
         "e.g. oncology,respiratory). Requires `endpoints vocab validate` to have already "
         "been run against this warehouse.",
     ),
+    org: Optional[str] = typer.Option(
+        None,
+        "--org",
+        help="Organisation filter (comma-separated name fragments, matched case-insensitively "
+        'against the *lead* sponsor only, e.g. "Pfizer" or "Pfizer,AbbVie"). Applied '
+        "server-side before --limit, same as --phase/--since; no `vocab validate` precondition.",
+    ),
+    replace: bool = typer.Option(
+        False,
+        "--replace",
+        help="Replace raw.* with just this pull's results instead of upserting -- discards "
+        "studies landed by any earlier pull, including ones with different filters or a "
+        "different --source. Default is to upsert (accumulate); use this to make the "
+        "warehouse mirror exactly this pull.",
+    ),
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
@@ -163,7 +178,8 @@ def pull(
     """Pull filtered studies + design_outcomes/conditions into raw.*, log the pull,
     and (once `vocab validate` has loaded the TA mapping) resolve therapeutic areas
     for the pulled studies into conformed.study_therapeutic_area -- filtering down
-    to `--ta` if given."""
+    to `--ta` and/or `--org` if given. Upserts by default; `--replace` discards
+    everything raw.* already held instead."""
     if source not in SOURCES:
         console.print(f"[red]--source must be one of {SOURCES}, got {source!r}[/red]")
         raise typer.Exit(code=1)
@@ -171,6 +187,10 @@ def pull(
     ta_ids: Optional[tuple] = None
     if ta:
         ta_ids = tuple(t.strip() for t in ta.split(",") if t.strip())
+
+    org_ids: Optional[tuple] = None
+    if org:
+        org_ids = tuple(o.strip() for o in org.split(",") if o.strip())
 
     since_date: Optional[dt.date] = None
     if since:
@@ -181,7 +201,9 @@ def pull(
             raise typer.Exit(code=1) from exc
 
     phases = tuple(p.strip() for p in phase.split(",") if p.strip())
-    filters = PullFilters(phases=phases, limit=limit, since=since_date, ta=ta_ids)
+    filters = PullFilters(
+        phases=phases, limit=limit, since=since_date, ta=ta_ids, org=org_ids, replace=replace
+    )
 
     con = connect(warehouse)
     try:
@@ -258,6 +280,15 @@ def pull(
     finally:
         con.close()
 
+    # --replace discards rather than migrates, so it bypasses the reconciler's
+    # migration path entirely (see ingest/upsert.py's `ensure_table`) -- report
+    # it here, once, the way a migration is reported per table below.
+    if replace:
+        console.print(
+            "[yellow]--replace: raw.* tables were replaced, not upserted -- studies from any "
+            "earlier pull (different filters, different --source) are gone.[/yellow]"
+        )
+
     # A migration rewrites tables the operator already had; say so rather than
     # letting rows quietly change shape underneath them.
     migrations = result.get("migrations", [])
@@ -277,6 +308,8 @@ def pull(
         f"{result['row_counts']['studies']} studies, "
         f"{result['row_counts']['design_outcomes']} design_outcomes -> raw.*"
     )
+    if org_ids:
+        console.print(f"[green]Filtered to --org {list(org_ids)}[/green]")
     if ta_ids:
         console.print(f"[green]Filtered to --ta {list(ta_ids)}[/green]")
         if result.get("hit_scan_cap"):

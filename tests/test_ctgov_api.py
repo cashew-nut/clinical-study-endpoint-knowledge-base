@@ -25,6 +25,7 @@ def _make_study(
     condition_meshes: list[dict] | None = None,
     intervention_meshes: list[dict] | None = None,
     browse_branches: list[dict] | None = None,
+    lead_sponsor: str | None = None,
 ) -> dict:
     status_module = {"overallStatus": status, "startDateStruct": {"date": start_date}}
     if primary_completion_date:
@@ -42,6 +43,10 @@ def _make_study(
             "conditionsModule": {"conditions": conditions or []},
         }
     }
+    if lead_sponsor is not None:
+        study["protocolSection"]["sponsorCollaboratorsModule"] = {
+            "leadSponsor": {"name": lead_sponsor, "class": "INDUSTRY"}
+        }
     if condition_meshes is not None or browse_branches is not None:
         study["derivedSection"] = study.get("derivedSection", {})
         study["derivedSection"]["conditionBrowseModule"] = {
@@ -95,6 +100,30 @@ def test_build_query_term_single_and_multi_phase_with_since():
     )
 
 
+def test_build_query_term_with_single_and_multi_org():
+    assert ctgov_api._build_query_term(["PHASE3"], None, ("Pfizer",)) == (
+        'AREA[Phase]PHASE3 AND AREA[LeadSponsorName]"Pfizer"'
+    )
+    assert ctgov_api._build_query_term(["PHASE3"], None, ("Pfizer", "AbbVie")) == (
+        'AREA[Phase]PHASE3 AND AREA[LeadSponsorName]("Pfizer" OR "AbbVie")'
+    )
+
+
+def test_build_query_term_quotes_multi_word_org_and_escapes_quotes():
+    assert ctgov_api._build_query_term(["PHASE3"], None, ("Memorial Sloan Kettering",)) == (
+        'AREA[Phase]PHASE3 AND AREA[LeadSponsorName]"Memorial Sloan Kettering"'
+    )
+    assert ctgov_api._build_query_term(["PHASE3"], None, ('Sponsor "X"',)) == (
+        'AREA[Phase]PHASE3 AND AREA[LeadSponsorName]"Sponsor \\"X\\""'
+    )
+
+
+def test_organization_matches_is_case_insensitive_substring_and_null_safe():
+    assert ctgov_api._organization_matches("Pfizer Inc.", ("pfizer",)) is True
+    assert ctgov_api._organization_matches("Pfizer Inc.", ("abbvie",)) is False
+    assert ctgov_api._organization_matches(None, ("pfizer",)) is False
+
+
 def test_extract_study_row_pads_month_precision_dates():
     study = _make_study("NCT001", ["PHASE3"], "2024-03", primary_completion_date="2024-06-15")
     row = ctgov_api._extract_study_row(study)
@@ -120,6 +149,7 @@ def test_extract_study_row_pads_month_precision_dates():
         "minimum_age": None,
         "maximum_age": None,
         "population_description": None,
+        "organization": None,
     }
 
 
@@ -153,6 +183,16 @@ def test_extract_condition_rows_gets_sponsor_free_text():
         {"nct_id": "NCT001", "name": "Lung Cancer"},
         {"nct_id": "NCT001", "name": "NSCLC"},
     ]
+
+
+def test_extract_study_row_gets_the_lead_sponsor_name():
+    study = _make_study("NCT001", ["PHASE3"], "2024-01-01", lead_sponsor="Pfizer Inc.")
+    assert ctgov_api._extract_study_row(study)["organization"] == "Pfizer Inc."
+
+
+def test_extract_study_row_organization_is_none_without_a_sponsor_module():
+    study = _make_study("NCT001", ["PHASE3"], "2024-01-01")
+    assert ctgov_api._extract_study_row(study)["organization"] is None
 
 
 def test_extract_mesh_rows_normalises_and_tags_type():
@@ -544,4 +584,189 @@ def test_run_pull_ta_filter_does_not_widen_scan_cap_without_ta(tmp_path, monkeyp
     result = run_pull(con, PullFilters(phases=("3",), limit=500))
 
     assert result["nct_ids"] == ["NCT001"]
+    con.close()
+
+
+# --------------------------------------------------------------- --org filtering
+
+
+def _sponsored_study(nct_id: str, start_date: str, sponsor: str) -> dict:
+    return _make_study(nct_id, ["PHASE3"], start_date, lead_sponsor=sponsor)
+
+
+def test_run_pull_org_filter_lands_organization_column(tmp_path, monkeypatch):
+    responses = [
+        FakeResponse(200, {"studies": [_sponsored_study("NCT001", "2024-01-01", "Pfizer Inc.")]})
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    run_pull(con, PullFilters(phases=("3",), limit=500))
+
+    assert con.execute(
+        "SELECT organization FROM raw.studies WHERE nct_id = 'NCT001'"
+    ).fetchone() == ("Pfizer Inc.",)
+    con.close()
+
+
+def test_run_pull_org_filter_sends_area_lead_sponsor_name_in_query_term(tmp_path, monkeypatch):
+    seen_params = []
+
+    def fake_get(url, params=None, timeout=None):
+        seen_params.append(params)
+        return FakeResponse(200, {"studies": []})
+
+    monkeypatch.setattr(ctgov_api.requests, "get", fake_get)
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    run_pull(con, PullFilters(phases=("3",), limit=500, org=("Pfizer",)))
+
+    assert 'AREA[LeadSponsorName]"Pfizer"' in seen_params[0]["query.term"]
+    con.close()
+
+
+def test_run_pull_org_filter_client_side_recheck_excludes_non_matching(tmp_path, monkeypatch):
+    """The server-side AREA[LeadSponsorName] filter is trusted but re-checked,
+    the same defense-in-depth role phase/since's client-side re-checks already
+    play -- a study the (fake) API returns despite not matching must still be
+    dropped rather than landed."""
+    responses = [
+        FakeResponse(
+            200,
+            {
+                "studies": [
+                    _sponsored_study("NCT001", "2024-02-01", "Pfizer Inc."),
+                    _sponsored_study("NCT002", "2024-01-01", "AbbVie Inc."),
+                ]
+            },
+        )
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    result = run_pull(con, PullFilters(phases=("3",), limit=500, org=("Pfizer",)))
+
+    assert result["nct_ids"] == ["NCT001"]
+    con.close()
+
+
+def test_run_pull_org_filter_keeps_studies_matching_any_requested_org(tmp_path, monkeypatch):
+    responses = [
+        FakeResponse(
+            200,
+            {
+                "studies": [
+                    _sponsored_study("NCT001", "2024-02-01", "Pfizer Inc."),
+                    _sponsored_study("NCT002", "2024-01-01", "AbbVie Inc."),
+                    _sponsored_study("NCT003", "2024-01-15", "Genentech"),
+                ]
+            },
+        )
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    result = run_pull(con, PullFilters(phases=("3",), limit=500, org=("Pfizer", "AbbVie")))
+
+    assert set(result["nct_ids"]) == {"NCT001", "NCT002"}
+    con.close()
+
+
+def test_run_pull_org_filter_is_case_insensitive_substring(tmp_path, monkeypatch):
+    responses = [
+        FakeResponse(200, {"studies": [_sponsored_study("NCT001", "2024-01-01", "PFIZER, INC.")]})
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    result = run_pull(con, PullFilters(phases=("3",), limit=500, org=("pfizer",)))
+
+    assert result["nct_ids"] == ["NCT001"]
+    con.close()
+
+
+# --------------------------------------------------------------- --replace
+
+
+def test_run_pull_replace_discards_studies_from_an_earlier_differently_filtered_pull(
+    tmp_path, monkeypatch
+):
+    """The inverse of
+    test_run_pull_upsert_preserves_studies_from_earlier_pulls_with_different_filters:
+    --replace is the explicit opt-out of that guarantee -- raw.* ends up
+    holding only this pull's studies, not accumulating alongside earlier,
+    differently-filtered pulls."""
+    responses = [FakeResponse(200, {"studies": [_make_study("NCT001", ["PHASE3"], "2024-01-01")]})]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    run_pull(con, PullFilters(phases=("3",), limit=500))
+
+    responses.append(FakeResponse(200, {"studies": [_make_study("NCT002", ["PHASE1"], "2024-02-01")]}))
+    run_pull(con, PullFilters(phases=("1",), limit=500, replace=True))
+
+    nct_ids = {r[0] for r in con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert nct_ids == {"NCT002"}  # NCT001, from the earlier pull, is gone
+    con.close()
+
+
+def test_run_pull_replace_also_empties_child_tables_from_earlier_pulls(tmp_path, monkeypatch):
+    responses = [
+        FakeResponse(
+            200,
+            {
+                "studies": [
+                    _make_study(
+                        "NCT001",
+                        ["PHASE3"],
+                        "2024-01-01",
+                        outcomes={
+                            "primaryOutcomes": [
+                                {"measure": "PFS", "timeFrame": "t", "description": "d"}
+                            ]
+                        },
+                        conditions=["Lung Cancer"],
+                    )
+                ]
+            },
+        )
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    con = connect(tmp_path / "warehouse.duckdb")
+    run_pull(con, PullFilters(phases=("3",), limit=500))
+    assert con.execute("SELECT count(*) FROM raw.design_outcomes").fetchone()[0] == 1
+    assert con.execute("SELECT count(*) FROM raw.conditions").fetchone()[0] == 1
+
+    responses.append(FakeResponse(200, {"studies": [_make_study("NCT002", ["PHASE3"], "2024-02-01")]}))
+    run_pull(con, PullFilters(phases=("3",), limit=500, replace=True))
+
+    # NCT001's outcome/condition rows are gone too -- not just NCT001 itself.
+    assert con.execute("SELECT nct_id FROM raw.design_outcomes").fetchall() == []
+    assert con.execute("SELECT nct_id FROM raw.conditions").fetchall() == []
+    assert {r[0] for r in con.execute("SELECT nct_id FROM raw.studies").fetchall()} == {"NCT002"}
+    con.close()
+
+
+def test_run_pull_replace_reports_no_migrations(tmp_path, monkeypatch):
+    """A replace on a pre-existing, differently-shaped raw.studies must not be
+    reported as a migration -- it's a deliberate wipe, not a reconciliation."""
+    con = connect(tmp_path / "warehouse.duckdb")
+    con.execute(
+        """
+        CREATE TABLE raw.studies AS
+        SELECT 'NCT_OLD' AS nct_id, 'Phase 2' AS phase, 'Completed' AS overall_status,
+               'Interventional' AS study_type, DATE '2020-01-01' AS start_date,
+               NULL::DATE AS primary_completion_date,
+               'old' AS brief_title, 'official' AS official_title
+        """
+    )
+
+    responses = [FakeResponse(200, {"studies": [_make_study("NCT001", ["PHASE3"], "2024-01-01")]})]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: responses.pop(0))
+
+    result = run_pull(con, PullFilters(phases=("3",), limit=500, replace=True))
+
+    assert result["migrations"] == []
+    assert [r[0] for r in con.execute("SELECT nct_id FROM raw.studies").fetchall()] == ["NCT001"]
     con.close()
