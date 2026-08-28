@@ -73,6 +73,25 @@ def fake_aact_con() -> duckdb.DuckDBPyConnection:
             ('NCT002', 'Female', '18 Years', NULL, 'Accepts Healthy Volunteers', 'Adults with breast cancer')
         """
     )
+    # One lead sponsor per study, plus one collaborator on NCT001 -- so tests
+    # can confirm --org/`organization` only ever look at the lead row.
+    con.execute(
+        """
+        CREATE TABLE aact.ctgov.sponsors (
+            nct_id VARCHAR, agency_class VARCHAR, lead_or_collaborator VARCHAR, name VARCHAR
+        )
+        """
+    )
+    con.execute(
+        """
+        INSERT INTO aact.ctgov.sponsors VALUES
+            ('NCT001', 'INDUSTRY', 'lead', 'Merck Sharp & Dohme LLC'),
+            ('NCT001', 'NIH', 'collaborator', 'National Cancer Institute'),
+            ('NCT002', 'INDUSTRY', 'lead', 'Genentech, Inc.'),
+            ('NCT003', 'INDUSTRY', 'lead', 'AstraZeneca')
+        """
+    )
+
     con.execute(
         """
         CREATE TABLE aact.ctgov.design_groups (
@@ -153,17 +172,18 @@ USDM_STUDIES = [
         "A psoriasis trial", "A psoriasis trial, officially",
         "Parallel Assignment", "Treatment", "Randomized", "Double", 480, "Actual",
         False, "All", "18 Years", "75 Years", "Adults with moderate to severe plaque psoriasis",
+        "Acme Pharmaceuticals",
     ),
     # Every design/eligibility column absent, to exercise the announced-placeholder
     # path in the wrapper envelope.
     (
         "NCT00000002", "PHASE3", "RECRUITING", "INTERVENTIONAL", "2023-06-01", "2025-01-01",
         "An oncology trial", "An oncology trial, officially",
-        None, None, None, None, None, None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None, None, None, None, None,
     ),
     ("NCT00000003", "PHASE2", "COMPLETED", "INTERVENTIONAL", "2022-01-01", "2023-01-01",
      "A trial with no outcomes", "No outcomes", None, None, None, None, None, None,
-     None, None, None, None, None),
+     None, None, None, None, None, None),
 ]
 
 USDM_OUTCOMES = [

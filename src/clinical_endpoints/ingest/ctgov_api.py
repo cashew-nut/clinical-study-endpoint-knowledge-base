@@ -84,7 +84,23 @@ class CtgovApiError(RuntimeError):
     """Raised when the ClinicalTrials.gov API is unreachable or returns an error."""
 
 
-def _build_query_term(aact_phases: list[str], since: Optional[date]) -> str:
+def _quote_essie_phrase(value: str) -> str:
+    """Essie's fielded AREA[...] search treats an unquoted multi-word value as
+    separate tokens rather than one phrase -- AREA[LeadSponsorName]Memorial
+    Sloan Kettering would scope only "Memorial" to that field and let "Sloan"
+    and "Kettering" fall through to an unscoped term search. Quoting keeps a
+    multi-word organization name scoped to the one field it belongs in.
+    Unverified against a live response, like the rest of this module's query
+    construction (see the module docstring's CAVEAT) -- a wrong assumption
+    here would surface as an unexpectedly wide/narrow result set, not an HTTP
+    error, since a malformed AREA value doesn't necessarily 400.
+    """
+    return '"' + value.replace('"', '\\"') + '"'
+
+
+def _build_query_term(
+    aact_phases: list[str], since: Optional[date], org: Optional[tuple[str, ...]] = None
+) -> str:
     if len(aact_phases) == 1:
         phase_clause = f"AREA[Phase]{aact_phases[0]}"
     else:
@@ -92,7 +108,22 @@ def _build_query_term(aact_phases: list[str], since: Optional[date]) -> str:
     clauses = [phase_clause]
     if since:
         clauses.append(f"AREA[StartDate]RANGE[{since.isoformat()},MAX]")
+    if org:
+        quoted = [_quote_essie_phrase(o) for o in org]
+        if len(quoted) == 1:
+            clauses.append(f"AREA[LeadSponsorName]{quoted[0]}")
+        else:
+            clauses.append("AREA[LeadSponsorName](" + " OR ".join(quoted) + ")")
     return " AND ".join(clauses)
+
+
+def _organization_matches(organization: Optional[str], wanted_fragments: tuple[str, ...]) -> bool:
+    """Case-insensitive substring match, as a client-side safety net behind the
+    server-side AREA[LeadSponsorName] filter -- see `run_pull`."""
+    if not organization:
+        return False
+    haystack = organization.lower()
+    return any(fragment in haystack for fragment in wanted_fragments)
 
 
 def _fetch_page(query_term: str, page_token: Optional[str]) -> dict:
@@ -182,6 +213,9 @@ def _extract_study_row(study: dict) -> dict:
         "minimum_age": eligibility.get("minimumAge"),
         "maximum_age": eligibility.get("maximumAge"),
         "population_description": eligibility.get("studyPopulation"),
+        # The *lead* sponsor only, never a collaborator -- matches the
+        # AREA[LeadSponsorName] filter `_build_query_term` applies server-side.
+        "organization": _get_path(proto, "sponsorCollaboratorsModule", "leadSponsor", "name"),
     }
 
 
@@ -292,23 +326,34 @@ def run_pull(
     conformed.study_therapeutic_area, via `resolve_study_ta_matches`, so a
     pull-time match always agrees with the truth `pull` resolves afterward.
 
+    `filters.org`, if given, is unlike `ta`: the API *can* express it
+    server-side (AREA[LeadSponsorName] in query.term), so it needs none of
+    `ta`'s scan-cap widening -- it narrows `query.term` the same way
+    phase/since already do, and `max_pages`/`target` stay as they are. The
+    client-side `_organization_matches` check is only a safety net behind
+    that, the same role phase/since's re-checks already play.
+
     Upserts rather than replaces: raw.studies is updated/inserted per nct_id,
     and every child table (design_outcomes, conditions, browse_*) has its rows
     for *this pull's* nct_ids replaced -- studies landed by earlier pulls with
-    different filters are never touched.
+    different filters are never touched. `filters.replace` overrides this: see
+    `ingest/upsert.py`'s `ensure_table`.
 
     `on_page`, if given, is called as `on_page(page_index, studies_collected)`
     after each page is fetched and filtered -- the eventual `limit` isn't known
     until pagination stops (a page can contain studies later dropped by
-    `since`/phase/`ta` re-checks), so this reports pre-truncation progress
-    rather than a percentage of an unknowable total.
+    `since`/phase/`ta`/`org` re-checks), so this reports pre-truncation
+    progress rather than a percentage of an unknowable total.
     """
     aact_phases = normalize_phases(list(filters.phases))
-    query_term = _build_query_term(aact_phases, filters.since)
+    query_term = _build_query_term(aact_phases, filters.since, filters.org)
     since_iso = filters.since.isoformat() if filters.since else None
 
     wanted_ta_ids: Optional[set[str]] = set(filters.ta) if filters.ta else None
     ta_mapping = load_ta_mapping(con) if wanted_ta_ids else None
+    wanted_org_fragments: Optional[tuple[str, ...]] = (
+        tuple(o.lower() for o in filters.org) if filters.org else None
+    )
     max_pages = MAX_PAGES_TA_FILTERED if wanted_ta_ids else MAX_PAGES
 
     studies: list[dict] = []
@@ -338,6 +383,10 @@ def run_pull(
             if row["phase"] not in aact_phases:
                 continue
             if since_iso and (not row["start_date"] or row["start_date"] < since_iso):
+                continue
+            if wanted_org_fragments and not _organization_matches(
+                row["organization"], wanted_org_fragments
+            ):
                 continue
             studies_scanned += 1
 
@@ -401,7 +450,7 @@ def run_pull(
         b for nct_id in kept_nct_ids for b in condition_branches_by_nct.get(nct_id, [])
     ]
 
-    schema = SchemaReconciler(con)
+    schema = SchemaReconciler(con, replace=filters.replace)
     schema.ensure("studies", STUDIES_DDL)
     upsert_rows(
         con,

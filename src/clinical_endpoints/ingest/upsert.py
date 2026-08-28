@@ -17,6 +17,11 @@ Migration rather than a refresh is the point. Dropping raw.studies and
 re-pulling would discard every study landed by an earlier pull with different
 filters, which is exactly what upserting exists to prevent; a schema change is
 not a reason to lose them.
+
+The one place this file *does* drop and recreate: `--replace`, an explicit,
+opt-in override of all of the above, for an operator who wants the warehouse
+to hold only this pull rather than accumulate. See `ensure_table`'s `replace`
+parameter.
 """
 
 from __future__ import annotations
@@ -122,14 +127,26 @@ def _expected_columns(con: duckdb.DuckDBPyConnection, ddl: str) -> tuple[ColumnS
         con.execute(f"DROP TABLE IF EXISTS {_SCRATCH}")
 
 
-def ensure_table(con: duckdb.DuckDBPyConnection, table: str, ddl: str) -> SchemaChange | None:
+def ensure_table(
+    con: duckdb.DuckDBPyConnection, table: str, ddl: str, *, replace: bool = False
+) -> SchemaChange | None:
     """Create raw.<table>, or bring an existing one up to `ddl`.
 
+    `replace=True` (the pull's `--replace` flag) drops the table first, so
+    this always falls into the "doesn't exist" branch below and starts from
+    an empty table on the current schema. That is deliberate data loss, not a
+    migration -- there is no shape to reconcile and nothing worth carrying
+    across -- so it never produces a `SchemaChange`; the caller reports
+    `--replace` itself, once, rather than per table (see cli/main.py's `pull`).
+
     Returns None when nothing had to change (the overwhelmingly common case:
-    one PRAGMA against a table that already matches), otherwise the
-    `SchemaChange` describing the migration, for the caller to report.
+    one PRAGMA against a table that already matches, or a `replace`),
+    otherwise the `SchemaChange` describing the migration, for the caller to
+    report.
     """
     _check_identifier(table)
+    if replace:
+        con.execute(f"DROP TABLE IF EXISTS raw.{table}")
     if not _table_exists(con, table):
         con.execute(f"CREATE TABLE raw.{table} ({ddl})")
         return None
@@ -143,14 +160,20 @@ def ensure_table(con: duckdb.DuckDBPyConnection, table: str, ddl: str) -> Schema
 
 class SchemaReconciler:
     """Runs a pull's `ensure_table` calls and remembers the ones that had to
-    migrate, so `run_pull` can hand them back and the CLI can report them."""
+    migrate, so `run_pull` can hand them back and the CLI can report them.
 
-    def __init__(self, con: duckdb.DuckDBPyConnection) -> None:
+    `replace=True` threads `--replace` through every `ensure` call, so each
+    raw.* table this pull touches is dropped and recreated empty before this
+    pull's rows land in it -- see `ensure_table`.
+    """
+
+    def __init__(self, con: duckdb.DuckDBPyConnection, *, replace: bool = False) -> None:
         self._con = con
+        self._replace = replace
         self.changes: list[SchemaChange] = []
 
     def ensure(self, table: str, ddl: str) -> None:
-        change = ensure_table(self._con, table, ddl)
+        change = ensure_table(self._con, table, ddl, replace=self._replace)
         if change is not None:
             self.changes.append(change)
 

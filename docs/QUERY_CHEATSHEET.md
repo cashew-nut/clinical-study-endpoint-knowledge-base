@@ -25,6 +25,14 @@ uv run endpoints conform
 (`--ta` needs `vocab validate` to have already run once, since it filters
 against the MeSH->TA mapping `vocab validate` loads.)
 
+Or just one sponsor's studies -- `--org` filters to the *lead* sponsor, no
+`vocab validate` needed:
+
+```bash
+uv run endpoints pull --phase 3 --limit 500 --org "Pfizer"
+select nct_id, brief_title, organization from raw.studies order by start_date desc;
+```
+
 ## Open the warehouse from the command line
 
 `warehouse.duckdb` is a plain DuckDB file -- no server, no separate client.

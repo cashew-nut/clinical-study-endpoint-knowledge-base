@@ -210,6 +210,19 @@ def test_run_pull_lands_design_and_eligibility_columns(fake_aact_con):
     assert rows[1][10] is None
 
 
+def test_run_pull_lands_the_lead_organization_not_a_collaborator(fake_aact_con):
+    run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
+
+    rows = fake_aact_con.execute(
+        "SELECT nct_id, organization FROM raw.studies ORDER BY nct_id"
+    ).fetchall()
+    assert rows == [
+        # NCT001's collaborator, "National Cancer Institute", must not win.
+        ("NCT001", "Merck Sharp & Dohme LLC"),
+        ("NCT002", "Genentech, Inc."),
+    ]
+
+
 def test_run_pull_lands_arms_into_design_groups(fake_aact_con):
     run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500, since=None))
     assert fake_aact_con.execute(
@@ -342,3 +355,111 @@ def test_run_pull_ta_filter_preserves_earlier_pulls_with_different_filters(ta_fa
 
     nct_ids = {r[0] for r in ta_fake_aact_con.execute("SELECT nct_id FROM raw.studies").fetchall()}
     assert nct_ids == {"NCT001", "NCT002"}  # untouched by the second, non-matching pull
+
+
+# --------------------------------------------------------------- --org filtering
+
+
+def test_run_pull_org_filter_keeps_matching_studies(fake_aact_con):
+    result = run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500, org=("Merck",)))
+
+    assert result["nct_ids"] == ["NCT001"]
+    landed = {r[0] for r in fake_aact_con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert landed == {"NCT001"}
+
+
+def test_run_pull_org_filter_excludes_collaborator_only_match(fake_aact_con):
+    """NCT001's collaborator is "National Cancer Institute" -- --org must match
+    the lead sponsor only (the same distinction the CT.gov API backend's
+    AREA[LeadSponsorName] draws), so a fragment only the collaborator carries
+    matches nothing."""
+    result = run_pull(
+        fake_aact_con, PullFilters(phases=("3",), limit=500, org=("National Cancer Institute",))
+    )
+
+    assert result["nct_ids"] == []
+
+
+def test_run_pull_org_filter_is_case_insensitive_substring(fake_aact_con):
+    result = run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500, org=("genentech",)))
+
+    assert result["nct_ids"] == ["NCT002"]
+
+
+def test_run_pull_org_filter_keeps_studies_matching_any_requested_org(fake_aact_con):
+    result = run_pull(
+        fake_aact_con, PullFilters(phases=("3",), limit=500, org=("Merck", "Genentech"))
+    )
+
+    assert set(result["nct_ids"]) == {"NCT001", "NCT002"}
+
+
+def test_run_pull_org_filter_since_still_applies(fake_aact_con):
+    result = run_pull(
+        fake_aact_con,
+        PullFilters(phases=("3",), limit=500, since=date(2024, 1, 1), org=("Merck", "Genentech")),
+    )
+
+    # NCT002 starts 2023-01-01, excluded by --since before --org even applies.
+    assert result["nct_ids"] == ["NCT001"]
+
+
+def test_run_pull_org_filter_combines_with_ta(ta_fake_aact_con):
+    """--org and --ta compose (AND), rather than one silently overriding the
+    other -- NCT001/NCT002 are both oncology (per ta_fake_aact_con's fixture),
+    so --ta oncology alone keeps both; adding --org Merck narrows to NCT001."""
+    result = run_pull(
+        ta_fake_aact_con,
+        PullFilters(phases=("3",), limit=500, ta=("oncology",), org=("Merck",)),
+    )
+
+    assert result["nct_ids"] == ["NCT001"]
+
+
+# --------------------------------------------------------------- --replace
+
+
+def test_run_pull_replace_discards_studies_from_an_earlier_differently_filtered_pull(fake_aact_con):
+    """The inverse of
+    test_run_pull_upsert_preserves_studies_from_earlier_pulls_with_different_filters:
+    --replace is the explicit opt-out of that guarantee."""
+    run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))  # lands NCT001, NCT002
+
+    run_pull(fake_aact_con, PullFilters(phases=("1",), limit=500, replace=True))  # lands NCT003 only
+
+    nct_ids = {r[0] for r in fake_aact_con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert nct_ids == {"NCT003"}  # NCT001/NCT002, from the earlier pull, are gone
+
+
+def test_run_pull_replace_also_empties_child_tables_from_earlier_pulls(fake_aact_con):
+    run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
+    assert fake_aact_con.execute("SELECT count(*) FROM raw.design_outcomes").fetchone()[0] == 2
+    assert fake_aact_con.execute("SELECT count(*) FROM raw.conditions").fetchone()[0] == 2
+
+    run_pull(fake_aact_con, PullFilters(phases=("1",), limit=500, replace=True))
+
+    # NCT001/NCT002's outcome/condition rows are gone too -- not just the studies.
+    assert fake_aact_con.execute("SELECT nct_id FROM raw.design_outcomes").fetchall() == [
+        ("NCT003",)
+    ]
+    assert fake_aact_con.execute("SELECT nct_id FROM raw.conditions").fetchall() == [("NCT003",)]
+
+
+def test_run_pull_replace_reports_no_migrations(fake_aact_con):
+    """A replace on a pre-existing, differently-shaped raw.studies must not be
+    reported as a migration -- it's a deliberate wipe, not a reconciliation."""
+    fake_aact_con.execute(
+        """
+        CREATE TABLE raw.studies AS
+        SELECT 'NCT_OLD' AS nct_id, 'Phase 2' AS phase, 'Completed' AS overall_status,
+               'Interventional' AS study_type, DATE '2020-01-01' AS start_date,
+               NULL::DATE AS primary_completion_date,
+               'old' AS brief_title, 'official' AS official_title
+        """
+    )
+
+    result = run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500, replace=True))
+
+    assert result["migrations"] == []
+    nct_ids = {r[0] for r in fake_aact_con.execute("SELECT nct_id FROM raw.studies").fetchall()}
+    assert nct_ids == {"NCT001", "NCT002"}  # NCT_OLD is gone, not migrated in alongside them
