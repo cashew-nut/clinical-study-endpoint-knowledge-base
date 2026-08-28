@@ -445,6 +445,30 @@ def test_event_family_row_with_unresolvable_event_degrades_to_the_not_stated_fra
     assert deco["measurement"] == "tumour_burden_recist"
 
 
+def test_usdm_text_column_matches_the_live_projection(nct01777919_con):
+    """conformed.endpoints.usdm_text is written by `conform`, via the exact
+    same renderer `usdm show` calls at request time (usdm/project.py's
+    `render_endpoint_text`) -- so the stored column and the live projection's
+    Endpoint.text can never drift apart for the same row, at any tier."""
+    projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
+    projected_by_measure = {e["description"]: e["text"] for e in projection.endpoints()}
+
+    stored = dict(
+        nct01777919_con.execute(
+            "SELECT measure_raw, usdm_text FROM conformed.endpoints WHERE nct_id = 'NCT01777919'"
+        ).fetchall()
+    )
+
+    assert stored == projected_by_measure
+    # Pinned to the same literal strings the projection-layer tests above
+    # already assert, at both the templated and the degraded-partial tier.
+    assert stored["Progression-free survival"] == (
+        '<p>Time from <usdm:tag name="reference"/> to <usdm:tag name="event"/> '
+        '<usdm:tag name="timepoint"/></p>'
+    )
+    assert stored["Time to RECIST assessment"] == '<p><usdm:tag name="measurement"/></p>'
+
+
 def test_provenance_survives_a_warehouse_with_no_pull_log(usdm_warehouse_path, tmp_path):
     """A warehouse built by hand, or one whose log predates the table."""
     import shutil

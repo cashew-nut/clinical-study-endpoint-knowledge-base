@@ -326,6 +326,15 @@ record whether each dimension was an `exact` hit, an inferred `syntactic_rule`,
 or a `semantic` fallback, alongside per-dimension confidence and the source
 field the value came from.
 
+`conformed.endpoints.usdm_text` carries each row's rendered USDM
+`SyntaxTemplate.text` -- the parameterized sentence with `<usdm:tag
+name="..."/>` markup in place of the resolved values, or (for forms with no
+template, like `descriptive`, or a row whose required tag still didn't
+resolve) the escaped raw registry string -- so it is queryable directly by
+SQL rather than only through `usdm show`. `conform` renders it with the same
+code `usdm show` uses live (`usdm/project.py`'s `render_endpoint_text`), so
+the two can never disagree.
+
 `conform` replaces both tables wholesale each run -- it is a pure function of
 `raw.*` plus `vocab.*`, so re-running after a vocabulary edit is the normal way
 to see the effect of that edit.

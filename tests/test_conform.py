@@ -358,6 +358,31 @@ def test_threshold_only_populated_when_form_expects_it(con):
     assert t2 == (None, None)
 
 
+def test_usdm_text_column_carries_the_parameterized_syntax_template(con):
+    """conformed.endpoints.usdm_text is the same HTML fragment `usdm show`
+    renders for Endpoint.text -- unresolved <usdm:tag> markup at templated
+    tier, the escaped raw string at verbatim tier -- so it is queryable
+    directly by SQL without projecting a whole trial through the USDM API."""
+    rows = [
+        # responder_proportion + pasi + threshold -> templated tier.
+        ("NCT_UT1", "primary", "Proportion of participants achieving PASI75", "Week 16", None, None),
+        # descriptive has no template (vocab/usdm_templates.yaml: verbatim: true)
+        # -- conformed (adverse_event resolves), but rendered verbatim, not tagged.
+        ("NCT_UT2", "primary", "Safety and Tolerability", None, None, None),
+    ]
+    _insert_outcomes(con, rows)
+    run_conform(con)
+
+    texts = dict(con.execute("SELECT nct_id, usdm_text FROM conformed.endpoints").fetchall())
+
+    templated = texts["NCT_UT1"]
+    assert templated.startswith("<p>") and templated.endswith("</p>")
+    assert '<usdm:tag name="threshold"/>' in templated
+    assert '<usdm:tag name="measurement"/>' in templated
+
+    assert texts["NCT_UT2"] == "<p>Safety and Tolerability</p>"
+
+
 # --------------------------------------------------------------- disambiguation
 
 

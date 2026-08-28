@@ -33,7 +33,7 @@ from clinical_endpoints.usdm.tags import (
     render_threshold,
     render_timepoint,
 )
-from clinical_endpoints.usdm.templates import parse_template, render
+from clinical_endpoints.usdm.templates import Rendered, parse_template, render
 
 #: Term ids that mean "absent" rather than naming a thing. A tag resolving to
 #: one of these is unresolved: "Change from No reference (absolute quantity) in
@@ -534,16 +534,23 @@ def _conformance(ids: IdFactory, row: SourceRow, tier: str) -> dict:
     }
 
 
-def _build_endpoint(
-    row: SourceRow,
-    rules: ProjectionRules,
-    ids: IdFactory,
-    shared: _SharedInstances,
-    ordinal: int,
-) -> tuple[dict, dict | None, str, frozenset[str]]:
-    """One Endpoint, its dictionary (or None at verbatim tier), its tier, and
-    the set of tags whose host carries an announced default (today, at most
-    `{"reference"}` -- docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1)."""
+@dataclass(frozen=True)
+class _RenderResult:
+    """What one row renders to, and how. `_build_endpoint` needs all four
+    fields (the dictionary/parameterMaps below are built from `values`); the
+    `usdm_text` column `conform` stores needs only `text`. One function
+    computes it for both, so the stored column can never drift from what
+    `usdm show` serves live for the same row.
+    """
+
+    text: str
+    tier: str
+    rendered: Rendered | None
+    values: dict[str, str | None]
+    reference_defaulted: bool
+
+
+def _render(row: SourceRow, rules: ProjectionRules) -> _RenderResult:
     spec = rules.templates.get(row.form_id or "")
     values, reference_defaulted = _resolve_tags(row, spec, rules) if spec else ({}, False)
     rendered = None
@@ -569,12 +576,40 @@ def _build_endpoint(
     else:
         tier = TIER_TEMPLATED
 
+    text = rendered.text if rendered else f"<p>{escape(_verbatim_text(row), quote=False)}</p>"
+    return _RenderResult(
+        text=text, tier=tier, rendered=rendered, values=values, reference_defaulted=reference_defaulted
+    )
+
+
+def render_endpoint_text(row: SourceRow, rules: ProjectionRules) -> str:
+    """`Endpoint.text` for one row: the syntax template with tags unresolved,
+    or (at verbatim tier) the escaped registry string -- an HTML fragment,
+    exactly what `usdm show` serves for this row. `conform` calls this to
+    populate `conformed.endpoints.usdm_text`, so that column is never a second,
+    potentially drifting, implementation of the same rendering."""
+    return _render(row, rules).text
+
+
+def _build_endpoint(
+    row: SourceRow,
+    rules: ProjectionRules,
+    ids: IdFactory,
+    shared: _SharedInstances,
+    ordinal: int,
+) -> tuple[dict, dict | None, str, frozenset[str]]:
+    """One Endpoint, its dictionary (or None at verbatim tier), its tier, and
+    the set of tags whose host carries an announced default (today, at most
+    `{"reference"}` -- docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1)."""
+    result = _render(row, rules)
+    rendered, tier, values = result.rendered, result.tier, result.values
+
     # The flag is only owed once the default actually reached the document:
     # a fallback the template never used (e.g. the row degraded to a
     # template with no {reference} tag) minted no host, so nothing to flag.
     defaulted: frozenset[str] = (
         frozenset({"reference"})
-        if reference_defaulted and rendered is not None and "reference" in rendered.tags
+        if result.reference_defaulted and rendered is not None and "reference" in rendered.tags
         else frozenset()
     )
 
@@ -650,7 +685,7 @@ def _build_endpoint(
         "name": name,
         "label": rendered.label if rendered else _verbatim_text(row),
         "description": " ".join((row.measure_raw or "").split()),
-        "text": rendered.text if rendered else f"<p>{escape(_verbatim_text(row), quote=False)}</p>",
+        "text": result.text,
         "dictionaryId": dictionary["id"] if dictionary else None,
         "notes": [],
         "purpose": purpose,

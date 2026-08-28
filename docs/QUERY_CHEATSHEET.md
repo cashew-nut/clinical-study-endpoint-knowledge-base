@@ -114,6 +114,25 @@ FROM conformed.endpoints WHERE measurement_id = 'vital_status'
 GROUP BY 1, 2, 3 ORDER BY 4 DESC;
 ```
 
+**The parameterized endpoint text**
+
+`usdm_text` is the USDM `SyntaxTemplate.text` for each row -- tags unresolved,
+e.g. `<p>Time to <usdm:tag name="event"/> <usdm:tag name="timepoint"/></p>` --
+rendered by `conform` itself
+([`USDM_ENDPOINTS_API_SPEC.md`](USDM_ENDPOINTS_API_SPEC.md#which-attribute-carries-what)),
+so it doesn't require calling `endpoints usdm show` to inspect:
+
+```sql
+SELECT nct_id, measure_raw, usdm_text FROM conformed.endpoints
+WHERE nct_id = 'NCT04162249' ORDER BY outcome_type;
+
+-- endpoints still stuck at verbatim tier within conformed.endpoints (no
+-- <usdm:tag> markup at all) -- usually a form with no template (`descriptive`)
+-- or an event-family row whose event didn't resolve
+SELECT nct_id, form_id, measure_raw FROM conformed.endpoints
+WHERE usdm_text NOT LIKE '%<usdm:tag%' LIMIT 20;
+```
+
 ## Cross-study comparability
 
 The reason the warehouse exists: which studies measured the same thing a
