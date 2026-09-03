@@ -37,6 +37,14 @@ from clinical_endpoints.ingest import ctgov_api as ctgov_api_backend
 from clinical_endpoints.ingest.ctgov_api import CtgovApiError
 from clinical_endpoints.ingest.filters import PullFilters
 from clinical_endpoints.ingest.upsert import SchemaMigrationError
+from clinical_endpoints.results import coverage as results_coverage
+from clinical_endpoints.results.pipeline import NoResults, run_results_conform
+from clinical_endpoints.results.stats import (
+    NotComputed,
+    StatsFilters,
+    analysis_distribution,
+    sd_distribution,
+)
 from clinical_endpoints.usdm.codes import UnknownOutcomeType
 from clinical_endpoints.usdm.envelope import module_envelope, wrapper_envelope
 from clinical_endpoints.usdm.project import (
@@ -69,10 +77,14 @@ vocab_app = typer.Typer(no_args_is_help=True, help="Vocabulary sampling / valida
 review_app = typer.Typer(no_args_is_help=True, help="Review-queue management.")
 ta_app = typer.Typer(no_args_is_help=True, help="Therapeutic-area mapping.")
 usdm_app = typer.Typer(no_args_is_help=True, help="CDISC USDM 4.0 projection.")
+results_app = typer.Typer(
+    no_args_is_help=True, help="The results section: conforming and coverage."
+)
 app.add_typer(vocab_app, name="vocab")
 app.add_typer(review_app, name="review")
 app.add_typer(ta_app, name="ta")
 app.add_typer(usdm_app, name="usdm")
+app.add_typer(results_app, name="results")
 
 USDM_ENVELOPES = ("module", "wrapper")
 
@@ -157,6 +169,14 @@ def pull(
         'against the *lead* sponsor only, e.g. "Pfizer" or "Pfizer,AbbVie"). Applied '
         "server-side before --limit, same as --phase/--since; no `vocab validate` precondition.",
     ),
+    results: bool = typer.Option(
+        True,
+        "--results/--no-results",
+        help="Land the results section (raw.outcome_measures / outcome_groups / "
+        "outcome_measurements / outcome_analyses / baseline_measurements) for studies "
+        "that posted one. On by default: the CT.gov API returns it in the payload the "
+        "pull already fetches, so --no-results saves warehouse size, never network.",
+    ),
     replace: bool = typer.Option(
         False,
         "--replace",
@@ -202,7 +222,8 @@ def pull(
 
     phases = tuple(p.strip() for p in phase.split(",") if p.strip())
     filters = PullFilters(
-        phases=phases, limit=limit, since=since_date, ta=ta_ids, org=org_ids, replace=replace
+        phases=phases, limit=limit, since=since_date, ta=ta_ids, org=org_ids, replace=replace,
+        with_results=results,
     )
 
     con = connect(warehouse)
@@ -308,6 +329,24 @@ def pull(
         f"{result['row_counts']['studies']} studies, "
         f"{result['row_counts']['design_outcomes']} design_outcomes -> raw.*"
     )
+
+    if result.get("results_warning"):
+        console.print(f"[yellow]{result['results_warning']}[/yellow]")
+    elif results:
+        counts = result["row_counts"]
+        landed = counts.get("outcome_measures", 0)
+        if landed:
+            console.print(
+                f"[green]Results section: {landed} reported outcomes, "
+                f"{counts.get('outcome_measurements', 0)} arm-level measurements, "
+                f"{counts.get('outcome_analyses', 0)} analyses, "
+                f"{counts.get('baseline_measurements', 0)} baseline rows -> raw.outcome_*[/green]"
+            )
+        else:
+            console.print(
+                "[yellow]No results section landed -- none of the studies in this pull has "
+                "posted results. `endpoints results coverage` reports the denominator.[/yellow]"
+            )
     if org_ids:
         console.print(f"[green]Filtered to --org {list(org_ids)}[/green]")
     if ta_ids:
@@ -704,6 +743,394 @@ def usdm_coverage(
             for tag, count in sorted(defaulted_totals.items())
         )
         console.print(f"[dim]{parts}[/dim]")
+
+
+@results_app.command("conform")
+def results_conform(
+    warehouse: str = typer.Option(
+        "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
+    ),
+) -> None:
+    """Conform the results section and normalise its dispersions.
+
+    Reads raw.outcome_* and vocab.*, writes conformed.endpoint_results (one row
+    per reported outcome and baseline characteristic, linked back to the
+    planned endpoint where one can be identified),
+    conformed.endpoint_dispersion (one row per arm-level measurement, with an
+    `sd_estimate` and how it was derived) and conformed.results_review_queue.
+
+    Requires `endpoints vocab validate` and `endpoints pull` (without
+    --no-results); run `endpoints conform` first so results rows can be linked
+    to their planned endpoints.
+    """
+    con = connect(warehouse)
+    try:
+        try:
+            with _determinate_progress() as progress:
+                task = progress.add_task("Conforming results...", total=None)
+
+                def on_progress(done: int, total: int) -> None:
+                    progress.update(task, completed=done, total=total)
+
+                result = run_results_conform(con, on_progress=on_progress)
+        except NoResults as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+    finally:
+        con.close()
+
+    console.print(
+        f"[green]Conformed {result['rows_conformed']} of {result['results_rows']} results "
+        f"row(s)[/green] -> conformed.endpoint_results; "
+        f"{result['rows_queued']} -> conformed.results_review_queue"
+    )
+    if result["links"]:
+        links = " · ".join(f"{method} {count}" for method, count in sorted(result["links"].items()))
+        console.print(f"Links to planned endpoints: {links}")
+    console.print(
+        f"[green]{result['dispersion_with_sd']} of {result['dispersion_rows']} arm-level "
+        f"measurement(s) yielded an SD estimate[/green] -> conformed.endpoint_dispersion"
+    )
+    if result["sd_methods"]:
+        methods = " · ".join(f"{m} {c}" for m, c in result["sd_methods"].items())
+        console.print(f"[dim]{methods}[/dim]")
+
+
+def _pct(numerator, denominator) -> str:
+    fraction = results_coverage.share(numerator, denominator)
+    return "n/a" if fraction is None else f"{100 * fraction:.1f}%"
+
+
+@results_app.command("coverage")
+def results_coverage_cmd(
+    warehouse: str = typer.Option(
+        "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
+    ),
+    top: int = typer.Option(20, "--top", help="How many distinct values to list per field."),
+) -> None:
+    """The four numbers the results tier was gated on, measured against this warehouse.
+
+    What share of conformed studies posted results; what share of reported
+    outcome titles match a planned one; the exact value sets `param_type` and
+    `dispersion_type` use here, and which of them the vocabulary does not yet
+    recognise; and what share of `unit_of_measure` strings normalise against
+    scales.yaml. See docs/ENDPOINT_RESULTS_SPEC.md, "The gate".
+    """
+    con = connect(warehouse)
+    try:
+        try:
+            report = results_coverage.gate_measurements(con, top=top)
+        except results_coverage.NoResults as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+    finally:
+        con.close()
+
+    posting = report["posting"]
+    console.print("[bold]1. Results posting[/bold]")
+    console.print(
+        f"  {posting['studies_flagged_has_results']} of {posting['studies_pulled']} pulled "
+        f"studies are flagged hasResults ({_pct(posting['studies_flagged_has_results'], posting['studies_pulled'])})"
+    )
+    console.print(
+        f"  {posting['studies_with_results_landed']} had a results section landed "
+        f"({_pct(posting['studies_with_results_landed'], posting['studies_pulled'])} of pulled)"
+    )
+    if posting["studies_conformed"] is not None:
+        console.print(
+            f"  {posting['conformed_studies_with_results']} of {posting['studies_conformed']} "
+            f"conformed studies have results "
+            f"({_pct(posting['conformed_studies_with_results'], posting['studies_conformed'])})"
+        )
+
+    titles = report["titles"]
+    console.print("\n[bold]2. Reported titles vs planned measures[/bold]")
+    if not titles.get("computed"):
+        console.print("  [yellow]run `endpoints results conform` to measure this[/yellow]")
+    else:
+        for method, count in titles["link_methods"].items():
+            console.print(
+                f"  {method:<24} {count:>7}  ({_pct(count, titles['reported_outcomes'])})"
+            )
+        console.print(
+            f"  {'measurement_unmatched':<24} {titles['measurement_unmatched']:>7}  "
+            f"({_pct(titles['measurement_unmatched'], titles['reported_outcomes'])})"
+        )
+
+    enums = report["enumerations"]
+    console.print("\n[bold]3. param_type and dispersion_type[/bold]")
+    if not enums.get("computed"):
+        console.print("  [yellow]run `endpoints results conform` to measure this[/yellow]")
+    else:
+        for field in ("param_type_raw", "dispersion_type_raw"):
+            console.print(f"  [dim]{field} -- {enums[field + '_distinct']} distinct value(s)[/dim]")
+            table = Table("value", "folds to", "rows", box=None, pad_edge=False)
+            for entry in enums[field]:
+                table.add_row(entry["value"], entry["kind"] or "-", f"{entry['rows']:,}")
+            console.print(table)
+            unrecognised = enums[field + "_unrecognised"]
+            if unrecognised:
+                console.print(
+                    "  [yellow]not recognised: "
+                    + ", ".join(f"{e['value']!r} ({e['rows']:,})" for e in unrecognised)
+                    + "[/yellow]"
+                )
+
+    units = report["units"]
+    console.print("\n[bold]4. unit_of_measure against scales.yaml[/bold]")
+    if not units.get("computed"):
+        console.print("  [yellow]run `endpoints results conform` to measure this[/yellow]")
+    else:
+        console.print(
+            f"  {units['resolved']} of {units['rows']} arm-level rows resolved to a scale "
+            f"({_pct(units['resolved'], units['rows'])}); "
+            f"{units['convertible_to_si']} carry a conversion factor "
+            f"({_pct(units['convertible_to_si'], units['rows'])})"
+        )
+        if units["unresolved"]:
+            console.print(
+                f"  [yellow]{units['unresolved_distinct']} unresolved unit string(s): "
+                + ", ".join(f"{e['value']!r} ({e['rows']:,})" for e in units["unresolved"])
+                + "[/yellow]"
+            )
+
+
+@app.command()
+def stats(
+    measurement: Optional[str] = typer.Option(
+        None, "--measurement", help="Vocabulary measurement id, e.g. fev1."
+    ),
+    form: Optional[str] = typer.Option(
+        None, "--form", help="Vocabulary form id, e.g. change_from_baseline."
+    ),
+    scale: Optional[str] = typer.Option(
+        None, "--scale", help="Pool only this unit, e.g. litres (the converted unit where "
+        "scales.yaml declares a conversion)."
+    ),
+    timepoint: Optional[str] = typer.Option(
+        None, "--timepoint", help="Timepoint pattern id, e.g. fixed_visit."
+    ),
+    ta: Optional[str] = typer.Option(None, "--ta", help="Primary therapeutic area id."),
+    phase: Optional[str] = typer.Option(None, "--phase", help="Study phase, e.g. PHASE3."),
+    source: str = typer.Option(
+        "outcome",
+        "--source",
+        help='"outcome" (reported outcome measures, the default) or "baseline" (baseline '
+        "characteristics -- a larger denominator, and a different quantity: see "
+        "docs/ENDPOINT_RESULTS_SPEC.md, D8).",
+    ),
+    analyses: bool = typer.Option(
+        False,
+        "--analyses",
+        help="Report effect sizes, p-values and non-inferiority margins instead of the SD "
+        "distribution.",
+    ),
+    only_reported: bool = typer.Option(
+        False, "--only-reported", help="Exclude every derived SD, leaving only reported ones."
+    ),
+    no_approximate: bool = typer.Option(
+        False,
+        "--no-approximate",
+        help="Exclude the Wan et al. IQR/range estimates, which are approximations rather "
+        "than conversions.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
+    warehouse: str = typer.Option(
+        "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
+    ),
+) -> None:
+    """The empirical distribution of arm-level variability for an endpoint.
+
+    Grouped by form and unit, because the SD of a change from baseline is not
+    the SD of a raw value and the SD in litres is not the SD in millilitres,
+    and reported with the coverage line that says how many of the conformed
+    studies actually contributed. Requires `endpoints results conform`.
+    """
+    filters = StatsFilters(
+        measurement=measurement, form=form, scale=scale, timepoint=timepoint, ta=ta,
+        phase=phase, source=source, include_approximate=not no_approximate,
+        include_derived=not only_reported,
+    )
+    con = connect(warehouse)
+    try:
+        try:
+            report = (
+                analysis_distribution(con, filters) if analyses else sd_distribution(con, filters)
+            )
+        except (NotComputed, ValueError) as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+    finally:
+        con.close()
+
+    if as_json:
+        print(json.dumps(_stats_json(report, analyses=analyses), indent=2))
+        return
+    if analyses:
+        _print_analyses(report)
+    else:
+        _print_sd(report)
+
+
+def _describe_filters(filters: StatsFilters) -> str:
+    parts = [f"{key}={value}" for key, value in (
+        ("measurement", filters.measurement), ("form", filters.form), ("scale", filters.scale),
+        ("timepoint", filters.timepoint), ("ta", filters.ta), ("phase", filters.phase),
+    ) if value]
+    parts.append(f"source={filters.source}")
+    return ", ".join(parts)
+
+
+def _fmt(value, digits: int = 4) -> str:
+    return "-" if value is None else f"{value:,.{digits}g}"
+
+
+def _print_sd(report) -> None:
+    filters = report["filters"]
+    console.print(f"[bold]{_describe_filters(filters)}[/bold]")
+    if not report["groups"]:
+        console.print(
+            "[yellow]No arm-level measurement yielded a usable dispersion for this "
+            f"selection ({report['studies_conformed']} conformed study/studies matched).[/yellow]"
+        )
+        _print_skips(report["skip_reasons"])
+        return
+
+    for group in report["groups"]:
+        header = f"{group.form_id or '(no form)'} · {group.scale_id or '(no unit)'}"
+        if group.converted:
+            header += "  [dim](converted via scales.yaml)[/dim]"
+        if group.sd_scale != "arithmetic":
+            header += f"  [yellow](SD on the {group.sd_scale} scale)[/yellow]"
+        console.print(f"\n  [bold]{header}[/bold]")
+        participants = f"{group.participants:,}" if group.participants is not None else "-"
+        console.print(
+            f"    studies {group.studies:<6} arms {group.arms:<6} participants {participants}"
+        )
+        console.print(
+            f"    SD      median {_fmt(group.median)}   "
+            f"IQR {_fmt(group.q1)}-{_fmt(group.q3)}   "
+            f"range {_fmt(group.minimum)}-{_fmt(group.maximum)}"
+        )
+        console.print(
+            "            " + " · ".join(f"{method} {count}" for method, count in group.methods.items())
+        )
+        if group.timepoints:
+            console.print(
+                "    timepoints  "
+                + "  ".join(
+                    f"{pattern or '(unresolved)'} ({count})" for pattern, count in group.timepoints[:6]
+                )
+            )
+        console.print(
+            f"    coverage    {group.studies} of {group.studies_conformed} conformed studies "
+            f"reported a usable dispersion ({_pct(group.studies, group.studies_conformed)})"
+        )
+
+    _print_skips(report["skip_reasons"])
+
+
+def _print_skips(skips: dict) -> None:
+    if not skips:
+        return
+    console.print(
+        "\n[dim]No SD from: "
+        + " · ".join(f"{reason} {count}" for reason, count in skips.items())
+        + "[/dim]"
+    )
+
+
+def _print_analyses(report) -> None:
+    filters = report["filters"]
+    console.print(f"[bold]{_describe_filters(filters)} -- reported analyses[/bold]")
+    if not report["analyses"]:
+        console.print("[yellow]No analysis was reported for this selection.[/yellow]")
+        return
+
+    if report["effects"]:
+        console.print("\n  [bold]effect measures[/bold]")
+        table = Table("effect", "unit", "studies", "analyses", "median", "IQR", "null",
+                      box=None, pad_edge=False)
+        for effect in report["effects"]:
+            table.add_row(
+                effect["effect_kind"],
+                effect["scale_id"] or "-",
+                str(effect["studies"]),
+                str(effect["analyses"]),
+                _fmt(effect["median"]),
+                f"{_fmt(effect['q1'])}-{_fmt(effect['q3'])}",
+                _fmt(effect["null_value"], 2),
+            )
+        console.print(table)
+
+    p_values = report["p_values"]
+    console.print("\n  [bold]p-values[/bold]")
+    console.print(
+        f"    stated {p_values['stated']} · exact {p_values['exact']} · "
+        f"censored {p_values['censored']} · below 0.05 {p_values['below_0_05']} "
+        f"({_pct(p_values['below_0_05'], p_values['stated'])} of stated)"
+    )
+    if p_values["censored"]:
+        console.print(
+            "    [dim]a censored p-value ('<0.001') contributes its bound, not an observed "
+            "value[/dim]"
+        )
+
+    console.print("\n  [bold]non-inferiority[/bold]")
+    if not report["non_inferiority"]:
+        console.print("    none of these analyses was a non-inferiority comparison")
+    else:
+        table = Table("study", "effect", "margin", "from", box=None, pad_edge=False)
+        for entry in report["non_inferiority"]:
+            margin = "-" if entry["margin"] is None else (
+                f"{entry['margin']:g}" + (f" {entry['margin_unit']}" if entry["margin_unit"] else "")
+            )
+            table.add_row(
+                entry["nct_id"], entry["param_type"] or "-", margin,
+                (entry["description"] or "(not stated)")[:60],
+            )
+        console.print(table)
+        unparsed = sum(1 for e in report["non_inferiority"] if e["margin"] is None)
+        if unparsed:
+            console.print(
+                f"    [dim]{unparsed} margin(s) could not be read out of the description; the "
+                "description is shown instead of a guessed number[/dim]"
+            )
+
+    console.print(
+        f"\n  coverage    {report['studies_with_analyses']} of {report['studies_conformed']} "
+        f"conformed studies reported at least one analysis "
+        f"({_pct(report['studies_with_analyses'], report['studies_conformed'])})"
+    )
+
+
+def _stats_json(report, *, analyses: bool) -> dict:
+    filters = report["filters"]
+    body = {
+        "filters": {k: v for k, v in filters.__dict__.items()},
+        "studies_conformed": report["studies_conformed"],
+    }
+    if analyses:
+        return {
+            **body,
+            "analyses": report["analyses"],
+            "studies_with_analyses": report["studies_with_analyses"],
+            "effects": report["effects"],
+            "p_values": report["p_values"],
+            "non_inferiority": report["non_inferiority"],
+        }
+    return {
+        **body,
+        "studies_with_sd": report["studies_with_sd"],
+        "skip_reasons": report["skip_reasons"],
+        "groups": [
+            {
+                **group.__dict__,
+                "coverage": group.coverage,
+            }
+            for group in report["groups"]
+        ],
+    }
 
 
 @app.command()

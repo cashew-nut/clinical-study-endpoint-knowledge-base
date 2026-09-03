@@ -51,6 +51,14 @@ STUDY_DESIGN_COLUMNS: tuple[tuple[str, str], ...] = (
     # API: sponsorCollaboratorsModule.leadSponsor.name. AACT: ctgov.sponsors
     # where lead_or_collaborator = 'lead'.
     ("organization", "VARCHAR"),
+    # The registry's own claim that this study has posted results, landed
+    # whether or not `pull` was asked to land the results section itself --
+    # it is the denominator for "what share of conformed studies could have
+    # results" (docs/ENDPOINT_RESULTS_SPEC.md, gate question 1), and that
+    # question has to stay answerable for studies pulled with --no-results.
+    # CT.gov API: the study record's own `hasResults`. AACT:
+    # ctgov.studies.results_first_submitted_date IS NOT NULL.
+    ("has_results", "BOOLEAN"),
 )
 
 STUDY_BASE_COLUMNS: tuple[str, ...] = (

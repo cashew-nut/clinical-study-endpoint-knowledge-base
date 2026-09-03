@@ -9,8 +9,10 @@ each string actually says.
 This project makes that decision explicit and re-runnable. It holds a library
 of controlled vocabularies for the parameters an endpoint is built from, a
 conformance engine that maps registry free text onto that library, an
-in-process database to explore the result, and an API that projects any single
-study's endpoints into CDISC USDM 4.0.
+in-process database to explore the result, an API that projects any single
+study's endpoints into CDISC USDM 4.0 -- and, on top of that join key, an
+empirical answer to *what variability should I expect for this endpoint?*,
+assembled from what the trials themselves reported.
 
 Everything is a CLI plus a DuckDB file -- no server to stand up, no UI.
 
@@ -98,7 +100,46 @@ copy-pasteable queries: conformance coverage and where the loss is, cross-study
 comparability, threshold and timepoint distributions, and the vocabulary tables
 themselves.
 
-### 4. A USDM 4.0 projection API
+### 4. An endpoint statistics reference
+
+Once endpoints can be grouped, the results the trials reported can be attached
+to the group. `pull` lands the results section both ingestion backends were
+already fetching and discarding; `endpoints results conform` runs the *same*
+conformance engine over the reported outcome titles and normalises what each
+trial called "dispersion" -- standard deviations, standard errors, confidence
+intervals, inter-quartile ranges -- into one estimated standard deviation, with
+the conversion recorded on every row.
+
+```
+$ endpoints stats --measurement fev1
+
+measurement=fev1, source=outcome
+
+  change_from_baseline · litres  (converted via scales.yaml)
+    studies 2      arms 4      participants 778
+    SD      median 0.3   IQR 0.2793-0.31   range 0.247-0.31
+            reported 3 · from_inter_quartile_range 1
+    timepoints  single_fixed (2)
+    coverage    2 of 2 conformed studies reported a usable dispersion (100.0%)
+```
+
+Nobody publishes an empirical prior for the variability of a given endpoint at
+a given timepoint; every statistician assembling a sample-size calculation
+reconstructs it by hand from two or three papers they happen to know.
+
+The output is grouped by form and unit because the SD of a change from baseline
+is not the SD of a raw value and the SD in litres is not the SD in millilitres,
+and the coverage line is not decoration -- without it the command is a machine
+for producing confident numbers off eight arms. `--source baseline` gives the
+baseline SD as its own quantity rather than as a fallback, and `--analyses`
+gives the effect-size, p-value and non-inferiority-margin distributions
+instead.
+
+See [`docs/ENDPOINT_RESULTS_SPEC.md`](docs/ENDPOINT_RESULTS_SPEC.md) for what
+is converted, what is refused, and the four measurements this still owes a live
+pull.
+
+### 5. A USDM 4.0 projection API
 
 `endpoints usdm show <NCT_ID>` projects one study's endpoints into CDISC USDM
 4.0, and `endpoints serve` exposes the same projection over HTTP at
@@ -118,15 +159,18 @@ endpoints.
 
 ### Ingestion
 
-Study registrations come from ClinicalTrials.gov, via either of two
-interchangeable backends that land the same `raw.*` shape: the public
+Study registrations -- and, for studies that posted them, results -- come from
+ClinicalTrials.gov, via either of two interchangeable backends that land the
+same `raw.*` shape: the public
 [CT.gov API v2](https://clinicaltrials.gov/data-api/api) (default, no auth) or
 [AACT](https://aact.ctti-clinicaltrials.org) (`--source aact`, needs free
 credentials). It is a thin fetch-and-upsert, deliberately -- everything
 downstream is source-agnostic. `pull` filters by phase, date, therapeutic area
 (`--ta`) and lead-sponsor organisation (`--org`), all applied server-side
 before `--limit`; `--replace` opts out of the upsert to replace raw.* with
-just that one pull instead. See
+just that one pull instead, and `--no-results` skips the results section (which
+saves warehouse size, never network -- the API returns it in the payload the
+pull already fetches). See
 [`docs/USAGE.md`](docs/USAGE.md#ingesting-studies) for the backends and their
 trade-offs.
 
@@ -192,7 +236,15 @@ the coverage number, and the input to the next vocabulary round.
 uv run endpoints review list --reason measurement_unmatched
 ```
 
-**5. Explore the conformed endpoints** with any DuckDB client, or the project's
+**5. Conform what the trials reported**, and ask what variability to expect.
+
+```bash
+uv run endpoints results conform
+uv run endpoints stats --measurement fev1
+uv run endpoints results coverage    # how much of the corpus is behind that answer
+```
+
+**6. Explore the conformed endpoints** with any DuckDB client, or the project's
 own connection:
 
 ```bash
@@ -202,7 +254,7 @@ duckdb warehouse.duckdb -c "
 
 More: [`docs/QUERY_CHEATSHEET.md`](docs/QUERY_CHEATSHEET.md).
 
-**6. Project one study into USDM 4.0.**
+**7. Project one study into USDM 4.0.**
 
 ```bash
 uv run endpoints usdm show NCT04162249                        # the endpoints module
@@ -211,7 +263,7 @@ uv run endpoints usdm show NCT04162249 --envelope wrapper -o study.json
 uv run endpoints usdm coverage                                # tier mix across the corpus
 ```
 
-**7. Or serve it** (needs `uv sync --extra serve`):
+**8. Or serve it** (needs `uv sync --extra serve`):
 
 ```bash
 uv run endpoints serve --port 8000
@@ -244,6 +296,8 @@ src/clinical_endpoints/
   vocab/                   vocabulary schema, validation/loading, review sampling
   conform/                 the conformance pipeline: normalisation, syntactic rules,
                            semantic fallback, timepoint and threshold parsers, direction
+  results/                 the results section: linking it to the vocabulary, normalising
+                           reported spread into an SD, and the `stats` distributions
   ta/                      MeSH condition/intervention -> therapeutic area
   usdm/                    CDISC USDM 4.0 projection: templates, tags, ids, envelopes, API
   cli/                     the `endpoints` CLI

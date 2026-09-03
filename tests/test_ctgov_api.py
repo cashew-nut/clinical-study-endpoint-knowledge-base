@@ -150,6 +150,9 @@ def test_extract_study_row_pads_month_precision_dates():
         "maximum_age": None,
         "population_description": None,
         "organization": None,
+        # No `hasResults` on this minimal fixture, so the registry's own claim
+        # is unknown rather than False.
+        "has_results": None,
     }
 
 
@@ -277,6 +280,13 @@ def test_run_pull_lands_conditions_and_mesh_tables(tmp_path, monkeypatch):
         "browse_conditions": 1,
         "browse_interventions": 1,
         "browse_condition_branches": 1,
+        # The results section (D4): landed by default, but this study posted
+        # none, which is the ordinary case rather than an error.
+        "outcome_measures": 0,
+        "outcome_groups": 0,
+        "outcome_measurements": 0,
+        "outcome_analyses": 0,
+        "baseline_measurements": 0,
     }
     con.close()
 
@@ -324,6 +334,11 @@ def test_run_pull_lands_studies_sorted_desc_and_logs(tmp_path, monkeypatch):
         "browse_conditions": 0,
         "browse_interventions": 0,
         "browse_condition_branches": 0,
+        "outcome_measures": 0,
+        "outcome_groups": 0,
+        "outcome_measurements": 0,
+        "outcome_analyses": 0,
+        "baseline_measurements": 0,
     }
     assert json.loads(log_row[1]) == expected_row_counts
     assert result["row_counts"] == expected_row_counts

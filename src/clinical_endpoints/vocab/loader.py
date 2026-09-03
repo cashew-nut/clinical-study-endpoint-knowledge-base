@@ -527,8 +527,10 @@ def _validate_directions(doc: dict, ids: dict[str, set[str]], result: Validation
 
 def _validate_scales(doc: dict, result: ValidationResult) -> None:
     where = "scales.yaml"
-    term_ids = {t["id"] for t in doc.get("terms") or [] if isinstance(t, dict) and "id" in t}
-    for term in doc.get("terms") or []:
+    terms = [t for t in doc.get("terms") or [] if isinstance(t, dict) and "id" in t]
+    term_ids = {t["id"] for t in terms}
+    by_id = {t["id"]: t for t in terms}
+    for term in terms:
         si = term.get("si_equivalent")
         if si is not None and si not in term_ids:
             result.error(
@@ -538,6 +540,20 @@ def _validate_scales(doc: dict, result: ValidationResult) -> None:
             )
         if term.get("factor_to_si") is not None and si is None:
             result.error(where, f"{term.get('id')}: factor_to_si without si_equivalent")
+        # The unit family a term points into has to have a well-formed anchor:
+        # the term named as `si_equivalent` must anchor itself, at factor 1.
+        # Without this, `results/units.py`'s `to_si` would convert into a unit
+        # that is itself expressed in something else -- one silent factor out,
+        # in a column whose whole job is to make two trials' SDs comparable
+        # (docs/ENDPOINT_RESULTS_SPEC.md, D6).
+        if si is not None and si in by_id:
+            anchor = by_id[si]
+            if anchor.get("si_equivalent") != si or anchor.get("factor_to_si") != 1:
+                result.error(
+                    where,
+                    f"{term.get('id')}: si_equivalent {si!r} is not a self-anchoring unit -- "
+                    f"{si} must declare `si_equivalent: {si}` and `factor_to_si: 1`",
+                )
     if doc.get("default_when_unmatched") not in term_ids:
         result.error(where, "`default_when_unmatched` is not a scale id")
 

@@ -51,6 +51,14 @@ _NCT_KEYED_RAW_TABLES = (
     "browse_conditions",
     "browse_interventions",
     "browse_condition_branches",
+    # The results section (docs/ENDPOINT_RESULTS_SPEC.md). A `--ta` post-filter
+    # that left these behind would leave `endpoints stats` computing over
+    # studies the pull went on to discard.
+    "outcome_measures",
+    "outcome_groups",
+    "outcome_measurements",
+    "outcome_analyses",
+    "baseline_measurements",
 )
 
 

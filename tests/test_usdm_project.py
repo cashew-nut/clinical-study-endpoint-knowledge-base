@@ -344,12 +344,13 @@ def nct01777919_con():
 
     con.execute(f"CREATE TABLE raw.studies ({STUDIES_DDL})")
     con.execute(
-        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 20) + ")",
+        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 21) + ")",
         [
             "NCT01777919", "PHASE3", "COMPLETED", "INTERVENTIONAL", "2013-01-01", "2016-01-01",
             "A trial of tumour-targeted therapy", "A trial of tumour-targeted therapy, officially",
             "Parallel Assignment", "Treatment", "Randomized", "Double", 480, "Actual",
             False, "All", "18 Years", "75 Years", "Adults with advanced solid tumours", None,
+            None,
         ],
     )
     con.execute(f"CREATE TABLE raw.design_groups ({DESIGN_GROUPS_DDL})")
@@ -578,12 +579,12 @@ def reference_fallback_con():
 
     con.execute(f"CREATE TABLE raw.studies ({STUDIES_DDL})")
     con.execute(
-        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 20) + ")",
+        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 21) + ")",
         [
             "NCT03000000", "PHASE2", "COMPLETED", "INTERVENTIONAL", "2020-01-01", "2021-01-01",
             "A diabetes trial", "A diabetes trial, officially",
             "Single Group Assignment", "Treatment", "Non-Randomized", "None", 60, "Actual",
-            False, "All", "18 Years", "75 Years", "Adults with type 2 diabetes", None,
+            False, "All", "18 Years", "75 Years", "Adults with type 2 diabetes", None, None,
         ],
     )
     con.execute(

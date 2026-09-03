@@ -19,12 +19,14 @@ Each spec states its own status at the top. In short:
 | [`USDM_ENDPOINTS_API_SPEC.md`](USDM_ENDPOINTS_API_SPEC.md) | **implemented** (phases 1–2; estimands and composites are not) | the design of record for the USDM 4.0 projection and its API |
 | [`EVENT_SEMANTICS_SPEC.md`](EVENT_SEMANTICS_SPEC.md) | **implemented** (phases A–C; phase D unscheduled) | the event axis for time-to-event endpoints: what stops the clock, and why "PFS" is not "tumour burden" |
 | [`USDM_PROJECTION_INTEGRITY_SPEC.md`](USDM_PROJECTION_INTEGRITY_SPEC.md) | **implemented** | announced defaults, per-attribute `derived` flags, timepoint roles, and the v2 extension profile |
+| [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md) | **implemented** | the results section: landing it, conforming it, normalising reported spread into a standard deviation, and `endpoints stats` |
 | [`COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) | **not implemented** | decomposing composite endpoints into their components — a proposal, gated on a measurement that needs a live pull |
+| [`RESULTS_CORRELATION_ROADMAP.md`](RESULTS_CORRELATION_ROADMAP.md) | **partly shipped** (D4–D9) | the menu the results spec was chosen from, and what was decided against |
 
 Read them in that order if you are new to the project: the first two explain
 how the pipeline gets its data and what it emits, the next two are corrections
-made after validating the projection against a real trial, and the last is a
-proposal.
+made after validating the projection against a real trial, the fifth is what
+the pipeline does with what trials reported, and the last two are proposals.
 
 ### Conventions
 
@@ -43,9 +45,12 @@ Beyond the composite spec above, three CLI commands are declared and exit with
 a message: `endpoints query`, `endpoints export`, and `endpoints review
 resolve`. See [`USAGE.md`](USAGE.md#not-implemented) for what to use instead.
 
-Two measurements are owed by specs that are otherwise implemented, and both
-need an environment that can reach an ingestion backend: the MeSH tree-prefix
-diff against real conditions
-([`SAMPLING_AND_TA_RESOLUTION_SPEC.md`](SAMPLING_AND_TA_RESOLUTION_SPEC.md#still-owed))
-and event coverage on event-family rows
-([`EVENT_SEMANTICS_SPEC.md`](EVENT_SEMANTICS_SPEC.md#migration-and-measurement)).
+Three measurements are owed by specs that are otherwise implemented, and all
+three need an environment that can reach an ingestion backend: the MeSH
+tree-prefix diff against real conditions
+([`SAMPLING_AND_TA_RESOLUTION_SPEC.md`](SAMPLING_AND_TA_RESOLUTION_SPEC.md#still-owed)),
+event coverage on event-family rows
+([`EVENT_SEMANTICS_SPEC.md`](EVENT_SEMANTICS_SPEC.md#migration-and-measurement)),
+and the four results-section numbers
+([`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md#the-gate)) — the last of
+which has a command, `endpoints results coverage`, waiting to take it.

@@ -10,8 +10,9 @@ today.)
 
 ```bash
 uv run endpoints vocab validate                    # writes vocab.*
-uv run endpoints pull --phase 3 --limit 500         # writes raw.*
+uv run endpoints pull --phase 3 --limit 500         # writes raw.* (incl. the results section)
 uv run endpoints conform                            # writes conformed.endpoints / conformed.review_queue
+uv run endpoints results conform                    # writes conformed.endpoint_results / endpoint_dispersion
 ```
 
 Want a therapeutic area with a denser efficacy signal to look at, instead of
@@ -313,3 +314,116 @@ SELECT * FROM vocab.matching_confidence_floor;                       -- exact/sy
 SELECT * FROM vocab.term_precedence WHERE dimension = 'form' ORDER BY rank;
 SELECT * FROM vocab.form_disambiguation;                             -- responder vs incidence, etc.
 ```
+
+## Endpoint variability
+
+What the trials in a group actually reported, once `results conform` has run.
+`endpoints stats` is the packaged version of these
+([`USAGE.md`](USAGE.md#endpoint-variability)); this is what it queries, for
+when you want a different cut.
+
+**Read the caveat below first**, and the one above it: these see only rows that
+conformed *and* whose trial posted results, and the intersection is narrower
+than either.
+
+**Which endpoints have enough reported dispersion to be worth asking about**
+
+```sql
+SELECT r.measurement_id, r.form_id,
+       count(DISTINCT r.nct_id) AS studies,
+       count(*) FILTER (WHERE d.sd_estimate IS NOT NULL) AS arms_with_sd,
+       count(*) AS arms
+FROM conformed.endpoint_dispersion d
+JOIN conformed.endpoint_results r ON r.result_id = d.result_id
+WHERE r.result_kind = 'outcome'
+GROUP BY 1, 2 HAVING arms_with_sd >= 5
+ORDER BY arms_with_sd DESC LIMIT 20;
+```
+
+**The SD distribution for one endpoint, pooled only within a unit**
+
+`coalesce(si_scale_id, scale_id)` is the pooling unit -- the converted one where
+`scales.yaml` declares a conversion, the reported one where it does not. Never
+group on `scale_id` alone unless you want litres and millilitres in one median.
+
+```sql
+SELECT r.form_id,
+       coalesce(d.si_scale_id, d.scale_id) AS unit,
+       count(DISTINCT r.nct_id) AS studies,
+       count(*) AS arms,
+       median(coalesce(d.sd_estimate_si, d.sd_estimate)) AS sd_median,
+       quantile_cont(coalesce(d.sd_estimate_si, d.sd_estimate), 0.25) AS sd_q1,
+       quantile_cont(coalesce(d.sd_estimate_si, d.sd_estimate), 0.75) AS sd_q3
+FROM conformed.endpoint_dispersion d
+JOIN conformed.endpoint_results r ON r.result_id = d.result_id
+WHERE r.measurement_id = 'fev1' AND r.result_kind = 'outcome'
+  AND d.sd_estimate IS NOT NULL AND d.sd_scale = 'arithmetic'
+GROUP BY 1, 2 ORDER BY arms DESC;
+```
+
+**How each SD was arrived at** -- a library built mostly out of range-derived
+estimates is a different object from one built out of reported SDs
+
+```sql
+SELECT sd_method, sd_is_derived, sd_is_approximate, count(*)
+FROM conformed.endpoint_dispersion WHERE sd_estimate IS NOT NULL
+GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+```
+
+**Where the dispersion went** -- the denominator, by reason
+
+```sql
+SELECT sd_skip_reason, count(*) FROM conformed.endpoint_dispersion
+WHERE sd_estimate IS NULL GROUP BY 1 ORDER BY 2 DESC;
+```
+
+**Reported outcomes that were never registered** -- the queue, as a finding
+
+```sql
+SELECT nct_id, title_raw, measurement_id FROM conformed.results_review_queue
+WHERE reason = 'unlinked_to_planned' ORDER BY nct_id LIMIT 20;
+```
+
+**Every non-inferiority margin used for one endpoint, with the trials behind it**
+
+```sql
+SELECT r.nct_id, a.param_type, a.non_inferiority_type, a.non_inferiority_description
+FROM raw.outcome_analyses a
+JOIN conformed.endpoint_results r
+  ON r.source_id = a.outcome_id AND r.result_kind = 'outcome'
+WHERE a.non_inferiority AND r.measurement_id = 'fev1';
+```
+
+(`endpoints stats --analyses` parses the margin out of that description where
+it can, and shows the description where it cannot.)
+
+**Baseline variability, which is a different quantity** -- never substitute it
+for a change-score SD without saying so
+
+```sql
+SELECT r.measurement_id, coalesce(d.si_scale_id, d.scale_id) AS unit,
+       count(DISTINCT r.nct_id) AS studies, median(coalesce(d.sd_estimate_si, d.sd_estimate)) AS sd
+FROM conformed.endpoint_dispersion d
+JOIN conformed.endpoint_results r ON r.result_id = d.result_id
+WHERE r.result_kind = 'baseline' AND d.sd_estimate IS NOT NULL
+GROUP BY 1, 2 ORDER BY studies DESC LIMIT 20;
+```
+
+### The caveat that goes with all of these
+
+Three biases stack, and the aggregate is over their intersection:
+
+1. **Not every trial posts results.** Around 70% of those under mandatory
+   reporting do, and industry sponsors comply better than academic ones.
+2. **Not every endpoint conforms.** Measurement coverage is 64.5% on the
+   unbiased sample, head-weighted.
+3. **Not every posted result carries a usable dispersion.** `sd_skip_reason`
+   says why, per row.
+
+`endpoints stats` prints the third denominator on every group; the first two
+are what [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md#the-statistics-honestly)
+and [`../vocab/README.md`](../vocab/README.md) are for. And `population` is not
+a structured axis on either side of the warehouse, so none of these can narrow
+to a per-protocol or enrichment population -- an SD pooled across a
+severe-disease enrichment population and a broad one is pooled across a real
+difference.

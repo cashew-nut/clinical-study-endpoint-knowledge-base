@@ -448,12 +448,12 @@ def test_usdm_coverage_reports_defaulted_tag_counts(tmp_path):
     write_vocab_tables(con, load_vocab(default_vocab_dir()), vocab_dir=default_vocab_dir())
     con.execute(f"CREATE TABLE raw.studies ({STUDIES_DDL})")
     con.execute(
-        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 20) + ")",
+        "INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * 21) + ")",
         [
             "NCT03000000", "PHASE2", "COMPLETED", "INTERVENTIONAL", "2020-01-01", "2021-01-01",
             "A diabetes trial", "A diabetes trial, officially",
             "Single Group Assignment", "Treatment", "Non-Randomized", "None", 60, "Actual",
-            False, "All", "18 Years", "75 Years", "Adults with type 2 diabetes", None,
+            False, "All", "18 Years", "75 Years", "Adults with type 2 diabetes", None, None,
         ],
     )
     con.execute(

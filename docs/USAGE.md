@@ -9,6 +9,8 @@ the result, see [`QUERY_CHEATSHEET.md`](QUERY_CHEATSHEET.md).
 * [Therapeutic areas](#therapeutic-areas)
 * [The vocabulary](#the-vocabulary)
 * [Conforming endpoints](#conforming-endpoints)
+* [The results section](#the-results-section)
+* [Endpoint variability](#endpoint-variability)
 * [Projecting to USDM 4.0](#projecting-to-usdm-40)
 * [Serving the API](#serving-the-api)
 * [Not implemented](#not-implemented)
@@ -20,9 +22,9 @@ runs first. Three schemas:
 
 | schema | written by | holds |
 |---|---|---|
-| `raw` | `pull` | studies, design outcomes, conditions, MeSH browse rows, the pull log |
+| `raw` | `pull` | studies, design outcomes, conditions, MeSH browse rows, the results section (`outcome_*`, `baseline_measurements`), the pull log |
 | `vocab` | `vocab validate` | the endpoint library, loaded from `vocab/*.yaml` |
-| `conformed` | `conform`, `pull` | `endpoints`, `review_queue`, `study_therapeutic_area` |
+| `conformed` | `conform`, `results conform`, `pull` | `endpoints`, `review_queue`, `study_therapeutic_area`, `endpoint_results`, `endpoint_dispersion`, `results_review_queue` |
 
 Every command that touches the warehouse takes `--warehouse <path>`, so several
 can sit side by side (one per therapeutic area, one per vocabulary revision):
@@ -47,6 +49,9 @@ uv run endpoints pull --phase 3 --limit 500 --org "Pfizer,AbbVie"
 
 # Explicitly use AACT instead of the public API
 uv run endpoints pull --phase 3 --limit 500 --source aact
+
+# Skip the results section (saves warehouse size, never network)
+uv run endpoints pull --phase 3 --limit 500 --no-results
 ```
 
 Deliberately thin: fetch, filter, upsert. Everything downstream is
@@ -351,6 +356,108 @@ Each entry carries the raw strings, the reason, the best semantic candidate and
 its score -- so the queue doubles as the shortlist for the next vocabulary
 round. Resolving entries from the CLI (`review resolve`) is
 [not implemented](#not-implemented); work the queue with SQL for now.
+
+## The results section
+
+A `pull` also lands what each study *reported*, for the studies that posted
+results -- five tables mirroring the protocol side's shape. On by default,
+because the CT.gov API returns the results section inside the payload the pull
+already fetches; `--no-results` opts out, and saves warehouse size rather than
+network.
+
+| table | grain | carries |
+|---|---|---|
+| `raw.outcome_measures` | one reported outcome | title, description, time frame, `param_type`, `dispersion_type`, `unit_of_measure` |
+| `raw.outcome_groups` | one arm within one outcome | title, description, `n` |
+| `raw.outcome_measurements` | one arm × class × category | `param_value`, `dispersion_value`, the interval limits |
+| `raw.outcome_analyses` | one statistical comparison | the arms compared, `p_value`, effect `param_type` and value, CI, method, non-inferiority type and description |
+| `raw.baseline_measurements` | one baseline characteristic × arm | title, units, `param_type`, `param_value`, `dispersion_type`, `dispersion_value`, `n` |
+
+`raw.studies.has_results` carries the registry's own claim, whether or not the
+section itself was landed.
+
+```bash
+uv run endpoints results conform
+```
+
+Conforms the reported titles through the *same* engine `conform` uses -- no
+second matcher -- and writes three tables:
+
+* **`conformed.endpoint_results`**, one row per reported outcome and per
+  baseline characteristic, carrying the same dimension columns as
+  `conformed.endpoints` plus a link back to the planned endpoint:
+  `link_method` is `exact_title` (the reported title *is* a planned `measure`),
+  `conformed_measurement` (different strings, same conformed measurement in the
+  same study), or NULL.
+* **`conformed.endpoint_dispersion`**, one row per arm-level measurement, with
+  an `sd_estimate` and `sd_method` / `sd_is_derived` / `sd_is_approximate` /
+  `sd_inputs` recording exactly how it was arrived at -- or `sd_skip_reason`
+  where none could be.
+* **`conformed.results_review_queue`**, for a reported title that conforms
+  nowhere (`measurement_unmatched`) and for a reported outcome with no planned
+  counterpart at all (`unlinked_to_planned`). Its own table, not
+  `conformed.review_queue`, which `conform` replaces wholesale.
+
+Run `conform` first, so results rows have planned endpoints to link to.
+
+```bash
+uv run endpoints results coverage
+```
+
+The four numbers this tier was gated on, measured against your warehouse: what
+share of conformed studies posted results; what share of reported titles match
+a planned one; the exact `param_type` / `dispersion_type` value sets in play
+and which of them the vocabulary does not yet recognise; and what share of
+`unit_of_measure` strings normalise against `scales.yaml`. Section 3's
+"not recognised" list is the input to the next vocabulary round --
+see [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md#the-gate).
+
+## Endpoint variability
+
+```bash
+uv run endpoints stats --measurement fev1
+uv run endpoints stats --measurement fev1 --form change_from_baseline --scale litres
+uv run endpoints stats --measurement fev1 --ta respiratory --phase PHASE3
+uv run endpoints stats --measurement fev1 --source baseline
+uv run endpoints stats --measurement fev1 --analyses
+uv run endpoints stats --measurement fev1 --json
+```
+
+The empirical distribution of arm-level variability for one endpoint, across
+every trial that reported a usable one.
+
+```
+measurement=fev1, source=outcome
+
+  change_from_baseline · litres  (converted via scales.yaml)
+    studies 2      arms 4      participants 778
+    SD      median 0.3   IQR 0.2793-0.31   range 0.247-0.31
+            reported 3 · from_inter_quartile_range 1
+    timepoints  single_fixed (2)
+    coverage    2 of 2 conformed studies reported a usable dispersion (100.0%)
+
+No SD from: dispersion_type_unrecognised 1
+```
+
+One block per **(form, unit)** group, always: the SD of a change from baseline
+is not the SD of a raw value, and the SD in litres is not the SD in
+millilitres. `--form` and `--scale` narrow the selection; they are not needed
+to make the output safe. Where `scales.yaml` declares a conversion the group is
+the converted unit and says so.
+
+| flag | what it does |
+|---|---|
+| `--source baseline` | baseline characteristics instead of reported outcomes -- a larger denominator and a *different quantity*, never a fallback |
+| `--analyses` | effect sizes, p-values and non-inferiority margins instead of the SD distribution |
+| `--only-reported` | drop every derived SD, leaving only the ones trials reported outright |
+| `--no-approximate` | drop the Wan et al. IQR/range estimates, which are approximations rather than conversions |
+| `--json` | the same report as JSON, including every group's coverage |
+
+The **coverage** line is the share of conformed studies *for that endpoint*
+that reported a usable dispersion. Narrowing with `--only-reported` shrinks the
+numerator and leaves the denominator alone, which is the point: a `stats`
+output without its denominator is a machine for producing confident numbers off
+eight arms.
 
 ## Projecting to USDM 4.0
 
