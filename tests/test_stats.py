@@ -21,6 +21,7 @@ from clinical_endpoints.results.stats import (
     StatsFilters,
     analysis_distribution,
     sd_distribution,
+    stratify_by_drug_class,
 )
 
 runner = CliRunner()
@@ -355,3 +356,107 @@ def test_results_conform_cli_reports_what_it_wrote(results_warehouse_path, tmp_p
     assert "conformed.endpoint_results" in result.output
     assert "conformed.endpoint_dispersion" in result.output
     assert "Links to planned endpoints" in result.output
+
+
+# --------------------------------------------------- the drug-class axis
+
+
+def test_drug_class_filter_narrows_to_studies_that_used_the_class(results_con):
+    """The STUDY tier, deliberately: it narrows to trials that used the class
+    and does not claim the SD came from an arm that received it
+    (docs/DRUG_CLASS_SPEC.md, "Class is an arm property")."""
+    everything = sd_distribution(results_con, StatsFilters(measurement="fev1"))
+    narrowed = sd_distribution(
+        results_con, StatsFilters(measurement="fev1", drug_class="muscarinic_antagonist")
+    )
+    assert narrowed["studies_conformed"] >= 1
+    assert narrowed["studies_conformed"] <= everything["studies_conformed"]
+
+
+def test_drug_class_filter_on_a_class_no_study_used_is_empty_not_an_error(results_con):
+    report = sd_distribution(
+        results_con, StatsFilters(measurement="fev1", drug_class="car_t_therapy")
+    )
+    assert report["groups"] == []
+    assert report["studies_conformed"] == 0
+
+
+def test_stratify_by_drug_class_returns_one_report_per_class(results_con):
+    strata = stratify_by_drug_class(results_con, StatsFilters(measurement="fev1"))
+    classes = [class_id for class_id, _report in strata]
+    assert "muscarinic_antagonist" in classes
+    # Each stratum is a full report, carrying its own denominator -- the rule
+    # that keeps a thin stratum from reading as a confident one.
+    for _class_id, report in strata:
+        assert "studies_conformed" in report
+
+
+def test_stratify_by_drug_class_respects_the_kind(results_con):
+    """Stratifying over a mixture of kinds would put "PD-1 inhibitor" and
+    "monoclonal antibody" in adjacent blocks as though they were alternatives."""
+    mechanisms = dict(stratify_by_drug_class(results_con, StatsFilters(measurement="fev1")))
+    controls = dict(
+        stratify_by_drug_class(results_con, StatsFilters(measurement="fev1"), kind="control")
+    )
+    assert set(mechanisms) & set(controls) == set()
+    assert "placebo" in controls
+
+
+def test_stratify_by_drug_class_is_capped(results_con):
+    strata = stratify_by_drug_class(
+        results_con, StatsFilters(measurement="fev1"), kind="modality", limit=1
+    )
+    assert len(strata) <= 1
+
+
+def test_stats_cli_stratifies_by_drug_class(results_warehouse_path):
+    result = runner.invoke(
+        app,
+        ["stats", "--measurement", "fev1", "--by", "drug-class",
+         "--warehouse", results_warehouse_path],
+    )
+    assert result.exit_code == 0, result.output
+    assert "muscarinic_antagonist" in result.output
+    # The reminder that strata overlap is not decoration: a combination trial
+    # appears under every class it used, so the blocks do not sum to the corpus.
+    assert "not disjoint" in result.output
+
+
+def test_stats_cli_stratified_json_carries_the_class_on_each_stratum(results_warehouse_path):
+    result = runner.invoke(
+        app,
+        ["stats", "--measurement", "fev1", "--by", "drug-class", "--json",
+         "--warehouse", results_warehouse_path],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["stratified_by"] == "drug_class"
+    assert payload["kind"] == "mechanism"
+    assert all("drug_class_id" in s for s in payload["strata"])
+
+
+def test_stats_cli_says_so_when_nothing_covers_the_selection(results_warehouse_path):
+    result = runner.invoke(
+        app,
+        ["stats", "--measurement", "fev1", "--by", "drug-class", "--by-kind", "modality",
+         "--warehouse", results_warehouse_path],
+    )
+    assert result.exit_code == 0, result.output
+    # Either it found modality strata or it said plainly that it found none --
+    # never an empty screen.
+    assert "modality" in result.output or "──" in result.output
+
+
+def test_drug_class_filter_without_a_resolved_axis_says_so(tmp_path, results_warehouse_path):
+    """Rather than surfacing DuckDB's CatalogException at the caller."""
+    import shutil
+
+    from clinical_endpoints.db import connect
+
+    path = tmp_path / "no_classes.duckdb"
+    shutil.copy(results_warehouse_path, path)
+    con = connect(path)
+    con.execute("DROP TABLE conformed.study_drug_class")
+    with pytest.raises(NotComputed, match="study_drug_class"):
+        sd_distribution(con, StatsFilters(measurement="fev1", drug_class="statin"))
+    con.close()

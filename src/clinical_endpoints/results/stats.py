@@ -31,7 +31,7 @@ baseline` selects the second; nothing silently substitutes it for the first.
 from __future__ import annotations
 
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 import duckdb
@@ -58,6 +58,10 @@ class StatsFilters:
     timepoint: Optional[str] = None
     ta: Optional[str] = None
     phase: Optional[str] = None
+    #: `--drug-class`: narrow to studies whose interventions resolved to this
+    #: class. Always the STUDY tier (conformed.study_drug_class), never the arm
+    #: tier -- see `_filter_sql` and docs/DRUG_CLASS_SPEC.md.
+    drug_class: Optional[str] = None
     source: str = "outcome"
     #: Wan et al.'s IQR/range estimators are approximations from order
     #: statistics. Included by default and always counted separately, so a
@@ -116,6 +120,18 @@ def _filter_sql(filters: StatsFilters) -> tuple[str, list]:
     if filters.phase:
         where.append("r.nct_id IN (SELECT nct_id FROM raw.studies WHERE phase = ?)")
         params.append(filters.phase)
+    if filters.drug_class:
+        # Study tier, deliberately. A dispersion row is per ARM, so the tempting
+        # join is conformed.arm_drug_class -- but the results section's
+        # `outcome_groups.group_key` is a results group id linked to a protocol
+        # arm only by title, and nobody has measured how often those titles
+        # agree (docs/DRUG_CLASS_SPEC.md, "Class is an arm property"). Narrowing
+        # to studies that USED this class is a claim the data supports; claiming
+        # the SD came from an arm that RECEIVED it is not.
+        where.append(
+            "r.nct_id IN (SELECT nct_id FROM conformed.study_drug_class WHERE drug_class_id = ?)"
+        )
+        params.append(filters.drug_class)
     return " AND ".join(where), params
 
 
@@ -132,19 +148,26 @@ class NotComputed(RuntimeError):
     """`endpoints results conform` has not been run against this warehouse."""
 
 
-def _require(con: duckdb.DuckDBPyConnection) -> None:
+def _require(con: duckdb.DuckDBPyConnection, filters: Optional[StatsFilters] = None) -> None:
     for table in ("endpoint_results", "endpoint_dispersion"):
         if not _table_exists(con, "conformed", table):
             raise NotComputed(
                 f"conformed.{table} is empty -- run `endpoints results conform` first "
                 "(and `endpoints pull` without --no-results before that)"
             )
+    if filters is not None and filters.drug_class and not _table_exists(
+        con, "conformed", "study_drug_class"
+    ):
+        raise NotComputed(
+            "conformed.study_drug_class is missing, so --drug-class has nothing to filter on "
+            "-- run `endpoints vocab validate` and `endpoints pull` first"
+        )
 
 
 def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> dict:
     """The arm-level SD distribution for the selected endpoint, one block per
     (form, unit) group, each with its own denominator."""
-    _require(con)
+    _require(con, filters)
     if filters.source not in SOURCES:
         raise ValueError(f"--source must be one of {SOURCES}, got {filters.source!r}")
 
@@ -277,6 +300,67 @@ def _quantile(values: list[float], q: float) -> Optional[float]:
     return values[low] + (values[high] - values[low]) * (position - low)
 
 
+#: How many classes `stratify_by_drug_class` will report side by side. A
+#: stratification with thirty blocks is not a comparison, it is a table dump.
+MAX_STRATA = 8
+
+
+def stratify_by_drug_class(
+    con: duckdb.DuckDBPyConnection,
+    filters: StatsFilters,
+    *,
+    kind: str = "mechanism",
+    analyses: bool = False,
+    limit: int = MAX_STRATA,
+) -> list[tuple[str, dict]]:
+    """Run the selected distribution once per drug class present in the filtered
+    corpus, most-studied first. Returns [(drug_class_id, report), ...].
+
+    This is `--by drug-class`, and it is a different question from
+    `--drug-class`. The filter answers "what is the SD in GLP-1 trials"; the
+    stratifier answers "does the SD differ between classes at all", which on the
+    dispersion side is the more useful of the two: the SD of change-from-baseline
+    HbA1c is mostly a property of the population, the assay and the timepoint,
+    not of the drug, so splitting a thin SD library by class mostly buys smaller
+    denominators. Where the strata DO differ sharply, that is evidence the groups
+    were never exchangeable and the pooled number was already wrong.
+
+    On `--analyses` the relationship inverts and the stratifier is the point:
+    pooling treatment effects across mechanisms is not a variance question but a
+    category error, and a median effect across "all drugs" has no referent.
+
+    `kind` defaults to `mechanism` because that is the axis that carries signal.
+    Stratifying by a mixture of kinds would put "PD-1 inhibitor" and "monoclonal
+    antibody" in adjacent blocks as though they were alternatives.
+    """
+    _require(con)
+    if not _table_exists(con, "conformed", "study_drug_class"):
+        raise NotComputed(
+            "conformed.study_drug_class is missing -- run `endpoints vocab validate` and "
+            "`endpoints pull` before stratifying by drug class"
+        )
+
+    where, params = _filter_sql(filters)
+    class_rows = con.execute(
+        f"""
+        SELECT c.drug_class_id, count(DISTINCT r.nct_id) AS studies
+        FROM conformed.endpoint_results r
+        JOIN conformed.study_drug_class c ON c.nct_id = r.nct_id
+        WHERE {where} AND c.kind = ?
+        GROUP BY 1 ORDER BY studies DESC, c.drug_class_id
+        LIMIT ?
+        """,
+        params + [kind, max(limit, 1)],
+    ).fetchall()
+
+    compute = analysis_distribution if analyses else sd_distribution
+    out: list[tuple[str, dict]] = []
+    for drug_class_id, _studies in class_rows:
+        stratum = replace(filters, drug_class=drug_class_id)
+        out.append((drug_class_id, compute(con, stratum)))
+    return out
+
+
 def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> dict:
     """D9: the effect sizes, p-values and non-inferiority margins reported for
     the selected endpoint.
@@ -287,7 +371,7 @@ def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters)
     query, and shipping it as a query invites exactly the misuse the audit
     trail exists to prevent.
     """
-    _require(con)
+    _require(con, filters)
     if not _table_exists(con, "raw", "outcome_analyses"):
         raise NotComputed("raw.outcome_analyses is empty -- run `endpoints pull` first")
 

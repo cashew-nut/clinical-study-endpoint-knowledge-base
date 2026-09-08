@@ -85,6 +85,13 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         columns=("id", "label", "definition", "precedence", "notes"),
     ),
     DimensionSpec(
+        filename="drug_classes.yaml",
+        dimension="drug_class",
+        table="drug_classes",
+        columns=("id", "label", "inline_label", "definition", "kind", "parent", "precedence", "notes"),
+        references={"parent": "drug_class"},
+    ),
+    DimensionSpec(
         filename="timepoint_patterns.yaml",
         dimension="timepoint_pattern",
         table="timepoint_patterns",
@@ -94,6 +101,16 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
 
 # ta_mesh_mapping.yaml is not a term list, so it is loaded separately.
 MAPPING_FILENAME = "ta_mesh_mapping.yaml"
+
+# drug_class_mesh_mapping.yaml is not a term list either -- it is the layered
+# intervention -> drug-class mapping, the exact counterpart of MAPPING_FILENAME
+# for the drug-class axis (docs/DRUG_CLASS_SPEC.md). Kept as its own file rather
+# than folded into ta_mesh_mapping.yaml because the two answer different
+# questions off different source tables: therapeutic area comes from the study's
+# CONDITIONS, drug class from its INTERVENTIONS, and the one place they overlap
+# (vaccines, which are only derivable from the intervention) is already settled
+# in ta_mesh_mapping.yaml's `intervention_rules`.
+DRUG_CLASS_MAPPING_FILENAME = "drug_class_mesh_mapping.yaml"
 
 # matching.yaml is not a term list either: it is the contract for HOW the term
 # files are matched (whole-token synonyms, case-sensitive short acronyms,
@@ -122,8 +139,37 @@ NAMED_ENDPOINTS_FILENAME = "named_endpoints.yaml"
 
 ALL_FILENAMES: tuple[str, ...] = (
     tuple(d.filename for d in DIMENSIONS)
-    + (MAPPING_FILENAME, MATCHING_FILENAME, USDM_TEMPLATES_FILENAME, NAMED_ENDPOINTS_FILENAME)
+    + (MAPPING_FILENAME, DRUG_CLASS_MAPPING_FILENAME, MATCHING_FILENAME,
+       USDM_TEMPLATES_FILENAME, NAMED_ENDPOINTS_FILENAME)
 )
+
+# Closed value set for drug_classes.yaml's mandatory `kind`. The split is the
+# decision docs/DRUG_CLASS_SPEC.md argues for: mechanism (the target acted on)
+# is the axis that carries signal for endpoint comparison, pharmacologic is the
+# coarse action level CT.gov's browse branches give directly, modality is what
+# kind of thing the product is, and control names the comparator arms so they
+# can be excluded. Structural class is deliberately absent.
+DRUG_CLASS_KINDS = frozenset({"mechanism", "pharmacologic", "modality", "control"})
+
+
+def normalise_intervention_type(value: str | None) -> str | None:
+    """Fold an intervention_type for `modality_rules` lookup.
+
+    Lives here, next to the closed value sets, because BOTH sides need the same
+    fold and they are in different layers: the loader writes the key when it
+    persists drug_class_mesh_mapping.yaml, and drug_class/resolver.py computes
+    it from a raw.interventions row at match time. A drift between the two is
+    silent -- every modality lookup simply misses -- so there is one function.
+
+    The fold is case- and separator-insensitive because the two backends spell
+    these differently (DIETARY_SUPPLEMENT vs "Dietary Supplement"), the same way
+    they spell PRIMARY/Primary differently -- see ingest/results.py.
+    """
+    if not value:
+        return None
+    folded = value.replace("_", " ").replace("-", " ")
+    return " ".join(folded.strip().lower().split()) or None
+
 
 # Closed value sets for matching.yaml. `named_endpoint` is step 0 of
 # conform_row (docs/EVENT_SEMANTICS_SPEC.md): identification is exact (a

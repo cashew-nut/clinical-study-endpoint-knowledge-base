@@ -51,6 +51,14 @@ _NCT_KEYED_RAW_TABLES = (
     "browse_conditions",
     "browse_interventions",
     "browse_condition_branches",
+    # The interventions (docs/DRUG_CLASS_SPEC.md), for the same reason: a
+    # `--ta` post-filter that left these behind would leave the drug-class
+    # resolver classifying studies the pull went on to discard.
+    "interventions",
+    "intervention_other_names",
+    "arm_interventions",
+    "browse_intervention_ancestors",
+    "browse_intervention_branches",
     # The results section (docs/ENDPOINT_RESULTS_SPEC.md). A `--ta` post-filter
     # that left these behind would leave `endpoints stats` computing over
     # studies the pull went on to discard.

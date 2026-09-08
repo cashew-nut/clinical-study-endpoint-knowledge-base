@@ -44,6 +44,7 @@ from clinical_endpoints.results.stats import (
     StatsFilters,
     analysis_distribution,
     sd_distribution,
+    stratify_by_drug_class,
 )
 from clinical_endpoints.usdm.codes import UnknownOutcomeType
 from clinical_endpoints.usdm.envelope import module_envelope, wrapper_envelope
@@ -67,6 +68,11 @@ from clinical_endpoints.ta.resolver import (
     run_ta_resolution,
     tree_availability_summary,
 )
+from clinical_endpoints.drug_class.resolver import (
+    coverage_summary as drug_class_coverage_summary,
+    diff_ancestors,
+    run_drug_class_resolution,
+)
 
 SOURCES = ("aact", "ctgov_api")
 
@@ -76,6 +82,9 @@ console = Console()
 vocab_app = typer.Typer(no_args_is_help=True, help="Vocabulary sampling / validation.")
 review_app = typer.Typer(no_args_is_help=True, help="Review-queue management.")
 ta_app = typer.Typer(no_args_is_help=True, help="Therapeutic-area mapping.")
+drug_class_app = typer.Typer(
+    no_args_is_help=True, help="Drug-class resolution: distribution, coverage, and the ancestor diff."
+)
 usdm_app = typer.Typer(no_args_is_help=True, help="CDISC USDM 4.0 projection.")
 results_app = typer.Typer(
     no_args_is_help=True, help="The results section: conforming and coverage."
@@ -83,10 +92,16 @@ results_app = typer.Typer(
 app.add_typer(vocab_app, name="vocab")
 app.add_typer(review_app, name="review")
 app.add_typer(ta_app, name="ta")
+app.add_typer(drug_class_app, name="drug-class")
 app.add_typer(usdm_app, name="usdm")
 app.add_typer(results_app, name="results")
 
 USDM_ENVELOPES = ("module", "wrapper")
+
+#: What `stats --by` accepts. One entry today; the option exists rather than a
+#: bare `--by-drug-class` flag because the *next* stratifier (phase, TA, calendar
+#: era) is the same shape and should not need a new flag.
+STATS_STRATIFIERS = ("drug-class",)
 
 
 def _determinate_progress() -> Progress:
@@ -137,6 +152,17 @@ def _table_exists(con, schema: str, table: str) -> bool:
     )
 
 
+def _vocab_drug_class_tables_ready(con) -> bool:
+    """Whether `vocab validate` has loaded the drug-class mapping into this
+    warehouse. Checked separately from the TA tables because a warehouse
+    validated by an older release has the TA tables and not these, and the pull
+    should degrade to skipping drug classes rather than failing."""
+    return all(
+        _table_exists(con, "vocab", table)
+        for table in ("drug_classes", "drug_class_agent_names", "drug_class_name_patterns")
+    )
+
+
 def _vocab_ta_tables_ready(con) -> bool:
     """Whether `vocab validate` has already loaded the TA mapping into this
     warehouse -- the TA resolver reads vocab.ta_mesh_* tables, not the YAML
@@ -161,6 +187,14 @@ def pull(
         help="Therapeutic-area filter (comma-separated ids from therapeutic_areas.yaml, "
         "e.g. oncology,respiratory). Requires `endpoints vocab validate` to have already "
         "been run against this warehouse.",
+    ),
+    drug_class: Optional[str] = typer.Option(
+        None,
+        "--drug-class",
+        help="Drug-class filter (comma-separated ids from drug_classes.yaml, e.g. "
+        "glp1_receptor_agonist,sglt2_inhibitor). Applied client-side before --limit, "
+        "same as --ta -- neither backend can express it server-side. Requires "
+        "`endpoints vocab validate` to have already been run against this warehouse.",
     ),
     org: Optional[str] = typer.Option(
         None,
@@ -196,10 +230,11 @@ def pull(
     ),
 ) -> None:
     """Pull filtered studies + design_outcomes/conditions into raw.*, log the pull,
-    and (once `vocab validate` has loaded the TA mapping) resolve therapeutic areas
-    for the pulled studies into conformed.study_therapeutic_area -- filtering down
-    to `--ta` and/or `--org` if given. Upserts by default; `--replace` discards
-    everything raw.* already held instead."""
+    and (once `vocab validate` has loaded the mappings) resolve therapeutic areas
+    into conformed.study_therapeutic_area and drug classes into
+    conformed.study_drug_class -- filtering down to `--ta`, `--drug-class` and/or
+    `--org` if given. Upserts by default; `--replace` discards everything raw.*
+    already held instead."""
     if source not in SOURCES:
         console.print(f"[red]--source must be one of {SOURCES}, got {source!r}[/red]")
         raise typer.Exit(code=1)
@@ -212,6 +247,10 @@ def pull(
     if org:
         org_ids = tuple(o.strip() for o in org.split(",") if o.strip())
 
+    class_ids: Optional[tuple] = None
+    if drug_class:
+        class_ids = tuple(c.strip() for c in drug_class.split(",") if c.strip())
+
     since_date: Optional[dt.date] = None
     if since:
         try:
@@ -222,8 +261,8 @@ def pull(
 
     phases = tuple(p.strip() for p in phase.split(",") if p.strip())
     filters = PullFilters(
-        phases=phases, limit=limit, since=since_date, ta=ta_ids, org=org_ids, replace=replace,
-        with_results=results,
+        phases=phases, limit=limit, since=since_date, ta=ta_ids, org=org_ids,
+        drug_class=class_ids, replace=replace, with_results=results,
     )
 
     con = connect(warehouse)
@@ -244,6 +283,25 @@ def pull(
                 console.print(
                     f"[red]--ta names unknown therapeutic area(s) {unknown}. "
                     f"Valid ids: {sorted(known_tas)}[/red]"
+                )
+                raise typer.Exit(code=1)
+
+        if class_ids:
+            if not _vocab_drug_class_tables_ready(con):
+                console.print(
+                    "[red]--drug-class requires the drug-class vocabulary to already be loaded "
+                    "into this warehouse: run `endpoints vocab validate` first.[/red]"
+                )
+                raise typer.Exit(code=1)
+            known_classes = {
+                row[0] for row in con.execute("SELECT id FROM vocab.drug_classes").fetchall()
+            }
+            unknown = sorted(set(class_ids) - known_classes)
+            if unknown:
+                console.print(
+                    f"[red]--drug-class names unknown drug class(es) {unknown}. "
+                    f"See `endpoints drug-class distribution` or vocab/drug_classes.yaml "
+                    f"for the {len(known_classes)} valid ids.[/red]"
                 )
                 raise typer.Exit(code=1)
 
@@ -292,6 +350,26 @@ def pull(
                 }
                 result["row_counts"] = filter_raw_tables_by_nct_ids(con, set(result["nct_ids"]), keep)
                 ta_summary = run_ta_resolution(con)  # re-derive the distribution for the kept studies only
+
+        drug_class_summary = None
+        if _vocab_drug_class_tables_ready(con):
+            drug_class_summary = run_drug_class_resolution(con)
+            if class_ids:
+                # The same post-filter shape `--ta` uses: the backends filter
+                # while scanning, and this catches anything their (necessarily
+                # partial, on AACT) view of a candidate missed.
+                keep = {
+                    row[0]
+                    for row in con.execute(
+                        "SELECT DISTINCT nct_id FROM conformed.study_drug_class "
+                        "WHERE drug_class_id = ANY(?)",
+                        [list(class_ids)],
+                    ).fetchall()
+                }
+                result["row_counts"] = filter_raw_tables_by_nct_ids(con, set(result["nct_ids"]), keep)
+                drug_class_summary = run_drug_class_resolution(con)
+                if ta_summary is not None:
+                    ta_summary = run_ta_resolution(con)
     except SchemaMigrationError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -370,6 +448,30 @@ def pull(
         console.print(
             "[yellow]Skipped therapeutic-area resolution: run `endpoints vocab validate` "
             "to populate conformed.study_therapeutic_area.[/yellow]"
+        )
+
+    if result.get("interventions_warning"):
+        console.print(f"[yellow]{result['interventions_warning']}[/yellow]")
+    if class_ids:
+        console.print(f"[green]Filtered to --drug-class {list(class_ids)}[/green]")
+    if drug_class_summary is not None:
+        top = list(drug_class_summary["distribution"].items())[:6]
+        dist = ", ".join(f"{class_id}={n}" for class_id, n in top)
+        console.print(
+            f"Drug classes resolved for {drug_class_summary['study_count']} studies "
+            f"({drug_class_summary['classified_studies']} classified) -> "
+            f"conformed.study_drug_class ({dist})"
+        )
+        if drug_class_summary["review_count"]:
+            console.print(
+                f"[yellow]{drug_class_summary['review_count']} intervention(s) matched no "
+                "class -> conformed.drug_class_review_queue. `endpoints drug-class coverage` "
+                "reports the denominator.[/yellow]"
+            )
+    elif not class_ids:
+        console.print(
+            "[yellow]Skipped drug-class resolution: run `endpoints vocab validate` "
+            "to populate conformed.study_drug_class.[/yellow]"
         )
 
 
@@ -570,6 +672,219 @@ def ta_diff_tree(
         console.print(
             "[yellow]No tree-number signal at all in this pull -- nothing to diff against the "
             "regex layer (see vocab/ta_mesh_mapping.yaml's caveats).[/yellow]"
+        )
+
+
+@drug_class_app.command("distribution")
+def drug_class_distribution(
+    kind: Optional[str] = typer.Option(
+        None,
+        "--kind",
+        help="Only classes of this kind: mechanism, pharmacologic, modality or control. "
+        "Mixing kinds in one list compares a mechanism against a modality as if they "
+        "were alternatives, so this is usually what you want.",
+    ),
+    primary_only: bool = typer.Option(
+        False,
+        "--primary-only",
+        help="Count each study once, under its primary class, instead of counting every "
+        "class it matched. Combination therapy is the norm, so the two differ a lot.",
+    ),
+    top: int = typer.Option(30, "--top", help="How many classes to list; 0 = all."),
+    warehouse: str = typer.Option(
+        "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
+    ),
+) -> None:
+    """What the pulled corpus is made of, by drug class.
+
+    Requires `pull` and `vocab validate` to have been run against this warehouse."""
+    con = connect(warehouse)
+    try:
+        if not _table_exists(con, "conformed", "study_drug_class"):
+            console.print(
+                "[red]No conformed.study_drug_class yet -- run `endpoints vocab validate` "
+                "and then `endpoints pull`.[/red]"
+            )
+            raise typer.Exit(code=1)
+
+        where = ["1 = 1"]
+        params: list = []
+        if kind:
+            where.append("c.kind = ?")
+            params.append(kind)
+        if primary_only:
+            where.append("c.is_primary")
+        limit_clause = "" if top <= 0 else f"LIMIT {int(top)}"
+        rows = con.execute(
+            f"""
+            SELECT c.drug_class_id, c.kind, count(DISTINCT c.nct_id) AS studies,
+                   count(DISTINCT CASE WHEN c.is_primary THEN c.nct_id END) AS primary_studies,
+                   count(DISTINCT c.rule_layer) AS layers
+            FROM conformed.study_drug_class c
+            WHERE {" AND ".join(where)}
+            GROUP BY 1, 2 ORDER BY studies DESC, c.drug_class_id
+            {limit_clause}
+            """,
+            params,
+        ).fetchall()
+        coverage = drug_class_coverage_summary(con)
+    finally:
+        con.close()
+
+    if not rows:
+        console.print("[yellow]No drug classes matched that filter.[/yellow]")
+        return
+
+    table = Table(title="Drug classes in this warehouse")
+    table.add_column("class")
+    table.add_column("kind")
+    table.add_column("studies", justify="right")
+    table.add_column("as primary", justify="right")
+    for class_id, class_kind, studies, primary_studies, _layers in rows:
+        table.add_row(class_id, class_kind, f"{studies:,}", f"{primary_studies:,}")
+    console.print(table)
+
+    # The denominator, always: a class list without it is a machine for making a
+    # thin axis look complete (docs/DRUG_CLASS_SPEC.md).
+    console.print(
+        f"{coverage['classified_studies']:,} of {coverage['studies']:,} studies carry at least "
+        f"one named class ({_pct(coverage['classified_studies'], coverage['studies'])}); "
+        f"{coverage['mechanism_studies']:,} carry a mechanism class "
+        f"({_pct(coverage['mechanism_studies'], coverage['studies'])})."
+    )
+    if not coverage["ancestor_studies"]:
+        console.print(
+            "[yellow]No MeSH intervention ancestors in this warehouse, so the mechanism layer "
+            "rested on curated names and INN stems alone. Expected on an AACT pull, which "
+            "publishes no ancestry; on a CT.gov pull it means the API returned none.[/yellow]"
+        )
+    if coverage["review_queue"]:
+        console.print(
+            f"[yellow]{coverage['review_queue']:,} intervention(s) in "
+            "conformed.drug_class_review_queue matched no class at all.[/yellow]"
+        )
+
+
+@drug_class_app.command("coverage")
+def drug_class_coverage_cmd(
+    warehouse: str = typer.Option(
+        "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
+    ),
+    top: int = typer.Option(20, "--top", help="How many unclassified agents to list."),
+) -> None:
+    """How much of the corpus the drug-class axis actually covers, and what it missed.
+
+    The honest half of `distribution`: the review queue is the input to the next
+    vocabulary round, exactly as `endpoints review list` is on the endpoint side."""
+    con = connect(warehouse)
+    try:
+        coverage = drug_class_coverage_summary(con)
+        unclassified = []
+        if _table_exists(con, "conformed", "drug_class_review_queue"):
+            unclassified = con.execute(
+                """
+                SELECT name, count(*) AS n FROM conformed.drug_class_review_queue
+                GROUP BY 1 ORDER BY n DESC, name LIMIT ?
+                """,
+                [max(top, 0)],
+            ).fetchall()
+    finally:
+        con.close()
+
+    if not coverage.get("resolved"):
+        console.print(
+            "[red]No conformed.study_drug_class yet -- run `endpoints vocab validate` "
+            "and then `endpoints pull`.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    studies = coverage["studies"]
+    table = Table(title="Drug-class coverage")
+    table.add_column("measure")
+    table.add_column("studies", justify="right")
+    table.add_column("of corpus", justify="right")
+    for label, value in (
+        ("pulled", studies),
+        ("with >=1 registered intervention", coverage["studies_with_interventions"]),
+        ("with >=1 named class", coverage["classified_studies"]),
+        ("with a mechanism class", coverage["mechanism_studies"]),
+        ("with a control arm named", coverage["control_studies"]),
+        ("with MeSH ancestors (CT.gov only)", coverage["ancestor_studies"]),
+        ("with browse branches (CT.gov only)", coverage["branch_studies"]),
+    ):
+        table.add_row(label, f"{value:,}", _pct(value, studies))
+    console.print(table)
+    console.print(
+        f"{coverage['arm_rows']:,} arm-level class rows in conformed.arm_drug_class; "
+        f"{coverage['review_queue']:,} intervention(s) in the review queue."
+    )
+
+    if unclassified:
+        queue = Table(title="Most frequent unclassified interventions")
+        queue.add_column("intervention")
+        queue.add_column("studies", justify="right")
+        for name, n in unclassified:
+            queue.add_row(name or "(no name)", f"{n:,}")
+        console.print(queue)
+        console.print(
+            "These are the input to the next vocabulary round. Add the ones that recur to "
+            "vocab/drug_class_mesh_mapping.yaml's `agent_names`; do not loosen a pattern to "
+            "absorb them."
+        )
+
+
+@drug_class_app.command("diff-ancestors")
+def drug_class_diff_ancestors(
+    out: str = typer.Option("drug_class_ancestor_diff.csv", "--out", help="CSV output path."),
+    warehouse: str = typer.Option(
+        "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
+    ),
+) -> None:
+    """Run the curated layers alone and NLM's MeSH ancestry alone over every
+    pulled study's interventions, and report every disagreement, most frequent
+    first -- each one is either a wrong `agent_names`/`name_patterns` entry or a
+    wrong `ancestor_rules` entry in drug_class_mesh_mapping.yaml.
+
+    It reports; it does not reconcile. Editing the YAML until the diff is empty
+    destroys the only external check this axis has."""
+    con = connect(warehouse)
+    try:
+        if not _vocab_drug_class_tables_ready(con):
+            console.print(
+                "[red]Run `endpoints vocab validate` first -- this needs the "
+                "vocab.drug_class_* tables.[/red]"
+            )
+            raise typer.Exit(code=1)
+        if not _table_exists(con, "raw", "interventions"):
+            console.print("[red]Run `endpoints pull` first -- no raw.interventions yet.[/red]")
+            raise typer.Exit(code=1)
+        diffs = diff_ancestors(con)
+        coverage = drug_class_coverage_summary(con)
+    finally:
+        con.close()
+
+    out_path = Path(out)
+    columns = (
+        "intervention", "kind", "class_from_curated", "curated_layer",
+        "class_from_ancestor", "ancestor_term", "count",
+    )
+    with out_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(columns)
+        for d in diffs:
+            writer.writerow(tuple(d[c] for c in columns))
+
+    console.print(
+        f"[green]Wrote {len(diffs)} disagreement(s) -> {out_path}[/green] "
+        f"({coverage['ancestor_studies']:,} of {coverage['studies']:,} studies have any "
+        "MeSH intervention ancestry to diff against)"
+    )
+    if not coverage["ancestor_studies"]:
+        console.print(
+            "[yellow]No intervention ancestors in this warehouse, so there was nothing to "
+            "diff. AACT publishes none; on a CT.gov pull this means the API returned no "
+            "interventionBrowseModule.ancestors[] (see vocab/drug_class_mesh_mapping.yaml's "
+            "caveats).[/yellow]"
         )
 
 
@@ -934,6 +1249,26 @@ def stats(
         help="Exclude the Wan et al. IQR/range estimates, which are approximations rather "
         "than conversions.",
     ),
+    drug_class: Optional[str] = typer.Option(
+        None,
+        "--drug-class",
+        help="Only studies whose interventions resolved to this drug class. The STUDY tier: "
+        "it narrows to trials that used the class, and does not claim the SD came from an "
+        "arm that received it.",
+    ),
+    by: Optional[str] = typer.Option(
+        None,
+        "--by",
+        help="Stratify instead of filtering. Only 'drug-class' is supported. On the SD side "
+        "this is a homogeneity check; on --analyses it is the point, because pooling effect "
+        "sizes across mechanisms has no referent.",
+    ),
+    by_kind: str = typer.Option(
+        "mechanism",
+        "--by-kind",
+        help="Which drug-class kind --by drug-class stratifies over: mechanism (default), "
+        "pharmacologic, modality or control.",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
@@ -946,22 +1281,72 @@ def stats(
     and reported with the coverage line that says how many of the conformed
     studies actually contributed. Requires `endpoints results conform`.
     """
+    if by is not None and by not in STATS_STRATIFIERS:
+        console.print(f"[red]--by must be one of {STATS_STRATIFIERS}, got {by!r}[/red]")
+        raise typer.Exit(code=1)
+    if by == "drug-class" and drug_class:
+        # The stratifier sets `drug_class` per stratum, so accepting both would
+        # silently ignore the one the caller typed.
+        console.print(
+            "[red]--drug-class and --by drug-class are mutually exclusive: one filters to a "
+            "single class, the other reports every class side by side. Pick one.[/red]"
+        )
+        raise typer.Exit(code=1)
+
     filters = StatsFilters(
         measurement=measurement, form=form, scale=scale, timepoint=timepoint, ta=ta,
-        phase=phase, source=source, include_approximate=not no_approximate,
-        include_derived=not only_reported,
+        phase=phase, drug_class=drug_class, source=source,
+        include_approximate=not no_approximate, include_derived=not only_reported,
     )
     con = connect(warehouse)
     try:
         try:
-            report = (
-                analysis_distribution(con, filters) if analyses else sd_distribution(con, filters)
-            )
+            if by == "drug-class":
+                strata = stratify_by_drug_class(con, filters, kind=by_kind, analyses=analyses)
+                report = None
+            else:
+                report = (
+                    analysis_distribution(con, filters) if analyses else sd_distribution(con, filters)
+                )
         except (NotComputed, ValueError) as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=1) from exc
     finally:
         con.close()
+
+    if report is None:
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "stratified_by": "drug_class",
+                        "kind": by_kind,
+                        "strata": [
+                            {"drug_class_id": class_id, **_stats_json(r, analyses=analyses)}
+                            for class_id, r in strata
+                        ],
+                    },
+                    indent=2,
+                )
+            )
+            return
+        if not strata:
+            console.print(
+                f"[yellow]No {by_kind} drug class covers any study in this selection -- "
+                "nothing to stratify. `endpoints drug-class coverage` reports why.[/yellow]"
+            )
+            return
+        for class_id, stratum in strata:
+            console.print(f"\n[bold cyan]── {class_id} ──[/bold cyan]")
+            if analyses:
+                _print_analyses(stratum)
+            else:
+                _print_sd(stratum)
+        console.print(
+            f"\n[dim]{len(strata)} {by_kind} class(es), most-studied first. Strata are not "
+            "disjoint: a combination trial appears under every class it used.[/dim]"
+        )
+        return
 
     if as_json:
         print(json.dumps(_stats_json(report, analyses=analyses), indent=2))
@@ -976,6 +1361,7 @@ def _describe_filters(filters: StatsFilters) -> str:
     parts = [f"{key}={value}" for key, value in (
         ("measurement", filters.measurement), ("form", filters.form), ("scale", filters.scale),
         ("timepoint", filters.timepoint), ("ta", filters.ta), ("phase", filters.phase),
+        ("drug_class", filters.drug_class),
     ) if value]
     parts.append(f"source={filters.source}")
     return ", ".join(parts)

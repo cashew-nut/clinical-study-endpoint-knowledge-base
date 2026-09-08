@@ -13,7 +13,7 @@ runner = CliRunner()
 
 def _make_study(
     nct_id, start_date, *, condition_meshes=None, intervention_meshes=None, browse_branches=None,
-    outcomes=None, lead_sponsor=None,
+    outcomes=None, lead_sponsor=None, interventions=None, arms=None,
 ):
     study = {
         "protocolSection": {
@@ -22,13 +22,21 @@ def _make_study(
             "designModule": {"phases": ["PHASE3"], "studyType": "INTERVENTIONAL"},
             "outcomesModule": outcomes or {},
             "conditionsModule": {"conditions": []},
+            "armsInterventionsModule": {
+                "armGroups": arms or [],
+                "interventions": interventions or [],
+            },
         },
         "derivedSection": {
             "conditionBrowseModule": {
                 "meshes": condition_meshes or [],
                 "browseBranches": browse_branches or [],
             },
-            "interventionBrowseModule": {"meshes": intervention_meshes or []},
+            "interventionBrowseModule": {
+                "meshes": intervention_meshes or [],
+                "ancestors": [],
+                "browseBranches": [],
+            },
         },
     }
     if lead_sponsor is not None:
@@ -523,3 +531,154 @@ def test_pull_refuses_a_table_it_cannot_migrate(tmp_path, monkeypatch):
         assert con.execute("SELECT * FROM raw.studies").fetchall() == [("brief",)]
     finally:
         con.close()
+
+
+# ------------------------------------------------------- the drug-class axis
+
+
+def test_pull_rejects_drug_class_filter_when_vocab_not_loaded(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["pull", "--phase", "3", "--drug-class", "statin"])
+    assert result.exit_code == 1
+    assert "vocab validate" in result.output
+
+
+def test_pull_drug_class_rejects_unknown_class(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse = tmp_path / "wh.duckdb"
+    runner.invoke(app, ["vocab", "validate", "--warehouse", str(warehouse)])
+
+    result = runner.invoke(
+        app, ["pull", "--phase", "3", "--drug-class", "bogus_class", "--warehouse", str(warehouse)]
+    )
+    assert result.exit_code == 1
+    assert "unknown drug class" in result.output
+
+
+def _drug_class_pull(tmp_path, monkeypatch, extra_args=()):
+    warehouse = tmp_path / "wh.duckdb"
+    runner.invoke(app, ["vocab", "validate", "--warehouse", str(warehouse)])
+    studies = [
+        _make_study(
+            "NCT001",
+            "2024-01-01",
+            interventions=[
+                {"type": "DRUG", "name": "Semaglutide", "armGroupLabels": ["Active"]},
+                {"type": "DRUG", "name": "Placebo", "armGroupLabels": ["Control"]},
+            ],
+            arms=[{"label": "Active"}, {"label": "Control"}],
+        ),
+        _make_study(
+            "NCT002",
+            "2024-01-01",
+            interventions=[{"type": "DRUG", "name": "Atorvastatin"}],
+        ),
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: _FakeResponse(studies))
+    result = runner.invoke(
+        app, ["pull", "--phase", "3", "--warehouse", str(warehouse), *extra_args]
+    )
+    assert result.exit_code == 0, result.output
+    return warehouse, result
+
+
+def test_pull_resolves_drug_classes_and_reports_them(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse, result = _drug_class_pull(tmp_path, monkeypatch)
+    assert "Drug classes resolved for 2 studies" in result.output
+
+    con = duckdb.connect(str(warehouse), read_only=True)
+    primary = dict(
+        con.execute(
+            "SELECT nct_id, drug_class_id FROM conformed.study_drug_class WHERE is_primary"
+        ).fetchall()
+    )
+    assert primary == {"NCT001": "glp1_receptor_agonist", "NCT002": "statin"}
+    # The arm tier landed too, and the control arm is not a GLP-1 arm.
+    control = con.execute(
+        "SELECT drug_class_id FROM conformed.arm_drug_class WHERE group_title = 'Control'"
+    ).fetchall()
+    assert control == [("placebo",)]
+    con.close()
+
+
+def test_pull_filters_by_drug_class(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse, result = _drug_class_pull(
+        tmp_path, monkeypatch, extra_args=["--drug-class", "statin"]
+    )
+    assert "Filtered to --drug-class ['statin']" in result.output
+
+    con = duckdb.connect(str(warehouse), read_only=True)
+    assert [r[0] for r in con.execute("SELECT nct_id FROM raw.studies").fetchall()] == ["NCT002"]
+    # The post-filter clears the dropped study out of every nct_id-keyed table,
+    # so nothing downstream classifies a study the pull discarded.
+    assert con.execute("SELECT count(*) FROM raw.interventions WHERE nct_id = 'NCT001'").fetchone()[0] == 0
+    con.close()
+
+
+def test_drug_class_distribution_and_coverage(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse, _ = _drug_class_pull(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["drug-class", "distribution", "--warehouse", str(warehouse)])
+    assert result.exit_code == 0, result.output
+    assert "glp1_receptor_agonist" in result.output
+    assert "carry at least" in result.output  # the denominator line is never optional
+
+    result = runner.invoke(
+        app, ["drug-class", "distribution", "--kind", "control", "--warehouse", str(warehouse)]
+    )
+    assert result.exit_code == 0
+    assert "placebo" in result.output
+    assert "glp1_receptor_agonist" not in result.output
+
+    result = runner.invoke(app, ["drug-class", "coverage", "--warehouse", str(warehouse)])
+    assert result.exit_code == 0, result.output
+    assert "with a mechanism class" in result.output
+
+
+def test_drug_class_diff_ancestors_requires_vocab_and_pull(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse = tmp_path / "wh.duckdb"
+
+    result = runner.invoke(app, ["drug-class", "diff-ancestors", "--warehouse", str(warehouse)])
+    assert result.exit_code == 1
+    assert "vocab validate" in result.output
+
+    runner.invoke(app, ["vocab", "validate", "--warehouse", str(warehouse)])
+    result = runner.invoke(app, ["drug-class", "diff-ancestors", "--warehouse", str(warehouse)])
+    assert result.exit_code == 1
+    assert "pull" in result.output
+
+
+def test_drug_class_diff_ancestors_says_when_there_is_nothing_to_diff(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    warehouse, _ = _drug_class_pull(tmp_path, monkeypatch)
+    result = runner.invoke(
+        app,
+        ["drug-class", "diff-ancestors", "--warehouse", str(warehouse), "--out", str(tmp_path / "d.csv")],
+    )
+    assert result.exit_code == 0, result.output
+    assert "nothing to" in result.output
+
+
+def test_stats_rejects_an_unknown_stratifier(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["stats", "--by", "phase"])
+    assert result.exit_code == 1
+    assert "--by must be one of" in result.output
+
+
+def test_stats_rejects_filtering_and_stratifying_on_the_same_axis(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["stats", "--drug-class", "statin", "--by", "drug-class"])
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output
+
+
+def test_drug_class_coverage_on_an_empty_warehouse_says_so(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["drug-class", "coverage", "--warehouse", str(tmp_path / "e.duckdb")])
+    assert result.exit_code == 1
+    assert "vocab validate" in result.output

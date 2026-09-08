@@ -32,6 +32,9 @@ import yaml
 from clinical_endpoints.vocab.schema import (
     DIMENSIONS,
     DIRECTION_RULES,
+    DRUG_CLASS_KINDS,
+    DRUG_CLASS_MAPPING_FILENAME,
+    normalise_intervention_type,
     EVENT_POLARITIES,
     MAPPING_FILENAME,
     MATCHING_FILENAME,
@@ -93,6 +96,7 @@ def load_vocab(vocab_dir: Path | str) -> dict[str, Any]:
     for spec in DIMENSIONS:
         docs[spec.dimension] = _read_yaml(vocab_dir / spec.filename)
     docs["ta_mesh_mapping"] = _read_yaml(vocab_dir / MAPPING_FILENAME)
+    docs["drug_class_mesh_mapping"] = _read_yaml(vocab_dir / DRUG_CLASS_MAPPING_FILENAME)
     docs["matching"] = _read_yaml(vocab_dir / MATCHING_FILENAME)
     docs["usdm_templates"] = _read_yaml(vocab_dir / USDM_TEMPLATES_FILENAME)
     docs["named_endpoints"] = _read_yaml(vocab_dir / NAMED_ENDPOINTS_FILENAME)
@@ -132,8 +136,10 @@ def validate_vocab(docs: dict[str, Any]) -> ValidationResult:
     _validate_directions(docs["direction"], ids, result)
     _validate_scales(docs["scale"], result)
     _validate_therapeutic_areas(docs["therapeutic_area"], result)
+    _validate_drug_classes(docs["drug_class"], result)
     _validate_timepoints(docs["timepoint_pattern"], ids, result)
     _validate_ta_mesh_mapping(docs["ta_mesh_mapping"], ids, result)
+    _validate_drug_class_mapping(docs["drug_class_mesh_mapping"], docs["drug_class"], ids, result)
     _validate_matching(docs["matching"], ids, result)
     _validate_events(docs["event"], result)
     if docs.get("named_endpoints") is not None:
@@ -570,6 +576,146 @@ def _validate_therapeutic_areas(doc: dict, result: ValidationResult) -> None:
         result.warn(where, "`resolution.primary_by` is not `precedence`; the loader assumes precedence ordering")
 
 
+def _validate_drug_classes(doc: dict, result: ValidationResult) -> None:
+    """drug_classes.yaml: mandatory `kind` from the closed set, unique
+    precedence, and an acyclic `parent` chain.
+
+    `kind` is mandatory rather than defaulted because a query that groups by
+    drug class has to be able to say which axis it means -- mixing a mechanism
+    class with a modality class compares "PD-1 inhibitor" against "monoclonal
+    antibody" as if they were alternatives (docs/DRUG_CLASS_SPEC.md).
+    """
+    where = "drug_classes.yaml"
+    terms = [t for t in doc.get("terms") or [] if isinstance(t, dict)]
+
+    precedences = [t.get("precedence") for t in terms]
+    if any(p is None for p in precedences):
+        result.error(where, "every drug class needs a `precedence`")
+    elif len(set(precedences)) != len(precedences):
+        result.error(
+            where,
+            "`precedence` values must be unique -- ties would make the primary class order-dependent",
+        )
+
+    for term in terms:
+        kind = term.get("kind")
+        if kind not in DRUG_CLASS_KINDS:
+            result.error(
+                where,
+                f"{term.get('id')}: `kind` must be one of {sorted(DRUG_CLASS_KINDS)}, got {kind!r}",
+            )
+
+    # `parent` is one shallow level of rollup, not the recursive structure
+    # docs/COMPOSITE_ENDPOINTS_SPEC.md argues for. A cycle here would hang the
+    # rollup rather than surface as a wrong answer, so it is an error.
+    parents = {t["id"]: t.get("parent") for t in terms if t.get("id")}
+    for term_id in parents:
+        seen = [term_id]
+        cursor = parents.get(term_id)
+        while cursor is not None:
+            if cursor in seen:
+                result.error(where, f"`parent` cycle: {' -> '.join(seen + [cursor])}")
+                break
+            seen.append(cursor)
+            cursor = parents.get(cursor)
+
+    # A parent of a different `kind` would make the rollup change axis halfway
+    # up, so a mechanism term could roll up into a modality one.
+    kinds = {t["id"]: t.get("kind") for t in terms if t.get("id")}
+    for term in terms:
+        parent = term.get("parent")
+        if parent and parent in kinds and kinds[parent] != term.get("kind"):
+            result.error(
+                where,
+                f"{term.get('id')}: parent {parent!r} has kind {kinds[parent]!r}, "
+                f"not {term.get('kind')!r} -- a rollup must not change axis",
+            )
+
+    # A child must outrank its parent, or a study matching both gets the coarser
+    # class as its primary: `checkpoint_inhibitor` would beat `pd1_inhibitor`
+    # even where the curated layer named the specific target, and the whole
+    # point of the mechanism axis is the specific claim.
+    by_id = {t["id"]: t for t in terms if t.get("id")}
+    for term in terms:
+        parent = by_id.get(term.get("parent") or "")
+        if not parent:
+            continue
+        if term.get("precedence") is None or parent.get("precedence") is None:
+            continue
+        if term["precedence"] >= parent["precedence"]:
+            result.error(
+                where,
+                f"{term['id']}: precedence {term['precedence']} does not beat its parent "
+                f"{parent['id']}'s {parent['precedence']} -- the more specific class must win "
+                "the primary",
+            )
+
+    resolution = doc.get("resolution") or {}
+    if resolution.get("primary_by") != "precedence":
+        result.warn(where, "`resolution.primary_by` is not `precedence`; the loader assumes precedence ordering")
+
+
+def _validate_drug_class_mapping(
+    doc: dict, classes_doc: dict, ids: dict[str, set[str]], result: ValidationResult
+) -> None:
+    """drug_class_mesh_mapping.yaml: every rule names a real drug class, every
+    regex compiles, and the two layers that must yield one particular `kind`
+    actually do."""
+    where = DRUG_CLASS_MAPPING_FILENAME
+    class_ids = ids.get("drug_class", set())
+    kinds = {
+        t["id"]: t.get("kind")
+        for t in classes_doc.get("terms") or []
+        if isinstance(t, dict) and t.get("id")
+    }
+
+    def check_class(value: Any, context: str, *, expect_kind: str | None = None) -> None:
+        for class_id in value if isinstance(value, list) else [value]:
+            if class_id not in class_ids:
+                result.error(where, f"{context} names unknown drug class {class_id!r}")
+            elif expect_kind and kinds.get(class_id) != expect_kind:
+                result.error(
+                    where,
+                    f"{context} names {class_id!r}, whose kind is {kinds.get(class_id)!r} "
+                    f"and not {expect_kind!r}",
+                )
+
+    for rule in doc.get("control_rules") or []:
+        # A control rule that yielded anything but a control class would class a
+        # placebo arm as a drug, which is the one error this whole layer exists
+        # to prevent.
+        check_class(rule.get("drug_class"), "control_rules", expect_kind="control")
+        for pattern in rule.get("name_patterns") or []:
+            _check_regex(where, f"control_rules[{rule.get('drug_class')}]", pattern, result)
+
+    for mesh_term, value in (doc.get("term_overrides") or {}).items():
+        check_class(value, f"term_overrides[{mesh_term!r}]")
+    for agent, value in (doc.get("agent_names") or {}).items():
+        check_class(value, f"agent_names[{agent!r}]")
+    for ancestor, value in (doc.get("ancestor_rules") or {}).items():
+        check_class(value, f"ancestor_rules[{ancestor!r}]")
+
+    for rule in doc.get("name_patterns") or []:
+        check_class(rule.get("drug_class"), "name_patterns")
+        for pattern in rule.get("patterns") or []:
+            _check_regex(where, f"name_patterns[{rule.get('drug_class')}]", pattern, result)
+
+    for rule in doc.get("branch_rules") or []:
+        # The branch layer is the coarse one, and promoting it to a mechanism
+        # claim is exactly the error docs/DRUG_CLASS_SPEC.md warns against.
+        check_class(rule.get("drug_class"), "branch_rules", expect_kind="pharmacologic")
+        for pattern in rule.get("patterns") or []:
+            _check_regex(where, f"branch_rules[{rule.get('drug_class')}]", pattern, result)
+
+    for key, value in (doc.get("modality_rules") or {}).items():
+        if key == "notes":
+            continue
+        check_class(value, f"modality_rules[{key}]")
+
+    for key, value in (doc.get("defaults") or {}).items():
+        check_class(value, f"defaults[{key}]")
+
+
 def _validate_timepoints(doc: dict, ids: dict[str, set[str]], result: ValidationResult) -> None:
     where = "timepoint_patterns.yaml"
     priorities = [t.get("priority") for t in doc.get("terms") or []]
@@ -909,6 +1055,15 @@ _LONG_TABLES = (
     ("ta_mesh_term_overrides", "mesh_term VARCHAR, mesh_term_normalised VARCHAR, ta_id VARCHAR"),
     ("ta_mesh_tree_prefixes", "tree_prefix VARCHAR, ta_id VARCHAR, prefix_length INTEGER"),
     ("ta_mesh_term_patterns", "ta_id VARCHAR, pattern VARCHAR, applies_to VARCHAR, ordinal INTEGER"),
+    # drug_class_mesh_mapping.yaml -- one table per layer, each carrying the
+    # file order the resolver's first-hit-wins depends on (docs/DRUG_CLASS_SPEC.md).
+    ("drug_class_control_rules", "drug_class_id VARCHAR, pattern VARCHAR, ordinal INTEGER"),
+    ("drug_class_term_overrides", "mesh_term VARCHAR, mesh_term_normalised VARCHAR, drug_class_id VARCHAR"),
+    ("drug_class_agent_names", "agent_name VARCHAR, agent_name_normalised VARCHAR, drug_class_id VARCHAR"),
+    ("drug_class_name_patterns", "drug_class_id VARCHAR, pattern VARCHAR, ordinal INTEGER"),
+    ("drug_class_ancestor_rules", "ancestor_term VARCHAR, ancestor_term_normalised VARCHAR, drug_class_id VARCHAR"),
+    ("drug_class_branch_rules", "drug_class_id VARCHAR, pattern VARCHAR, ordinal INTEGER"),
+    ("drug_class_modality_rules", "intervention_type VARCHAR, intervention_type_normalised VARCHAR, drug_class_id VARCHAR"),
     ("timepoint_unit_tokens", "token VARCHAR, scale_id VARCHAR"),
     ("timepoint_numeral_words", "word VARCHAR, value INTEGER"),
     ("timepoint_preprocessing", "ordinal INTEGER, step VARCHAR"),
@@ -1028,6 +1183,9 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
     # Therapeutic-area order is `precedence`.
     for term in sorted(docs["therapeutic_area"]["terms"], key=lambda t: t["precedence"]):
         precedence.append(("therapeutic_area", term["id"], term["precedence"]))
+    # ...and so is drug-class order.
+    for term in sorted(docs["drug_class"]["terms"], key=lambda t: t["precedence"]):
+        precedence.append(("drug_class", term["id"], term["precedence"]))
 
     _insert(con, "vocab.synonyms", 4, synonyms)
     _insert(con, "vocab.patterns", 5, patterns)
@@ -1100,6 +1258,8 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
     counts.update(ta_mesh_term_overrides=len(overrides), ta_mesh_tree_prefixes=len(prefixes),
                   ta_mesh_term_patterns=len(ta_patterns))
 
+    counts.update(_write_drug_class_mapping_tables(con, docs["drug_class_mesh_mapping"]))
+
     # timepoint_patterns.yaml fields with no scalar column of their own: the
     # preprocessing order, the abbreviation/typo expansion tables, and the
     # disambiguation block (build-order step 3 must honour all three).
@@ -1134,6 +1294,79 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
     if docs.get("named_endpoints") is not None:
         counts.update(_write_named_endpoints_tables(con, docs["named_endpoints"]))
     return counts
+
+
+def _as_class_list(value: Any) -> list[str]:
+    """A mapping value that is either one class id or several. A list is not an
+    edge case here: an agent can genuinely hold two classes (amivantamab is an
+    EGFR inhibitor and a bispecific engager), and forcing a choice would make
+    the vocabulary assert something false."""
+    if isinstance(value, list):
+        return [v for v in value if isinstance(v, str)]
+    return [value] if isinstance(value, str) else []
+
+
+def _write_drug_class_mapping_tables(
+    con: duckdb.DuckDBPyConnection, doc: dict[str, Any]
+) -> dict[str, int]:
+    """Persist drug_class_mesh_mapping.yaml, one table per layer.
+
+    Every rule keeps its file position in `ordinal`: the resolver's first hit
+    wins per intervention, so the order rules were written in is load-bearing,
+    not incidental -- "-ciclib" has to be tried before the generic "-tinib".
+    """
+    control = [
+        (rule["drug_class"], pattern, i)
+        for rule in doc.get("control_rules") or []
+        for i, pattern in enumerate(rule.get("name_patterns") or [])
+    ]
+    overrides = [
+        (mesh_term, normalise(mesh_term), class_id)
+        for mesh_term, value in (doc.get("term_overrides") or {}).items()
+        for class_id in _as_class_list(value)
+    ]
+    agents = [
+        (agent, normalise(agent), class_id)
+        for agent, value in (doc.get("agent_names") or {}).items()
+        for class_id in _as_class_list(value)
+    ]
+    name_patterns = [
+        (rule["drug_class"], pattern, i)
+        for i, rule in enumerate(doc.get("name_patterns") or [])
+        for pattern in rule.get("patterns") or []
+    ]
+    ancestors = [
+        (ancestor, normalise(ancestor), class_id)
+        for ancestor, value in (doc.get("ancestor_rules") or {}).items()
+        for class_id in _as_class_list(value)
+    ]
+    branches = [
+        (rule["drug_class"], pattern, i)
+        for i, rule in enumerate(doc.get("branch_rules") or [])
+        for pattern in rule.get("patterns") or []
+    ]
+    modalities = [
+        (key, normalise_intervention_type(key), value)
+        for key, value in (doc.get("modality_rules") or {}).items()
+        if key != "notes" and isinstance(value, str)
+    ]
+
+    _insert(con, "vocab.drug_class_control_rules", 3, control)
+    _insert(con, "vocab.drug_class_term_overrides", 3, overrides)
+    _insert(con, "vocab.drug_class_agent_names", 3, agents)
+    _insert(con, "vocab.drug_class_name_patterns", 3, name_patterns)
+    _insert(con, "vocab.drug_class_ancestor_rules", 3, ancestors)
+    _insert(con, "vocab.drug_class_branch_rules", 3, branches)
+    _insert(con, "vocab.drug_class_modality_rules", 3, modalities)
+    return {
+        "drug_class_control_rules": len(control),
+        "drug_class_term_overrides": len(overrides),
+        "drug_class_agent_names": len(agents),
+        "drug_class_name_patterns": len(name_patterns),
+        "drug_class_ancestor_rules": len(ancestors),
+        "drug_class_branch_rules": len(branches),
+        "drug_class_modality_rules": len(modalities),
+    }
 
 
 def _write_named_endpoints_tables(con: duckdb.DuckDBPyConnection, doc: dict[str, Any]) -> dict[str, int]:
@@ -1281,6 +1514,11 @@ def _write_load_log(con: duckdb.DuckDBPyConnection, docs: dict[str, Any], vocab_
     rows.append((now, str(vocab_dir), MAPPING_FILENAME, "ta_mesh_mapping",
                  docs["ta_mesh_mapping"].get("version"),
                  len(docs["ta_mesh_mapping"].get("term_overrides") or {}), _sha256(mapping_path)))
+    drug_class_mapping_path = vocab_dir / DRUG_CLASS_MAPPING_FILENAME
+    rows.append((now, str(vocab_dir), DRUG_CLASS_MAPPING_FILENAME, "drug_class_mesh_mapping",
+                 docs["drug_class_mesh_mapping"].get("version"),
+                 len(docs["drug_class_mesh_mapping"].get("agent_names") or {}),
+                 _sha256(drug_class_mapping_path)))
     _insert(con, "vocab._load_log", 7, rows)
     return len(rows)
 

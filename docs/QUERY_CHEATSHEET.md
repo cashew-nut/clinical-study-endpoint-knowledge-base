@@ -15,6 +15,10 @@ uv run endpoints conform                            # writes conformed.endpoints
 uv run endpoints results conform                    # writes conformed.endpoint_results / endpoint_dispersion
 ```
 
+(`pull` also writes `conformed.study_therapeutic_area` and
+`conformed.study_drug_class` on its way through, as soon as `vocab validate`
+has loaded the two mappings.)
+
 Want a therapeutic area with a denser efficacy signal to look at, instead of
 an unfiltered mix of everything on the registry?
 
@@ -304,6 +308,77 @@ GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 20;
 SELECT outcome_type, measure_raw, form_id, measurement_id, direction_id,
        reference_id, timepoint_pattern, threshold_value
 FROM conformed.endpoints WHERE nct_id = 'NCT00000000' ORDER BY outcome_type;
+```
+
+## Grouping by drug class
+
+`conformed.study_drug_class` is many-to-many with one `is_primary` row per
+study, and every row carries the `kind` that says which axis the class is on.
+**Filter on `kind` whenever you group**: a list that mixes them compares
+"PD-1 inhibitor" against "monoclonal antibody" as if they were alternatives.
+
+```sql
+-- what is this corpus made of, by mechanism?
+SELECT drug_class_id, count(DISTINCT nct_id) AS studies
+FROM conformed.study_drug_class
+WHERE kind = 'mechanism'
+GROUP BY 1 ORDER BY 2 DESC LIMIT 20;
+```
+
+```sql
+-- endpoint choice as a class-level convention: which measurements does each
+-- mechanism reach for? This is the question the axis exists to answer, and
+-- nothing before it could.
+SELECT c.drug_class_id, e.measurement_id, count(*) AS endpoints
+FROM conformed.endpoints e
+JOIN conformed.study_drug_class c ON c.nct_id = e.nct_id AND c.is_primary
+WHERE c.kind = 'mechanism' AND e.outcome_type = 'primary'
+GROUP BY 1, 2
+HAVING count(*) > 2
+ORDER BY 1, 3 DESC;
+```
+
+```sql
+-- has this class adopted PFS over OS, and when? The regulatory-history
+-- question this corpus is uniquely shaped to answer.
+SELECT c.drug_class_id, date_trunc('year', s.start_date) AS year,
+       count(*) FILTER (WHERE e.measurement_id = 'progression_free_survival') AS pfs,
+       count(*) FILTER (WHERE e.measurement_id = 'overall_survival') AS os
+FROM conformed.endpoints e
+JOIN raw.studies s USING (nct_id)
+JOIN conformed.study_drug_class c ON c.nct_id = e.nct_id
+WHERE e.outcome_type = 'primary' AND c.kind = 'mechanism'
+GROUP BY 1, 2 HAVING pfs + os > 0 ORDER BY 1, 2;
+```
+
+```sql
+-- combination therapy, straight off the many-to-many: which mechanisms are
+-- studied together?
+SELECT a.drug_class_id AS class_a, b.drug_class_id AS class_b,
+       count(DISTINCT a.nct_id) AS studies
+FROM conformed.study_drug_class a
+JOIN conformed.study_drug_class b
+  ON b.nct_id = a.nct_id AND b.drug_class_id > a.drug_class_id
+WHERE a.kind = 'mechanism' AND b.kind = 'mechanism'
+GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 20;
+```
+
+```sql
+-- the arm tier, and how much of it you can trust. `link_method` is
+-- 'join_table' (AACT's real join) or 'arm_label' (a CT.gov string match).
+SELECT link_method, kind, count(*) AS rows, count(DISTINCT nct_id) AS studies
+FROM conformed.arm_drug_class GROUP BY 1, 2 ORDER BY 3 DESC;
+```
+
+```sql
+-- the honest denominator: how much of the corpus the axis actually covers.
+SELECT
+  (SELECT count(*) FROM raw.studies) AS pulled,
+  (SELECT count(DISTINCT nct_id) FROM raw.interventions) AS with_interventions,
+  (SELECT count(DISTINCT nct_id) FROM conformed.study_drug_class
+     WHERE drug_class_id NOT IN ('unclassified_agent', 'no_interventions_stated'))
+    AS classified,
+  (SELECT count(*) FROM conformed.drug_class_review_queue) AS unclassified_interventions;
 ```
 
 ## The vocabulary tables, if you want to see the contract itself

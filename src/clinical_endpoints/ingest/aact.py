@@ -9,7 +9,7 @@ from typing import Callable, Optional
 
 import duckdb
 
-from clinical_endpoints.ingest import aact_results
+from clinical_endpoints.ingest import aact_interventions, aact_results
 from clinical_endpoints.ingest.design import (
     DESIGN_GROUPS_COLUMNS,
     DESIGN_GROUPS_DDL,
@@ -17,10 +17,17 @@ from clinical_endpoints.ingest.design import (
 )
 from clinical_endpoints.ingest.design import STUDIES_DDL as SHARED_STUDIES_DDL
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
+from clinical_endpoints.ingest.interventions import INTERVENTION_TABLE_NAMES, INTERVENTION_TABLES
 from clinical_endpoints.ingest.pull_log import write_pull_log
 from clinical_endpoints.ingest.results import RESULTS_TABLE_NAMES, RESULTS_TABLES
 from clinical_endpoints.ingest.upsert import SchemaReconciler
 from clinical_endpoints.ta.resolver import TaMapping, load_ta_mapping, resolve_study_ta_matches
+from clinical_endpoints.drug_class.resolver import (
+    DrugClassMapping,
+    Intervention,
+    load_drug_class_mapping,
+    resolve_study_drug_class_matches,
+)
 
 SOURCE = "aact"
 
@@ -35,7 +42,7 @@ SOURCE_TABLES = (
     "browse_conditions",
     "browse_interventions",
     "mesh_terms",
-)
+) + INTERVENTION_TABLE_NAMES
 
 # ...plus the results section, when `--no-results` was not given and AACT
 # actually exposes it (see ingest/aact_results.py). Recorded separately so
@@ -81,6 +88,7 @@ PULL_STEPS = (
     "browse_conditions",
     "browse_interventions",
     "mesh_terms",
+    "interventions",
     "results",
 )
 
@@ -148,6 +156,9 @@ def run_pull(
     raw._pull_log accumulates one row per invocation regardless, so the pull
     history stays auditable.
 
+    `filters.drug_class`, if given, is scanned for exactly as `filters.ta` is,
+    in the same pass -- see `_scan_filtered_nct_ids`.
+
     `filters.org`, if given, filters to studies whose *lead* sponsor (never a
     collaborator) matches one of the given fragments, case-insensitively --
     applied as a plain SQL predicate (`_org_filter_sql`) alongside phase/since,
@@ -172,6 +183,8 @@ def run_pull(
     schema.ensure("browse_conditions", BROWSE_CONDITIONS_DDL)
     schema.ensure("browse_interventions", BROWSE_INTERVENTIONS_DDL)
     schema.ensure("mesh_terms", MESH_TERMS_DDL)
+    for table, ddl, _columns in INTERVENTION_TABLES:
+        schema.ensure(table, ddl)
     if filters.with_results:
         for table, ddl, _columns in RESULTS_TABLES:
             schema.ensure(table, ddl)
@@ -179,8 +192,10 @@ def run_pull(
     ta_scanned: Optional[int] = None
     ta_hit_scan_cap = False
 
-    if filters.ta:
-        matched_nct_ids, ta_scanned, ta_hit_scan_cap = _ta_filtered_nct_ids(con, aact_phases, filters)
+    if filters.ta or filters.drug_class:
+        matched_nct_ids, ta_scanned, ta_hit_scan_cap = _scan_filtered_nct_ids(
+            con, aact_phases, filters
+        )
         con.execute(
             f"""
             CREATE OR REPLACE TEMP TABLE _pulled_studies AS
@@ -293,6 +308,18 @@ def run_pull(
     has_tree_numbers, mesh_terms_count = _pull_mesh_terms(con)
     _step("mesh_terms")
 
+    # The interventions, before the results section and after everything the
+    # conformance pipeline needs: like results, this is an enrichment, and a
+    # backend that cannot supply it must cost the drug-class axis rather than
+    # the pull (docs/DRUG_CLASS_SPEC.md).
+    intervention_counts: dict[str, int] = {name: 0 for name in INTERVENTION_TABLE_NAMES}
+    interventions_warning: Optional[str] = None
+    try:
+        intervention_counts.update(aact_interventions.pull_interventions(con))
+    except aact_interventions.InterventionsUnavailable as exc:
+        interventions_warning = str(exc)
+    _step("interventions")
+
     # The results section, last: everything above is the protocol half of the
     # pull, which must stand on its own if AACT turns out not to expose the
     # results tables in the shape ingest/aact_results.py needs (it introspects
@@ -319,6 +346,7 @@ def run_pull(
             "SELECT count(*) FROM _pulled_browse_interventions"
         ).fetchone()[0],
         "mesh_terms": mesh_terms_count,
+        **intervention_counts,
         **results_counts,
     }
 
@@ -334,6 +362,7 @@ def run_pull(
         "row_counts": row_counts,
         "has_mesh_tree_numbers": has_tree_numbers,
         "results_warning": results_warning,
+        "interventions_warning": interventions_warning,
         "nct_ids": pulled_nct_ids,
         "migrations": schema.changes,
         "studies_scanned": ta_scanned,
@@ -468,7 +497,7 @@ def _org_filter_sql(filters: PullFilters, *, nct_id_column: str) -> tuple[str, l
     distinction ingest/ctgov_api.py's AREA[LeadSponsorName] draws -- matches
     one of `filters.org` case-insensitively. `nct_id_column` lets one predicate
     serve both call sites: `run_pull`'s aliased main query (`s.nct_id`) and the
-    unaliased candidate scan `_ta_filtered_nct_ids` runs (`nct_id`).
+    unaliased candidate scan `_scan_filtered_nct_ids` runs (`nct_id`).
 
     Built as one `LIKE ?` per fragment, OR'd together, rather than a single
     `LIKE ANY(?)` bound to a list parameter -- DuckDB parses `ANY(?)` there as
@@ -488,11 +517,80 @@ def _org_filter_sql(filters: PullFilters, *, nct_id_column: str) -> tuple[str, l
     return predicate, patterns
 
 
-def _ta_filtered_nct_ids(
+def _drug_class_matches_in_batch(
+    con: duckdb.DuckDBPyConnection,
+    mapping: DrugClassMapping,
+    wanted_class_ids: set[str],
+    nct_ids: list[str],
+) -> set[str]:
+    """Which of `nct_ids` match one of `wanted_class_ids`, judged by the exact
+    layered rules `drug_class/resolver.py` uses to write
+    conformed.study_drug_class (via `resolve_study_drug_class_matches`), so a
+    pull-time match always agrees with the truth `pull` resolves afterward.
+
+    AACT publishes no intervention ancestors and no browse branches (see
+    ingest/aact_interventions.py), so those two layers are empty here and the
+    match rests on the intervention rows and the MeSH descriptors. That makes
+    `--drug-class` strictly less sensitive on this backend than on the API one
+    -- fewer studies match, none of them wrongly.
+    """
+    if not aact_interventions.interventions_available(con):
+        return set()
+
+    interventions_by_nct: dict[str, dict[int, Intervention]] = defaultdict(dict)
+    present = aact_interventions.columns(con, "interventions")
+    name_col = "name" if "name" in present else "NULL"
+    type_col = "intervention_type" if "intervention_type" in present else "NULL"
+    order_col = "id" if "id" in present else "name"
+    rows = con.execute(
+        f"""
+        SELECT nct_id,
+               CAST(row_number() OVER (PARTITION BY nct_id ORDER BY {order_col}) - 1 AS INTEGER),
+               {type_col}, {name_col}
+        FROM aact.ctgov.interventions WHERE nct_id = ANY(?)
+        """,
+        [nct_ids],
+    ).fetchall()
+    for nct_id, ordinal, intervention_type, name in rows:
+        interventions_by_nct[nct_id][ordinal] = Intervention(
+            ordinal=ordinal,
+            intervention_type=intervention_type,
+            name=name,
+            name_normalised=(name or "").strip().lower() or None,
+        )
+
+    mesh_by_nct: dict[str, list[str]] = defaultdict(list)
+    for nct_id, mesh_term in con.execute(
+        "SELECT nct_id, mesh_term FROM aact.ctgov.browse_interventions WHERE nct_id = ANY(?)",
+        [nct_ids],
+    ).fetchall():
+        mesh_by_nct[nct_id].append(mesh_term)
+
+    matched: set[str] = set()
+    for nct_id in nct_ids:
+        matches = resolve_study_drug_class_matches(
+            interventions=list(interventions_by_nct.get(nct_id, {}).values()),
+            mesh_terms=mesh_by_nct.get(nct_id, []),
+            ancestors=[],
+            branches=[],
+            mapping=mapping,
+        )
+        if set(matches) & wanted_class_ids:
+            matched.add(nct_id)
+    return matched
+
+
+def _scan_filtered_nct_ids(
     con: duckdb.DuckDBPyConnection, aact_phases: list[str], filters: PullFilters
 ) -> tuple[list[str], int, bool]:
     """Which AACT studies (phase/since/org-matching, most-recent-first) also
-    match one of `filters.ta` -- (matched_nct_ids, studies_scanned, hit_scan_cap).
+    match `filters.ta` and/or `filters.drug_class` -- (matched_nct_ids,
+    studies_scanned, hit_scan_cap).
+
+    One scan for both filters rather than two: they have the same shape (no
+    server-side expression, so scan-and-keep), the same cap, and a study has to
+    satisfy both to be kept, so running them separately would scan twice and
+    then intersect.
 
     AACT has no server-side way to express this project's therapeutic areas
     either, so this fetches phase/since/org-matching candidates in batches, most
@@ -506,8 +604,10 @@ def _ta_filtered_nct_ids(
     narrows the candidate pool itself (a plain SQL predicate, unlike `--ta`)
     rather than needing its own scan/batch logic.
     """
-    mapping = load_ta_mapping(con)
-    wanted_ta_ids = set(filters.ta)
+    mapping = load_ta_mapping(con) if filters.ta else None
+    wanted_ta_ids = set(filters.ta) if filters.ta else None
+    class_mapping = load_drug_class_mapping(con) if filters.drug_class else None
+    wanted_class_ids = set(filters.drug_class) if filters.drug_class else None
     since_clause = "AND start_date >= ?" if filters.since else ""
     org_clause, org_params = _org_filter_sql(filters, nct_id_column="nct_id")
 
@@ -540,7 +640,13 @@ def _ta_filtered_nct_ids(
         scanned += len(batch_nct_ids)
         offset += len(batch_nct_ids)
 
-        matching = _ta_matches_in_batch(con, mapping, wanted_ta_ids, batch_nct_ids)
+        matching = set(batch_nct_ids)
+        if wanted_ta_ids is not None:
+            matching &= _ta_matches_in_batch(con, mapping, wanted_ta_ids, batch_nct_ids)
+        if wanted_class_ids is not None:
+            matching &= _drug_class_matches_in_batch(
+                con, class_mapping, wanted_class_ids, batch_nct_ids
+            )
         matched.extend(nct_id for nct_id in batch_nct_ids if nct_id in matching)
 
         if len(batch_nct_ids) < TA_BATCH_SIZE:

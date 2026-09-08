@@ -1,0 +1,854 @@
+# Intervention -> drug class.
+#
+# Drug class is not a field on either ingestion backend, so it has to be derived
+# from what each study registered as its interventions. Both backends expose
+# that, but not identically:
+#
+#   AACT      ctgov.interventions (intervention_type, name, description),
+#             ctgov.intervention_other_names, and ctgov.design_group_interventions
+#             -- a real arm<->intervention join table. No MeSH ancestors, and no
+#             intervention browse branches.
+#   CT.gov v2 protocolSection.armsInterventionsModule.interventions[] (type,
+#             name, otherNames[], armGroupLabels[]) plus
+#             derivedSection.interventionBrowseModule's meshes[], ancestors[]
+#             and browseBranches[] -- the ancestry AACT lacks, but only an
+#             arm-label string match where AACT has a join table.
+#
+# So the mapping is written in layers, applied in this order, FIRST HIT WINS PER
+# INTERVENTION, with one exception noted at layer 6:
+#
+#   0. control_rules   placebo/sham/standard-of-care first, so a control arm is
+#                      never classed by a MeSH term the sponsor attached to the
+#                      study as a whole.
+#   1. term_overrides  exact drug name, matched against BOTH the NLM descriptor
+#                      and the sponsor's own `name`/`other_name`. Where a name's
+#                      obvious class is the wrong one, this settles it by hand.
+#                      Matched against both because for interventions the
+#                      descriptor IS a drug name and sponsors usually write the
+#                      same string -- an override that applied only to the NLM
+#                      side would settle half the corpus at random.
+#   2. agent_names     exact drug name. Matched against BOTH the sponsor's
+#                      `name`/`other_name` AND the NLM descriptor, because for
+#                      interventions the descriptor IS a drug name. A curated
+#                      entry is a human assertion about a specific drug, which
+#                      is why it outranks NLM's own ancestry below.
+#   3. name_patterns   WHO INN stems, and the vaccine-platform words no stem
+#                      covers. See the block's own note -- this layer is doing
+#                      more work than it looks like.
+#   4. ancestor_rules  MeSH ancestors of the coded interventions. NLM's own
+#                      hierarchy: the mechanism signal, where it exists.
+#   5. branch_rules    CT.gov's coarse pharmacologic branches. Always yields a
+#                      `pharmacologic` class, never a mechanism claim.
+#   6. modality_rules  the registry's own intervention_type. Applies only where
+#                      no `modality` class has already been matched for that
+#                      intervention -- unlike every other layer, this one is a
+#                      fallback WITHIN its axis rather than a first-hit-wins
+#                      competitor, because "monoclonal antibody" and "small
+#                      molecule" are alternatives and "PD-1 inhibitor" and
+#                      "monoclonal antibody" are not.
+#   7. defaults        unclassified_agent / no_interventions_stated.
+#
+# A study usually has several interventions and therefore several classes. Keep
+# them all; drug_classes.yaml `precedence` picks the primary. Do NOT collapse to
+# one class here -- combination therapy is the norm, and a trial of
+# pembrolizumab plus carboplatin genuinely is both.
+#
+# WHAT THIS FILE IS NOT. It is not a drug dictionary, and must not grow into
+# one under coverage pressure. `agent_names` covers the agents a Phase 3 corpus
+# is mostly made of; everything else is meant to be caught by the stem, ancestor
+# and branch layers, and what those miss goes to
+# conformed.drug_class_review_queue rather than being guessed at. If the review
+# queue is dominated by one class's agents, the fix is a review round, not a
+# looser pattern.
+
+version: 1
+dimension: drug_class_mesh_mapping
+applies_to: [interventions, intervention_other_names, browse_interventions,
+             browse_intervention_ancestors, browse_intervention_branches]
+
+# --- layer 0: controls ----------------------------------------------------
+# Matched against the intervention NAME, before anything else. A placebo arm in
+# a pembrolizumab trial carries the study's MeSH codes like every other arm, so
+# any layer that ran first would class the placebo as a PD-1 inhibitor.
+control_rules:
+  - drug_class: placebo
+    name_patterns:
+      - '^placebo'
+      - '\bplacebo\b'
+      - '\bmatching placebo\b'
+      - '\bvehicle (control|only)\b'
+  - drug_class: sham
+    name_patterns:
+      - '\bsham\b'
+  - drug_class: standard_of_care
+    name_patterns:
+      - '\bstandard of care\b'
+      - '\bstandard care\b'
+      - '\busual care\b'
+      - "\\bphysician'?s choice\\b"
+      - '\binvestigator.s choice\b'
+      - '\bbest supportive care\b'
+      - '\btreatment as usual\b'
+      - '\bcontrol (arm|group|regimen)\b'
+  - drug_class: no_intervention
+    name_patterns:
+      - '^no (intervention|treatment)\b'
+      - '\bobservation only\b'
+      - '\bwatchful waiting\b'
+    notes: >-
+      Distinct from placebo, and the distinction matters: an arm that receives
+      nothing has no blinding and no placebo response, so its variability is not
+      the placebo arm's variability.
+
+# --- layer 1: exact MeSH descriptor overrides -----------------------------
+# Only for descriptors whose obvious class is the wrong one. Everything else
+# should be an `agent_names` entry, which is matched against the descriptor too.
+term_overrides:
+  # Matched against the NLM descriptor and the sponsor's intervention name
+  # alike, so the keys are written in descriptor case and normalised on both
+  # sides before comparison.
+  # An antimalarial by INN stem and MeSH ancestry, but in trial registrations it
+  # is overwhelmingly an antirheumatic or (2020-2021) a COVID antiviral
+  # candidate. Left as antiparasitic deliberately -- the mechanism is what it is,
+  # and the therapeutic area separates the uses.
+  "Hydroxychloroquine": antiparasitic
+  # Both an NSAID and an antiplatelet. Classed as antiplatelet because that is
+  # what a trial registering it as an intervention is almost always studying;
+  # see `caveats`.
+  "Aspirin": antiplatelet
+  # MeSH files these under their chemistry; the class that matters is the action.
+  "Metformin": biguanide
+  "Dexamethasone": corticosteroid
+  "Prednisone": corticosteroid
+  "Methotrexate": antimetabolite_chemotherapy
+  # A VEGF inhibitor in oncology and in ophthalmology alike. Kept as one class:
+  # the mechanism does not change with the eye.
+  "Bevacizumab": vegf_inhibitor
+  "Aflibercept": vegf_inhibitor
+  # An EGFR/MET bispecific: both claims are true, and both are kept.
+  "Amivantamab": [egfr_inhibitor, bispecific_engager]
+
+# --- layer 2: curated agent -> class --------------------------------------
+# The drug dictionary. Matched exact (after normalisation: casefold, collapse
+# whitespace) against the sponsor `name`, each `other_name`, and the NLM
+# descriptor. A value may be a list where an agent genuinely has two classes.
+agent_names:
+
+  # oncology: immunotherapy
+  "pembrolizumab": pd1_inhibitor
+  "nivolumab": pd1_inhibitor
+  "cemiplimab": pd1_inhibitor
+  "dostarlimab": pd1_inhibitor
+  "tislelizumab": pd1_inhibitor
+  "toripalimab": pd1_inhibitor
+  "sintilimab": pd1_inhibitor
+  "camrelizumab": pd1_inhibitor
+  "retifanlimab": pd1_inhibitor
+  "atezolizumab": pdl1_inhibitor
+  "durvalumab": pdl1_inhibitor
+  "avelumab": pdl1_inhibitor
+  "sugemalimab": pdl1_inhibitor
+  "ipilimumab": ctla4_inhibitor
+  "tremelimumab": ctla4_inhibitor
+  "tisagenlecleucel": car_t_therapy
+  "axicabtagene ciloleucel": car_t_therapy
+  "brexucabtagene autoleucel": car_t_therapy
+  "lisocabtagene maraleucel": car_t_therapy
+  "idecabtagene vicleucel": car_t_therapy
+  "ciltacabtagene autoleucel": car_t_therapy
+  "blinatumomab": bispecific_engager
+  "teclistamab": bispecific_engager
+  "mosunetuzumab": bispecific_engager
+  "glofitamab": bispecific_engager
+  "epcoritamab": bispecific_engager
+  "elranatamab": bispecific_engager
+  "tarlatamab": bispecific_engager
+
+  # oncology: targeted
+  "osimertinib": egfr_inhibitor
+  "erlotinib": egfr_inhibitor
+  "gefitinib": egfr_inhibitor
+  "afatinib": egfr_inhibitor
+  "dacomitinib": egfr_inhibitor
+  "lazertinib": egfr_inhibitor
+  "cetuximab": egfr_inhibitor
+  "panitumumab": egfr_inhibitor
+  "crizotinib": alk_inhibitor
+  "alectinib": alk_inhibitor
+  "brigatinib": alk_inhibitor
+  "lorlatinib": alk_inhibitor
+  "ceritinib": alk_inhibitor
+  "ibrutinib": btk_inhibitor
+  "acalabrutinib": btk_inhibitor
+  "zanubrutinib": btk_inhibitor
+  "pirtobrutinib": btk_inhibitor
+  "trastuzumab": her2_targeted_therapy
+  "pertuzumab": her2_targeted_therapy
+  "trastuzumab deruxtecan": [her2_targeted_therapy, antibody_drug_conjugate]
+  "ado-trastuzumab emtansine": [her2_targeted_therapy, antibody_drug_conjugate]
+  "lapatinib": her2_targeted_therapy
+  "tucatinib": her2_targeted_therapy
+  "neratinib": her2_targeted_therapy
+  "margetuximab": her2_targeted_therapy
+  "ramucirumab": vegf_inhibitor
+  "ranibizumab": vegf_inhibitor
+  "faricimab": vegf_inhibitor
+  "brolucizumab": vegf_inhibitor
+  "sunitinib": vegf_inhibitor
+  "sorafenib": vegf_inhibitor
+  "pazopanib": vegf_inhibitor
+  "axitinib": vegf_inhibitor
+  "lenvatinib": vegf_inhibitor
+  "cabozantinib": vegf_inhibitor
+  "regorafenib": vegf_inhibitor
+  "olaparib": parp_inhibitor
+  "niraparib": parp_inhibitor
+  "rucaparib": parp_inhibitor
+  "talazoparib": parp_inhibitor
+  "palbociclib": cdk_inhibitor
+  "ribociclib": cdk_inhibitor
+  "abemaciclib": cdk_inhibitor
+  "dabrafenib": braf_mek_inhibitor
+  "trametinib": braf_mek_inhibitor
+  "vemurafenib": braf_mek_inhibitor
+  "cobimetinib": braf_mek_inhibitor
+  "encorafenib": braf_mek_inhibitor
+  "binimetinib": braf_mek_inhibitor
+  "bortezomib": proteasome_inhibitor
+  "carfilzomib": proteasome_inhibitor
+  "ixazomib": proteasome_inhibitor
+  "rituximab": anti_cd20_antibody
+  "obinutuzumab": anti_cd20_antibody
+  "ofatumumab": anti_cd20_antibody
+  "ocrelizumab": anti_cd20_antibody
+  "daratumumab": monoclonal_antibody
+  "enfortumab vedotin": antibody_drug_conjugate
+  "sacituzumab govitecan": antibody_drug_conjugate
+  "polatuzumab vedotin": antibody_drug_conjugate
+  "brentuximab vedotin": antibody_drug_conjugate
+
+  # oncology: cytotoxic and endocrine
+  "cisplatin": platinum_chemotherapy
+  "carboplatin": platinum_chemotherapy
+  "oxaliplatin": platinum_chemotherapy
+  "paclitaxel": taxane_chemotherapy
+  "nab-paclitaxel": taxane_chemotherapy
+  "docetaxel": taxane_chemotherapy
+  "cabazitaxel": taxane_chemotherapy
+  "gemcitabine": antimetabolite_chemotherapy
+  "capecitabine": antimetabolite_chemotherapy
+  "fluorouracil": antimetabolite_chemotherapy
+  "pemetrexed": antimetabolite_chemotherapy
+  "cytarabine": antimetabolite_chemotherapy
+  "azacitidine": antimetabolite_chemotherapy
+  "decitabine": antimetabolite_chemotherapy
+  "fludarabine": antimetabolite_chemotherapy
+  "doxorubicin": anthracycline_chemotherapy
+  "epirubicin": anthracycline_chemotherapy
+  "daunorubicin": anthracycline_chemotherapy
+  "idarubicin": anthracycline_chemotherapy
+  "cyclophosphamide": alkylating_chemotherapy
+  "ifosfamide": alkylating_chemotherapy
+  "temozolomide": alkylating_chemotherapy
+  "bendamustine": alkylating_chemotherapy
+  "melphalan": alkylating_chemotherapy
+  "busulfan": alkylating_chemotherapy
+  "etoposide": antineoplastic_agent
+  "irinotecan": antineoplastic_agent
+  "vincristine": antineoplastic_agent
+  "anastrozole": aromatase_inhibitor
+  "letrozole": aromatase_inhibitor
+  "exemestane": aromatase_inhibitor
+  "tamoxifen": antiandrogen
+  "fulvestrant": antiandrogen
+  "enzalutamide": antiandrogen
+  "abiraterone": antiandrogen
+  "apalutamide": antiandrogen
+  "darolutamide": antiandrogen
+  "bicalutamide": antiandrogen
+  "lenalidomide": immunomodulatory_imide
+  "pomalidomide": immunomodulatory_imide
+  "thalidomide": immunomodulatory_imide
+
+  # metabolic and endocrine
+  "semaglutide": glp1_receptor_agonist
+  "liraglutide": glp1_receptor_agonist
+  "dulaglutide": glp1_receptor_agonist
+  "exenatide": glp1_receptor_agonist
+  "lixisenatide": glp1_receptor_agonist
+  "tirzepatide": gip_glp1_coagonist
+  "retatrutide": gip_glp1_coagonist
+  "empagliflozin": sglt2_inhibitor
+  "dapagliflozin": sglt2_inhibitor
+  "canagliflozin": sglt2_inhibitor
+  "ertugliflozin": sglt2_inhibitor
+  "sotagliflozin": sglt2_inhibitor
+  "sitagliptin": dpp4_inhibitor
+  "saxagliptin": dpp4_inhibitor
+  "linagliptin": dpp4_inhibitor
+  "alogliptin": dpp4_inhibitor
+  "vildagliptin": dpp4_inhibitor
+  "insulin glargine": insulin_therapy
+  "insulin degludec": insulin_therapy
+  "insulin aspart": insulin_therapy
+  "insulin lispro": insulin_therapy
+  "insulin detemir": insulin_therapy
+  "insulin icodec": insulin_therapy
+  "insulin human": insulin_therapy
+  "glimepiride": sulfonylurea
+  "gliclazide": sulfonylurea
+  "glipizide": sulfonylurea
+  "glyburide": sulfonylurea
+  "glibenclamide": sulfonylurea
+  "pioglitazone": antidiabetic_agent
+  "levothyroxine": thyroid_hormone_therapy
+  "leuprolide": gnrh_analogue
+  "goserelin": gnrh_analogue
+  "degarelix": gnrh_analogue
+  "relugolix": gnrh_analogue
+  "triptorelin": gnrh_analogue
+  "denosumab": bone_resorption_inhibitor
+  "zoledronic acid": bone_resorption_inhibitor
+  "alendronate": bone_resorption_inhibitor
+  "risedronate": bone_resorption_inhibitor
+
+  # cardiovascular
+  "atorvastatin": statin
+  "rosuvastatin": statin
+  "simvastatin": statin
+  "pravastatin": statin
+  "pitavastatin": statin
+  "evolocumab": pcsk9_inhibitor
+  "alirocumab": pcsk9_inhibitor
+  "inclisiran": [pcsk9_inhibitor, oligonucleotide_therapy]
+  "ezetimibe": cardiovascular_agent
+  "ramipril": ace_inhibitor
+  "enalapril": ace_inhibitor
+  "lisinopril": ace_inhibitor
+  "perindopril": ace_inhibitor
+  "losartan": angiotensin_receptor_blocker
+  "valsartan": angiotensin_receptor_blocker
+  "candesartan": angiotensin_receptor_blocker
+  "irbesartan": angiotensin_receptor_blocker
+  "telmisartan": angiotensin_receptor_blocker
+  "olmesartan": angiotensin_receptor_blocker
+  "sacubitril/valsartan": arni
+  "sacubitril valsartan": arni
+  "metoprolol": beta_blocker
+  "bisoprolol": beta_blocker
+  "carvedilol": beta_blocker
+  "atenolol": beta_blocker
+  "nebivolol": beta_blocker
+  "propranolol": beta_blocker
+  "amlodipine": calcium_channel_blocker
+  "diltiazem": calcium_channel_blocker
+  "verapamil": calcium_channel_blocker
+  "nifedipine": calcium_channel_blocker
+  "furosemide": diuretic
+  "hydrochlorothiazide": diuretic
+  "torsemide": diuretic
+  "chlorthalidone": diuretic
+  "indapamide": diuretic
+  "spironolactone": mineralocorticoid_antagonist
+  "eplerenone": mineralocorticoid_antagonist
+  "finerenone": mineralocorticoid_antagonist
+  "apixaban": anticoagulant
+  "rivaroxaban": anticoagulant
+  "edoxaban": anticoagulant
+  "dabigatran": anticoagulant
+  "warfarin": anticoagulant
+  "enoxaparin": anticoagulant
+  "heparin": anticoagulant
+  "clopidogrel": antiplatelet
+  "ticagrelor": antiplatelet
+  "prasugrel": antiplatelet
+  "acetylsalicylic acid": antiplatelet
+
+  # immunology, inflammation, rheumatology, transplant
+  "adalimumab": tnf_inhibitor
+  "etanercept": tnf_inhibitor
+  "infliximab": tnf_inhibitor
+  "golimumab": tnf_inhibitor
+  "certolizumab pegol": tnf_inhibitor
+  "tocilizumab": il6_inhibitor
+  "sarilumab": il6_inhibitor
+  "siltuximab": il6_inhibitor
+  "secukinumab": il17_inhibitor
+  "ixekizumab": il17_inhibitor
+  "brodalumab": il17_inhibitor
+  "bimekizumab": il17_inhibitor
+  "ustekinumab": il23_inhibitor
+  "guselkumab": il23_inhibitor
+  "risankizumab": il23_inhibitor
+  "tildrakizumab": il23_inhibitor
+  "mirikizumab": il23_inhibitor
+  "dupilumab": il4_il13_inhibitor
+  "tralokinumab": il4_il13_inhibitor
+  "lebrikizumab": il4_il13_inhibitor
+  "tofacitinib": jak_inhibitor
+  "baricitinib": jak_inhibitor
+  "upadacitinib": jak_inhibitor
+  "ruxolitinib": jak_inhibitor
+  "abrocitinib": jak_inhibitor
+  "filgotinib": jak_inhibitor
+  "deucravacitinib": jak_inhibitor
+  "vedolizumab": integrin_inhibitor
+  "natalizumab": integrin_inhibitor
+  "fingolimod": s1p_modulator
+  "ozanimod": s1p_modulator
+  "siponimod": s1p_modulator
+  "etrasimod": s1p_modulator
+  "ponesimod": s1p_modulator
+  "eculizumab": complement_inhibitor
+  "ravulizumab": complement_inhibitor
+  "pegcetacoplan": complement_inhibitor
+  "tacrolimus": calcineurin_inhibitor
+  "ciclosporin": calcineurin_inhibitor
+  "cyclosporine": calcineurin_inhibitor
+  "mycophenolate mofetil": immunomodulating_agent
+  "azathioprine": immunomodulating_agent
+  "abatacept": immunomodulating_agent
+  "prednisolone": corticosteroid
+  "methylprednisolone": corticosteroid
+  "hydrocortisone": corticosteroid
+
+  # respiratory
+  "fluticasone": inhaled_corticosteroid
+  "budesonide": inhaled_corticosteroid
+  "beclometasone": inhaled_corticosteroid
+  "mometasone": inhaled_corticosteroid
+  "ciclesonide": inhaled_corticosteroid
+  "salbutamol": beta2_agonist
+  "albuterol": beta2_agonist
+  "formoterol": beta2_agonist
+  "salmeterol": beta2_agonist
+  "vilanterol": beta2_agonist
+  "indacaterol": beta2_agonist
+  "olodaterol": beta2_agonist
+  "tiotropium": muscarinic_antagonist
+  "umeclidinium": muscarinic_antagonist
+  "glycopyrronium": muscarinic_antagonist
+  "aclidinium": muscarinic_antagonist
+  "ipratropium": muscarinic_antagonist
+  "montelukast": leukotriene_modifier
+  "omalizumab": ige_inhibitor
+  "mepolizumab": il5_inhibitor
+  "benralizumab": il5_inhibitor
+  "reslizumab": il5_inhibitor
+  "tezepelumab": respiratory_agent
+  "ivacaftor": cftr_modulator
+  "lumacaftor": cftr_modulator
+  "tezacaftor": cftr_modulator
+  "elexacaftor": cftr_modulator
+
+  # infectious disease
+  "amoxicillin": antibacterial
+  "ceftriaxone": antibacterial
+  "azithromycin": antibacterial
+  "levofloxacin": antibacterial
+  "ciprofloxacin": antibacterial
+  "vancomycin": antibacterial
+  "meropenem": antibacterial
+  "linezolid": antibacterial
+  "doxycycline": antibacterial
+  "oseltamivir": antiviral
+  "remdesivir": antiviral
+  "nirmatrelvir": antiviral
+  "molnupiravir": antiviral
+  "acyclovir": antiviral
+  "valacyclovir": antiviral
+  "baloxavir": antiviral
+  "letermovir": antiviral
+  "dolutegravir": antiretroviral
+  "bictegravir": antiretroviral
+  "tenofovir": antiretroviral
+  "emtricitabine": antiretroviral
+  "efavirenz": antiretroviral
+  "lamivudine": antiretroviral
+  "cabotegravir": antiretroviral
+  "darunavir": antiretroviral
+  "raltegravir": antiretroviral
+  "fluconazole": antifungal
+  "voriconazole": antifungal
+  "caspofungin": antifungal
+  "posaconazole": antifungal
+  "isavuconazole": antifungal
+  "amphotericin b": antifungal
+  "ivermectin": antiparasitic
+  "praziquantel": antiparasitic
+  "chloroquine": antiparasitic
+  "artemether": antiparasitic
+  "isoniazid": antimycobacterial
+  "rifampicin": antimycobacterial
+  "rifampin": antimycobacterial
+  "pyrazinamide": antimycobacterial
+  "ethambutol": antimycobacterial
+  "bedaquiline": antimycobacterial
+  "pretomanid": antimycobacterial
+
+  # neurology, psychiatry, pain
+  "sertraline": ssri_snri
+  "escitalopram": ssri_snri
+  "fluoxetine": ssri_snri
+  "paroxetine": ssri_snri
+  "citalopram": ssri_snri
+  "venlafaxine": ssri_snri
+  "duloxetine": ssri_snri
+  "risperidone": antipsychotic
+  "olanzapine": antipsychotic
+  "quetiapine": antipsychotic
+  "aripiprazole": antipsychotic
+  "paliperidone": antipsychotic
+  "lurasidone": antipsychotic
+  "brexpiprazole": antipsychotic
+  "cariprazine": antipsychotic
+  "haloperidol": antipsychotic
+  "levetiracetam": antiepileptic
+  "lamotrigine": antiepileptic
+  "valproate": antiepileptic
+  "carbamazepine": antiepileptic
+  "topiramate": antiepileptic
+  "lacosamide": antiepileptic
+  "brivaracetam": antiepileptic
+  "lecanemab": anti_amyloid_antibody
+  "donanemab": anti_amyloid_antibody
+  "aducanumab": anti_amyloid_antibody
+  "gantenerumab": anti_amyloid_antibody
+  "erenumab": cgrp_inhibitor
+  "fremanezumab": cgrp_inhibitor
+  "galcanezumab": cgrp_inhibitor
+  "eptinezumab": cgrp_inhibitor
+  "donepezil": cholinesterase_inhibitor
+  "rivastigmine": cholinesterase_inhibitor
+  "galantamine": cholinesterase_inhibitor
+  "pyridostigmine": cholinesterase_inhibitor
+  "memantine": cns_agent
+  "levodopa": cns_agent
+  "morphine": opioid_analgesic
+  "oxycodone": opioid_analgesic
+  "fentanyl": opioid_analgesic
+  "buprenorphine": opioid_analgesic
+  "methadone": opioid_analgesic
+  "hydromorphone": opioid_analgesic
+  "tramadol": opioid_analgesic
+  "naloxone": cns_agent
+  "ibuprofen": nsaid
+  "naproxen": nsaid
+  "celecoxib": nsaid
+  "diclofenac": nsaid
+  "ketorolac": nsaid
+  "meloxicam": nsaid
+  "paracetamol": analgesic_agent
+  "acetaminophen": analgesic_agent
+
+  # gastrointestinal, haematology, other
+  "omeprazole": proton_pump_inhibitor
+  "esomeprazole": proton_pump_inhibitor
+  "pantoprazole": proton_pump_inhibitor
+  "lansoprazole": proton_pump_inhibitor
+  "epoetin alfa": erythropoiesis_stimulating_agent
+  "darbepoetin alfa": erythropoiesis_stimulating_agent
+  "roxadustat": erythropoiesis_stimulating_agent
+  "emicizumab": clotting_factor_replacement
+  "tranexamic acid": haematologic_agent
+  "vitamin d": nutritional_agent
+  "cholecalciferol": nutritional_agent
+  "folic acid": nutritional_agent
+  "ferric carboxymaltose": haematologic_agent
+
+  # vaccines, by platform
+  "bnt162b2": mrna_vaccine
+  "mrna-1273": mrna_vaccine
+  "chadox1 ncov-19": viral_vector_vaccine
+  "ad26.cov2.s": viral_vector_vaccine
+  "nvx-cov2373": subunit_vaccine
+
+# --- layer 3: name patterns -----------------------------------------------
+# WHO International Nonproprietary Name stems. This layer is doing more work
+# than it looks like: INN stems are a published, enforced naming convention, so
+# "-gliflozin" is not a guess about a drug, it is the WHO stem that made the
+# drug's name what it is. That makes this the layer most likely to class an
+# agent NLM has not coded yet -- which is exactly the gap `agent_names` cannot
+# close, since a new molecular entity is routinely uncoded for a year or more
+# after registration.
+#
+# Ordered most specific first, because first hit wins: "-ciclib" must be tried
+# before the generic "-ib" family, and "-tinib" before "-nib".
+name_patterns:
+  - drug_class: sglt2_inhibitor
+    patterns: ['\w+gliflozin\b']
+  - drug_class: glp1_receptor_agonist
+    patterns: ['\w+glutide\b', '\w+enatide\b']
+  - drug_class: dpp4_inhibitor
+    patterns: ['\w+gliptin\b']
+  - drug_class: sulfonylurea
+    patterns: ['\bgli(m|b|p)\w+ide\b']
+  - drug_class: insulin_therapy
+    patterns: ['\binsulin\b']
+  - drug_class: statin
+    patterns: ['\w+statin\b']
+  - drug_class: ace_inhibitor
+    patterns: ['\w+pril\b', '\w+prilat\b']
+  - drug_class: angiotensin_receptor_blocker
+    patterns: ['\w+sartan\b']
+  - drug_class: beta_blocker
+    patterns: ['\w+olol\b']
+  - drug_class: calcium_channel_blocker
+    patterns: ['\w+dipine\b']
+  - drug_class: anticoagulant
+    patterns: ['\w+xaban\b', '\w+gatran\b', '\w+parin\b']
+  - drug_class: proton_pump_inhibitor
+    patterns: ['\w+prazole\b']
+  - drug_class: cdk_inhibitor
+    patterns: ['\w+ciclib\b']
+  - drug_class: parp_inhibitor
+    patterns: ['\w+parib\b']
+  - drug_class: proteasome_inhibitor
+    patterns: ['\w+zomib\b']
+  - drug_class: s1p_modulator
+    patterns: ['\w+(mod|imod)\b']
+  - drug_class: jak_inhibitor
+    patterns: ['\w+citinib\b', '\w+tinib\b(?=.*\bjak\b)']
+  - drug_class: cgrp_inhibitor
+    patterns: ['\w+gepant\b']
+  - drug_class: antiepileptic
+    patterns: ['\w+racetam\b']
+  - drug_class: antifungal
+    patterns: ['\w+conazole\b', '\w+fungin\b']
+  - drug_class: antiretroviral
+    patterns: ['\w+gravir\b', '\w+navir\b']
+  - drug_class: antibacterial
+    patterns: ['\bcef\w+\b', '\w+cillin\b', '\w+floxacin\b', '\w+mycin\b', '\w+penem\b']
+  - drug_class: tyrosine_kinase_inhibitor
+    patterns: ['\w+tinib\b']
+    notes: >-
+      Deliberately last of the "-ib" family, and deliberately the parent class
+      rather than a specific target: the stem says kinase inhibitor and nothing
+      more. A specific target needs an `agent_names` entry.
+  - drug_class: monoclonal_antibody
+    patterns: ['\w+mab\b']
+    notes: >-
+      A `modality` class, so it never competes with a mechanism match -- an
+      agent matched to pd1_inhibitor by name still picks this up as its modality
+      (see `resolution.modality_is_orthogonal`).
+  - drug_class: antibody_drug_conjugate
+    patterns: ['\w+mab (vedotin|deruxtecan|govitecan|emtansine|mafodotin|tesirine)\b']
+  - drug_class: fusion_protein
+    patterns: ['\w+cept\b']
+  - drug_class: oligonucleotide_therapy
+    patterns: ['\w+(sen|siran|rsen)\b']
+  # Vaccine platform, which no INN stem covers -- these are trial-name words.
+  - drug_class: mrna_vaccine
+    patterns: ['\bmrna\b.*\bvaccine\b', '\bvaccine\b.*\bmrna\b', '\bmodified mrna\b']
+  - drug_class: viral_vector_vaccine
+    patterns: ['\b(adenovir(us|al)|chadox|ad26|vector)\b.*\bvaccine\b', '\bviral vector\b']
+  - drug_class: conjugate_vaccine
+    patterns: ['\bconjugate vaccine\b', '\bpolysaccharide vaccine\b', '\bpcv\d+\b']
+  - drug_class: whole_pathogen_vaccine
+    patterns: ['\b(inactivated|live[- ]attenuated|killed)\b.*\bvaccine\b']
+  - drug_class: subunit_vaccine
+    patterns: ['\b(recombinant|subunit|adjuvanted|protein)\b.*\bvaccine\b']
+  - drug_class: cell_therapy
+    patterns: ['\w+(cel|leucel)\b', '\bcar-?t\b', '\bstem cell\b']
+  - drug_class: gene_therapy
+    patterns: ['\w+(gene|vec)\b', '\bgene therapy\b', '\baav\d*\b']
+
+# --- layer 4: MeSH ancestors ----------------------------------------------
+# NLM's own hierarchy, from derivedSection.interventionBrowseModule.ancestors[].
+# CT.gov backend only -- AACT publishes no intervention ancestry (see
+# ingest/aact_interventions.py), so this layer is simply empty there and the
+# resolver falls through to branches and modality.
+#
+# Keyed on the ancestor descriptor, normalised. Where MeSH names a
+# pharmacologic action precisely enough to be a mechanism ("Sodium-Glucose
+# Transporter 2 Inhibitors"), this yields a mechanism class; where it names only
+# a therapeutic category ("Antineoplastic Agents"), it yields a pharmacologic
+# one. It never promotes the second into the first.
+ancestor_rules:
+  "Immune Checkpoint Inhibitors": checkpoint_inhibitor
+  "Sodium-Glucose Transporter 2 Inhibitors": sglt2_inhibitor
+  "Glucagon-Like Peptide-1 Receptor Agonists": glp1_receptor_agonist
+  "Dipeptidyl-Peptidase IV Inhibitors": dpp4_inhibitor
+  "Sulfonylurea Compounds": sulfonylurea
+  "Insulins": insulin_therapy
+  "Hydroxymethylglutaryl-CoA Reductase Inhibitors": statin
+  "Angiotensin-Converting Enzyme Inhibitors": ace_inhibitor
+  "Angiotensin Receptor Antagonists": angiotensin_receptor_blocker
+  "Angiotensin II Type 1 Receptor Blockers": angiotensin_receptor_blocker
+  "Adrenergic beta-Antagonists": beta_blocker
+  "Adrenergic beta-2 Receptor Agonists": beta2_agonist
+  "Calcium Channel Blockers": calcium_channel_blocker
+  "Diuretics": diuretic
+  "Mineralocorticoid Receptor Antagonists": mineralocorticoid_antagonist
+  "Anticoagulants": anticoagulant
+  "Platelet Aggregation Inhibitors": antiplatelet
+  "Janus Kinase Inhibitors": jak_inhibitor
+  "Tumor Necrosis Factor-alpha Inhibitors": tnf_inhibitor
+  "Muscarinic Antagonists": muscarinic_antagonist
+  "Leukotriene Antagonists": leukotriene_modifier
+  "Proton Pump Inhibitors": proton_pump_inhibitor
+  "Aromatase Inhibitors": aromatase_inhibitor
+  "Androgen Antagonists": antiandrogen
+  "Proteasome Inhibitors": proteasome_inhibitor
+  "Poly(ADP-ribose) Polymerase Inhibitors": parp_inhibitor
+  "Cholinesterase Inhibitors": cholinesterase_inhibitor
+  "Serotonin Uptake Inhibitors": ssri_snri
+  "Antipsychotic Agents": antipsychotic
+  "Anticonvulsants": antiepileptic
+  "Analgesics, Opioid": opioid_analgesic
+  "Anti-Inflammatory Agents, Non-Steroidal": nsaid
+  "Adrenal Cortex Hormones": corticosteroid
+  "Glucocorticoids": corticosteroid
+  "Calcineurin Inhibitors": calcineurin_inhibitor
+  "Bone Density Conservation Agents": bone_resorption_inhibitor
+  "Antitubercular Agents": antimycobacterial
+  "Antimalarials": antiparasitic
+  "Protein Kinase Inhibitors": tyrosine_kinase_inhibitor
+  "Antibodies, Monoclonal": monoclonal_antibody
+  # Therapeutic categories, not mechanisms.
+  "Antineoplastic Agents": antineoplastic_agent
+  "Antineoplastic Agents, Immunological": antineoplastic_agent
+  "Anti-Bacterial Agents": antibacterial
+  "Antiviral Agents": antiviral
+  "Anti-Retroviral Agents": antiretroviral
+  "Antifungal Agents": antifungal
+  "Anti-Infective Agents": anti_infective_agent
+  "Hypoglycemic Agents": antidiabetic_agent
+  "Antihypertensive Agents": cardiovascular_agent
+  "Cardiovascular Agents": cardiovascular_agent
+  "Immunosuppressive Agents": immunomodulating_agent
+  "Antirheumatic Agents": immunomodulating_agent
+  "Immunologic Factors": immunomodulating_agent
+  "Bronchodilator Agents": respiratory_agent
+  "Gastrointestinal Agents": gastrointestinal_agent
+  "Central Nervous System Agents": cns_agent
+  "Analgesics": analgesic_agent
+  "Dermatologic Agents": dermatologic_agent
+  "Hormones": hormonal_agent
+  "Micronutrients": nutritional_agent
+  "Vitamins": nutritional_agent
+
+# --- layer 5: coarse browse branches --------------------------------------
+# derivedSection.interventionBrowseModule.browseBranches[]. CT.gov backend only.
+#
+# Matched on `branch_name`, NEVER by parsing `branch_abbrev`: the CONDITION
+# branch abbreviations turned out to be "B" + a MeSH tree code ("BC04" =
+# Neoplasms, see ta/resolver.py), and there is no evidence the intervention
+# branches use that convention -- they are not documented anywhere this project
+# can reach. Landing them verbatim and matching the name costs nothing and
+# cannot be silently wrong the way a parsed abbreviation could.
+#
+# Always yields a `pharmacologic` class. This is the weakest layer above the
+# defaults, and it exists so a study whose interventions resolve to no mechanism
+# lands somewhere honest rather than in `unclassified_agent`.
+branch_rules:
+  - drug_class: antineoplastic_agent
+    patterns: ['\bantineoplastic\b']
+  - drug_class: anti_infective_agent
+    patterns: ['\banti-?infective\b', '\bantimicrobial\b']
+  - drug_class: cardiovascular_agent
+    patterns: ['\bcardiovascular\b', '\bantihypertensive\b']
+  - drug_class: cns_agent
+    patterns: ['\bcentral nervous system\b', '\bpsychotropic\b', '\bneuro']
+  - drug_class: gastrointestinal_agent
+    patterns: ['\bgastrointestinal\b']
+  - drug_class: respiratory_agent
+    patterns: ['\brespiratory system\b']
+  - drug_class: dermatologic_agent
+    patterns: ['\bdermatolog']
+  - drug_class: hormonal_agent
+    patterns: ['\bhormone', '\bhormonal\b']
+  - drug_class: immunomodulating_agent
+    patterns: ['\bimmunolog', '\bimmunosuppress', '\banti-?inflammatory\b']
+  - drug_class: analgesic_agent
+    patterns: ['\banalgesic']
+  - drug_class: haematologic_agent
+    patterns: ['\b(h)?a?ematolog']
+  - drug_class: nutritional_agent
+    patterns: ['\bmicronutrient', '\bvitamin']
+  - drug_class: ophthalmic_agent
+    patterns: ['\bophthalmic\b']
+    notes: >-
+      "All Drugs and Chemicals" is deliberately unmapped. It is on essentially
+      every drug study, so mapping it would give every such study one identical
+      class and make the axis look far better covered than it is.
+
+# --- layer 6: modality, from the registry's own intervention_type ---------
+# The one layer that is a fallback within its axis rather than a competitor:
+# it fires only where no `modality` class has already been matched for that
+# intervention, so a "-mab" that already resolved to monoclonal_antibody is not
+# also called a small molecule.
+#
+# Keyed on intervention_type, case- and separator-insensitively (the two
+# backends spell these differently, the same way they spell PRIMARY/Primary
+# differently -- see ingest/results.py).
+modality_rules:
+  DRUG: small_molecule
+  DEVICE: device_intervention
+  PROCEDURE: procedure_intervention
+  RADIATION: procedure_intervention
+  BEHAVIORAL: behavioural_intervention
+  DIETARY_SUPPLEMENT: nutritional_agent
+  GENETIC: gene_therapy
+  DIAGNOSTIC_TEST: device_intervention
+  COMBINATION_PRODUCT: device_intervention
+  notes: >-
+    BIOLOGICAL is deliberately absent. It covers monoclonal antibodies,
+    vaccines, cell therapies and recombinant proteins alike, so any single
+    modality it mapped to would be wrong most of the time; the name stems in
+    layer 3 classify biologics far better than the type field can. An
+    unmatched BIOLOGICAL simply carries no modality class, which is the honest
+    outcome.
+
+# --- layer 7: defaults ----------------------------------------------------
+defaults:
+  no_rule_matched: unclassified_agent
+  no_interventions_on_study: no_interventions_stated
+
+resolution:
+  keep_all_matches: true
+  modality_is_orthogonal: true
+  notes: >-
+    `modality_is_orthogonal` is what stops layers 0-5 and layer 6 competing: an
+    intervention may hold at most one class of each `kind`, decided
+    first-hit-wins within that kind, and the kinds do not suppress each other.
+    So pembrolizumab in a trial is pd1_inhibitor (mechanism) AND
+    monoclonal_antibody (modality), and neither is a defeat for the other. The
+    per-study primary is then the lowest `precedence` across all of them, which
+    the precedence bands in drug_classes.yaml arrange to be the mechanism.
+
+caveats:
+  - >-
+    NOT ONE RULE IN THIS FILE HAS BEEN RUN AGAINST A LIVE PULL. This sandbox
+    cannot reach clinicaltrials.gov or AACT (confirmed: HTTP 403 on the outbound
+    proxy), which is the same constraint vocab/ta_mesh_mapping.yaml's caveats
+    record. Everything here is written from the documented API v2 shape and from
+    published MeSH/INN naming conventions. docs/DRUG_CLASS_SPEC.md's "Phasing,
+    with a gate" lists the four counts a first live pull owes this file; the two
+    that would change it most are whether `interventionBrowseModule.ancestors[]`
+    exists at all (layer 4 is empty without it) and what the intervention
+    `browseBranches[]` names actually look like (layer 5 is matched on them).
+  - >-
+    `agent_names` is a snapshot, and drug dictionaries perish. Agents approved
+    after this file was written will fall through to `name_patterns`, which is
+    why that layer is built on WHO INN stems rather than on ad-hoc regexes: a
+    2027 SGLT2 inhibitor will still be called something-gliflozin. Agents whose
+    class has no stem, and which NLM has not yet coded, will land in
+    conformed.drug_class_review_queue. That is the intended failure mode.
+  - >-
+    "Aspirin" is classed as `antiplatelet`, not `nsaid`. Both are true; the
+    judgment is that a trial registering aspirin as an intervention is far more
+    often studying its antiplatelet effect than its analgesic one. This is
+    exactly the kind of call `term_overrides` exists to make visible rather than
+    bury, and it is a single-line change if a live corpus says otherwise.
+  - >-
+    The `-mod`/`-imod` stem used for S1P modulators is the loosest pattern in
+    layer 3 and will over-match (any drug name ending in those letters). It is
+    kept because the S1P class is otherwise poorly covered by ancestors, and
+    because `agent_names` catches the five agents that matter first. Worth
+    checking against the first real review queue.
+  - >-
+    Layer 3's `\w+cept\b` (fusion proteins) and `\w+mab\b` (antibodies) both
+    yield MODALITY classes, so an over-match there costs a wrong modality, never
+    a wrong mechanism. That asymmetry is deliberate: the loosest patterns are
+    confined to the axis where being wrong is cheapest.

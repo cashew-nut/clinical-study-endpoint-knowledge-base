@@ -8,14 +8,16 @@ the judgment calls, and the things a reviewer should push back on.
 
 ```
 forms.yaml               18 terms   what kind of number the endpoint is
-measurements.yaml       234 terms   what quantity or event it is about
+measurements.yaml       242 terms   what quantity or event it is about
 references.yaml          17 terms   what it is measured against
 directions.yaml           7 terms   which way is better (derived, not matched)
 events.yaml              38 terms   what occurrence ends the clock, for a time-to-event endpoint
 scales.yaml              67 terms   the unit
 therapeutic_areas.yaml   24 terms   the TA, derived from MeSH
+drug_classes.yaml       116 terms   what the study was TESTING, derived from its interventions
 timepoint_patterns.yaml  11 terms   time_frame categories + extraction regexes
 ta_mesh_mapping.yaml                MeSH condition/intervention -> TA
+drug_class_mesh_mapping.yaml        registered intervention -> drug class
 matching.yaml                       HOW all of the above are matched
 named_endpoints.yaml     12 defs    what a literature endpoint NAME (PFS, OS, MACE...) means
 ```
@@ -189,7 +191,42 @@ Vaccines are the exception: a vaccine trial codes its condition as the infection
 it prevents, never as "Vaccines", so that area is derived from *intervention*
 MeSH codes in a separate `intervention_rules` block.
 
-### 8. Matching rules are vocabulary, not implementation (added in round two)
+### 8. Drug class means mechanism, and `kind` is mandatory
+
+`drug_classes.yaml` is the second study-attribute vocabulary, and it repeats the
+TA split: a term list plus a layered mapping
+(`drug_class_mesh_mapping.yaml`). The decision worth pushing back on is what a
+"class" means.
+
+MeSH classifies a substance twice — structurally (metformin is a *biguanide*)
+and functionally (metformin is a *hypoglycemic agent*). For grouping endpoints
+the functional axis is the one carrying signal: two drugs that lower HbA1c
+through the same receptor should behave alike on an HbA1c endpoint; two that
+share a ring system should not. So every term declares a `kind` — `mechanism`,
+`pharmacologic`, `modality` or `control` — the validator enforces it against a
+closed set, and **structural class is absent rather than approximated**. A
+`GROUP BY` that mixes kinds compares "PD-1 inhibitor" against "monoclonal
+antibody" as though they were alternatives.
+
+Two consequences of that, both enforced by `vocab validate`: a `parent` may not
+change `kind` (a rollup that changed axis halfway up would be meaningless), and
+a child must have a *lower* `precedence` than its parent, so `pd1_inhibitor`
+wins the primary over `checkpoint_inhibitor` — the specific claim is the one
+worth grouping by.
+
+`control` is a first-class kind rather than bookkeeping. Half the arms in a
+placebo-controlled corpus are placebo arms, and an axis that cannot name them
+cannot exclude them, which makes the first honest question anyone asks —
+*what does this class do relative to placebo?* — unanswerable.
+
+The mapping's third layer is **WHO INN stems**, and it is the one doing the
+unglamorous work: `-gliflozin` is not a guess about a drug, it is the published
+stem that made the drug's name what it is, so it classes agents NLM has not
+coded and agents approved after this file was written. That is deliberate,
+because `agent_names` is a snapshot and drug dictionaries perish — see that
+file's `caveats`.
+
+### 9. Matching rules are vocabulary, not implementation (added in round two)
 
 `matching.yaml` states how a synonym is compared to a registry string. That
 looks like an implementation detail and is not: the obvious reading — substring
@@ -496,6 +533,19 @@ No new scale terms were added, so the count stays at 67.
 
 ## Known gaps
 
+* **`drug_classes.yaml` and `drug_class_mesh_mapping.yaml` have never been run
+  against a live pull, and the gap is different in kind from the ones below.**
+  The other vocabularies were revised against a real 38,857-row export; the
+  drug-class pair was written from the documented CT.gov API v2 shape and from
+  published MeSH and WHO INN naming conventions, and its scope was chosen to
+  match the therapeutic areas already covered rather than measured against what
+  a corpus actually contains. Two of its layers (MeSH ancestors, browse
+  branches) have no AACT equivalent at all and have never been observed on the
+  CT.gov side either. `docs/DRUG_CLASS_SPEC.md`'s "Phasing, with a gate" lists
+  the four counts a first live pull owes it, and what happens to the axis under
+  each bad answer; `drug_class_mesh_mapping.yaml`'s own `caveats` block says the
+  same thing in its first line. Read the coverage number from
+  `endpoints drug-class coverage` before trusting the distribution.
 * ~~**Live AACT/CT.gov access is still unavailable from this build sandbox.**~~
   **Partly closed.** Round three was measured against a real pull's export --
   38,857 `design_outcomes` rows over 4,345 studies, plus the TA resolver's own
