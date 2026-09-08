@@ -15,9 +15,11 @@ uv run endpoints conform                            # writes conformed.endpoints
 uv run endpoints results conform                    # writes conformed.endpoint_results / endpoint_dispersion
 ```
 
-(`pull` also writes `conformed.study_therapeutic_area` and
-`conformed.study_drug_class` on its way through, as soon as `vocab validate`
-has loaded the two mappings.)
+(`pull` also writes `conformed.study_therapeutic_area`,
+`conformed.study_drug_class` and `conformed.arm_drug_class` on its way through
+-- one pull, one wave. It loads the vocabulary itself if the warehouse has
+none, so the first line above is optional; run it yourself to see the
+validation output, or after editing anything under `vocab/`.)
 
 Want a therapeutic area with a denser efficacy signal to look at, instead of
 an unfiltered mix of everything on the registry?
@@ -27,11 +29,11 @@ uv run endpoints pull --phase 3 --limit 500 --ta oncology
 uv run endpoints conform
 ```
 
-(`--ta` needs `vocab validate` to have already run once, since it filters
-against the MeSH->TA mapping `vocab validate` loads.)
+(`--ta` filters against the MeSH->TA mapping in `vocab.*`, not the YAML -- but
+`pull` will load that mapping for you if the warehouse has none.)
 
-Or just one sponsor's studies -- `--org` filters to the *lead* sponsor, no
-`vocab validate` needed:
+Or just one sponsor's studies -- `--org` filters to the *lead* sponsor, and
+touches the vocabulary not at all:
 
 ```bash
 uv run endpoints pull --phase 3 --limit 500 --org "Pfizer"

@@ -230,8 +230,9 @@ uv sync --extra serve      # ...plus FastAPI/uvicorn, if you want `endpoints ser
 
 The whole flow, from an empty directory to a USDM payload for one study.
 
-**1. Validate the vocabularies and load them into the warehouse.** Do this
-first: everything downstream reads `vocab.*` tables, not the YAML.
+**1. Validate the vocabularies and load them into the warehouse.** Everything
+downstream reads `vocab.*` tables, not the YAML, so this is what a run is
+always against.
 
 ```bash
 uv run endpoints vocab validate
@@ -244,15 +245,25 @@ timepoint_pattern=11)
 Wrote 5298 rows across 52 vocab.* tables -> warehouse.duckdb
 ```
 
-**2. Ingest studies.** Filtered by phase, date, and -- because step 1 loaded the
-MeSH → therapeutic-area mapping -- therapeutic area. This creates
-`warehouse.duckdb` if it does not exist and writes `raw.studies`,
-`raw.design_outcomes` and the condition/intervention tables.
+You can skip straight to step 2 if you like: a `pull` into a warehouse that
+holds no vocabulary loads one itself, so a first run is never split into a
+landing wave and a classifying wave. Run this yourself when you want to see the
+validation output, or after editing anything under `vocab/` -- an edit takes
+effect only on re-validation, and `pull` never rewrites a vocabulary the
+warehouse already holds.
+
+**2. Ingest studies.** Filtered by phase, date, therapeutic area, drug class or
+lead sponsor. This creates `warehouse.duckdb` if it does not exist and writes
+`raw.studies`, `raw.design_outcomes`, the condition and intervention tables,
+and the results section -- then resolves the therapeutic-area and drug-class
+axes over what it landed. One pull, one wave; there is no separate pull per
+axis.
 
 ```bash
 uv run endpoints pull --phase 3 --limit 500                 # 500 most recent Phase 3 studies
 uv run endpoints pull --phase 3 --limit 500 --ta oncology    # ...only oncology
 uv run endpoints pull --phase 3 --limit 500 --org "Pfizer"  # ...only Pfizer-led studies
+uv run endpoints pull --phase 3 --limit 500 --drug-class sglt2_inhibitor   # ...only SGLT2 trials
 ```
 
 Re-running `pull` upserts: studies matched by *this* pull are refreshed in

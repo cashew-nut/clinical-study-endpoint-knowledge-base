@@ -23,7 +23,7 @@ runs first. Three schemas:
 | schema | written by | holds |
 |---|---|---|
 | `raw` | `pull` | studies, design outcomes, conditions, MeSH browse rows, the registered interventions (`interventions`, `arm_interventions`, `browse_intervention_*`), the results section (`outcome_*`, `baseline_measurements`), the pull log |
-| `vocab` | `vocab validate` | the endpoint library, loaded from `vocab/*.yaml` |
+| `vocab` | `vocab validate`, `pull` | the endpoint library, loaded from `vocab/*.yaml` (`pull` loads it only if the warehouse has none -- it never rewrites a loaded one) |
 | `conformed` | `conform`, `results conform`, `pull` | `endpoints`, `review_queue`, `study_therapeutic_area`, `study_drug_class`, `arm_drug_class`, `drug_class_review_queue`, `endpoint_results`, `endpoint_dispersion`, `results_review_queue` |
 
 Every command that touches the warehouse takes `--warehouse <path>`, so several
@@ -62,6 +62,51 @@ source-agnostic, which is what lets the two backends be interchangeable.
 Shows a progress bar while it runs -- per API page for `--source ctgov_api`
 (the eventual study count isn't known until pagination stops), per landed
 table for `--source aact`.
+
+### One pull, one wave
+
+One `pull` lands everything a study contributes and derives everything that can
+be derived from it without another request. There is no second pull for
+conditions, for interventions, for the results section, or for the drug-class
+axis:
+
+| written by one `pull` | |
+|---|---|
+| `raw.studies`, `raw.design_outcomes`, `raw.design_groups` | what was planned, and in which arms |
+| `raw.conditions`, `raw.browse_conditions`, `raw.browse_condition_branches` | what it was studying |
+| `raw.interventions`, `raw.intervention_other_names`, `raw.arm_interventions`, `raw.browse_interventions`, `raw.browse_intervention_ancestors`, `raw.browse_intervention_branches` | what it was testing |
+| `raw.outcome_*`, `raw.baseline_measurements` | what it reported, for studies that posted results (`--no-results` opts out) |
+| `conformed.study_therapeutic_area` | the therapeutic-area axis, resolved |
+| `conformed.study_drug_class`, `conformed.arm_drug_class`, `conformed.drug_class_review_queue` | the drug-class axis, resolved |
+
+Both derived axes are read out of `vocab.*` tables rather than the YAML, so a
+warehouse with no vocabulary in it cannot classify what it lands. Rather than
+land the studies and leave their classification to a *second, network-costing*
+pull, `pull` loads the vocabulary itself when the warehouse holds none, and
+says so:
+
+```
+Loaded the vocabulary from /path/to/vocab first -- this warehouse had none
+(5298 rows across 52 vocab.* tables). Edits under vocab/ still need
+`endpoints vocab validate` to take effect.
+```
+
+So `endpoints pull --phase 3` into an empty directory is a complete first run,
+and `--ta`/`--drug-class` work there too. The load is narrow: it fires only
+when the tables an axis needs are *absent*. A complete snapshot pinned by an
+earlier `vocab validate` -- including one validated from an edited
+`--vocab-dir` -- is left exactly as it is, and an edit under `vocab/` still
+takes effect only when you re-validate. The one case where `pull` rewrites
+rather than adds is a warehouse whose vocabulary predates an axis entirely
+(validated by an older release, so it has the therapeutic-area tables and not
+the drug-class ones); there the held snapshot has no answer to give, and the
+message says the reload happened rather than claiming the warehouse had
+nothing. What `pull` writes is checked by exactly the validations `vocab
+validate` runs, and it writes nothing if they fail.
+
+The one thing a pull cannot backfill is a study it never fetched. Studies landed
+by a pull from *before* a table existed have no rows in it; re-pull to cover
+them, which is why `pull` warns when a schema migration adds a column.
 
 ### The two backends
 
@@ -219,9 +264,10 @@ heavily toward whichever conditions dominate trial activity generally
 (oncology). The scan is capped (`ingest/ctgov_api.py`'s `MAX_PAGES_TA_FILTERED`,
 `ingest/aact.py`'s `TA_MAX_SCANNED`); a `--ta` for a niche area combined with a
 wide `--phase`/`--since` can still land fewer than `--limit` studies, and
-`pull` says so when that happens. `--ta` requires `vocab validate` to have run
-against this warehouse first, since it filters against the loaded mapping
-rather than the YAML.
+`pull` says so when that happens. `--ta` filters against the mapping loaded
+into `vocab.*`, never the YAML -- but it does not require you to have run
+`vocab validate` yourself: a `pull` into a warehouse that holds no vocabulary
+loads one first (see [One pull, one wave](#one-pull-one-wave)).
 
 `--ta` only ever affects studies *this* pull lands: a study an earlier pull
 with different filters already landed is never removed just because it
@@ -248,10 +294,15 @@ the resolution order and
 ## Drug classes
 
 `pull` also resolves what each study was *testing* -- its interventions -- into
-`conformed.study_drug_class`, as soon as `vocab validate` has loaded the
-drug-class mapping. Like therapeutic areas, all matched classes are kept, with
-one marked `is_primary` by the precedence in `drug_classes.yaml`. Unlike
-therapeutic areas, every class declares a `kind`:
+`conformed.study_drug_class`. There is no separate drug-class pull and no
+separate resolve step: the interventions are in the payload `pull` already
+fetches, so an ordinary `endpoints pull --phase 3` lands them and classifies
+them in the same pass. `--drug-class` is a *filter* on that, not the way you
+obtain the data.
+
+Like therapeutic areas, all matched classes are kept, with one marked
+`is_primary` by the precedence in `drug_classes.yaml`. Unlike therapeutic
+areas, every class declares a `kind`:
 
 | kind | example | what it claims |
 |---|---|---|
@@ -267,15 +318,17 @@ Filter on `kind` whenever you group, or you will compare a mechanism against a
 modality as though they were alternatives.
 
 ```bash
-uv run endpoints vocab validate                                  # loads the drug-class mapping
+# Every study's classes, from an ordinary pull -- no flag needed
+uv run endpoints pull --phase 3 --limit 500
+
+# ...or narrow the corpus to one class, or several (OR'd)
 uv run endpoints pull --phase 3 --limit 500 --drug-class glp1_receptor_agonist
 uv run endpoints pull --phase 3 --limit 500 --drug-class sglt2_inhibitor,dpp4_inhibitor
 ```
 
 `--drug-class` filters exactly as `--ta` does, and for the same reason: neither
 backend can express it server-side, so `pull` scans past non-matching studies
-*before* `--limit` truncates, under the same cap. It requires `vocab validate`
-to have run against this warehouse first.
+*before* `--limit` truncates, under the same cap.
 
 ### What the corpus is made of, and what it missed
 

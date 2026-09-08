@@ -5,8 +5,10 @@ import json
 import duckdb
 from typer.testing import CliRunner
 
+from clinical_endpoints.cli import main
 from clinical_endpoints.cli.main import app
 from clinical_endpoints.ingest import ctgov_api
+from clinical_endpoints.vocab.loader import VocabError
 
 runner = CliRunner()
 
@@ -86,11 +88,20 @@ def test_pull_rejects_unknown_source(tmp_path, monkeypatch):
     assert "--source must be one of" in result.output
 
 
-def test_pull_rejects_ta_filter_when_vocab_not_loaded(tmp_path, monkeypatch):
+def test_pull_loads_the_vocabulary_itself_when_the_warehouse_has_none(tmp_path, monkeypatch):
+    """The whole point of the auto-load: `--ta` is answerable on a warehouse
+    that has never been validated into, so nobody has to land the studies in
+    one wave and classify them in another."""
     monkeypatch.chdir(tmp_path)
+    studies = [
+        _make_study("NCT001", "2024-01-01", condition_meshes=[{"id": "D1", "term": "Lung Neoplasms"}])
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: _FakeResponse(studies))
+
     result = runner.invoke(app, ["pull", "--phase", "3", "--ta", "oncology"])
-    assert result.exit_code == 1
-    assert "vocab validate" in result.output
+    assert result.exit_code == 0, result.output
+    assert "Loaded the vocabulary from" in result.output
+    assert "Filtered to --ta ['oncology']" in result.output
 
 
 def test_pull_ta_rejects_unknown_area(tmp_path, monkeypatch):
@@ -162,14 +173,59 @@ def test_pull_resolves_and_optionally_filters_by_ta(tmp_path, monkeypatch):
         con.close()
 
 
-def test_pull_without_ta_skips_resolution_when_vocab_not_loaded(tmp_path, monkeypatch):
+def test_pull_skips_resolution_only_when_no_vocabulary_can_be_found(tmp_path, monkeypatch):
+    """The degradation path -- an install that does not ship `vocab/`. The pull
+    still lands its studies; it just cannot classify them, and says so instead
+    of writing empty derived tables."""
     monkeypatch.chdir(tmp_path)
     studies = [_make_study("NCT001", "2024-01-01")]
     monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: _FakeResponse(studies))
+    monkeypatch.setattr(
+        main, "default_vocab_dir", lambda *a, **k: (_ for _ in ()).throw(VocabError("no vocab/ here"))
+    )
 
     result = runner.invoke(app, ["pull", "--phase", "3"])
     assert result.exit_code == 0, result.output
+    assert "Could not load a vocabulary" in result.output
     assert "Skipped therapeutic-area resolution" in result.output
+    assert "Skipped drug-class resolution" in result.output
+    # The studies themselves landed -- only the classification of them is missing.
+    con = duckdb.connect(str(tmp_path / "warehouse.duckdb"), read_only=True)
+    try:
+        assert con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 1
+    finally:
+        con.close()
+
+
+def test_pull_does_not_rewrite_a_vocabulary_the_warehouse_already_holds(tmp_path, monkeypatch):
+    """A *complete* snapshot pinned by an earlier `vocab validate` -- including
+    one validated from an edited `--vocab-dir` -- is left exactly as it is, so
+    an edit under vocab/ still takes effect only on re-validation. (The one case
+    that does get rewritten is a vocabulary predating an axis entirely; that is
+    the test above.)"""
+    monkeypatch.chdir(tmp_path)
+    warehouse = tmp_path / "wh.duckdb"
+    assert runner.invoke(app, ["vocab", "validate", "--warehouse", str(warehouse)]).exit_code == 0
+
+    con = duckdb.connect(str(warehouse))
+    con.execute("DELETE FROM vocab.drug_classes WHERE id = 'statin'")
+    pinned = con.execute("SELECT count(*) FROM vocab.drug_classes").fetchone()[0]
+    con.close()
+
+    studies = [_make_study("NCT001", "2024-01-01")]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: _FakeResponse(studies))
+    result = runner.invoke(app, ["pull", "--phase", "3", "--warehouse", str(warehouse)])
+    assert result.exit_code == 0, result.output
+    assert "Loaded the vocabulary from" not in result.output
+
+    con = duckdb.connect(str(warehouse), read_only=True)
+    try:
+        assert con.execute("SELECT count(*) FROM vocab.drug_classes").fetchone()[0] == pinned
+        assert con.execute(
+            "SELECT count(*) FROM vocab.drug_classes WHERE id = 'statin'"
+        ).fetchone()[0] == 0
+    finally:
+        con.close()
 
 
 def test_ta_diff_tree_requires_vocab_and_pull(tmp_path, monkeypatch):
@@ -536,11 +592,58 @@ def test_pull_refuses_a_table_it_cannot_migrate(tmp_path, monkeypatch):
 # ------------------------------------------------------- the drug-class axis
 
 
-def test_pull_rejects_drug_class_filter_when_vocab_not_loaded(tmp_path, monkeypatch):
+def test_pull_reloads_a_vocabulary_that_predates_an_axis_and_says_so(tmp_path, monkeypatch):
+    """A warehouse validated by a release older than the drug-class axis holds
+    the TA tables and not the drug-class ones. Reloading is right -- the held
+    snapshot has no answer to give -- but it is a rewrite, so the message must
+    not claim the warehouse had no vocabulary."""
     monkeypatch.chdir(tmp_path)
+    warehouse = tmp_path / "wh.duckdb"
+    assert runner.invoke(app, ["vocab", "validate", "--warehouse", str(warehouse)]).exit_code == 0
+
+    con = duckdb.connect(str(warehouse))
+    for table in ("drug_classes", "drug_class_agent_names", "drug_class_name_patterns"):
+        con.execute(f"DROP TABLE vocab.{table}")
+    con.close()
+
+    studies = [_make_study("NCT001", "2024-01-01", interventions=[{"type": "DRUG", "name": "Semaglutide"}])]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: _FakeResponse(studies))
+    result = runner.invoke(app, ["pull", "--phase", "3", "--warehouse", str(warehouse)])
+    assert result.exit_code == 0, result.output
+    assert "predates the tables the resolvers need" in result.output
+    assert "this warehouse had none" not in result.output
+
+    con = duckdb.connect(str(warehouse), read_only=True)
+    try:
+        assert con.execute(
+            "SELECT drug_class_id FROM conformed.study_drug_class WHERE is_primary"
+        ).fetchall() == [("glp1_receptor_agonist",)]
+    finally:
+        con.close()
+
+
+def test_pull_drug_class_filter_works_on_a_never_validated_warehouse(tmp_path, monkeypatch):
+    """One command, one wave: the interventions land, the vocabulary loads, and
+    the filter is applied, from an empty directory."""
+    monkeypatch.chdir(tmp_path)
+    studies = [
+        _make_study("NCT001", "2024-01-01", interventions=[{"type": "DRUG", "name": "Semaglutide"}]),
+        _make_study("NCT002", "2024-01-01", interventions=[{"type": "DRUG", "name": "Atorvastatin"}]),
+    ]
+    monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: _FakeResponse(studies))
+
     result = runner.invoke(app, ["pull", "--phase", "3", "--drug-class", "statin"])
-    assert result.exit_code == 1
-    assert "vocab validate" in result.output
+    assert result.exit_code == 0, result.output
+    assert "Loaded the vocabulary from" in result.output
+
+    con = duckdb.connect(str(tmp_path / "warehouse.duckdb"), read_only=True)
+    try:
+        assert [r[0] for r in con.execute("SELECT nct_id FROM raw.studies").fetchall()] == ["NCT002"]
+        assert con.execute(
+            "SELECT drug_class_id FROM conformed.study_drug_class WHERE is_primary"
+        ).fetchall() == [("statin",)]
+    finally:
+        con.close()
 
 
 def test_pull_drug_class_rejects_unknown_class(tmp_path, monkeypatch):

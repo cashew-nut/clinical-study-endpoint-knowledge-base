@@ -31,6 +31,16 @@
 > against the sponsor's intervention name as well as the NLM descriptor; and
 > the arm tier was built rather than deferred, because it degrades safely — but
 > `stats` still does not consume it, exactly as this spec required.
+>
+> A fourth change came after first use. Resolution runs inside `pull` and reads
+> `vocab.*`, so a `pull` into a warehouse that had never been validated into
+> landed the interventions and then skipped `conformed.study_drug_class` — and
+> since resolution runs nowhere else, the only way to fill it in afterwards was
+> **another network pull**, to fetch data that had already arrived. `pull` now
+> loads the vocabulary itself when the warehouse holds none, so the axis is
+> never a second wave. The load is additive only and never rewrites a
+> vocabulary already present, so the "every run is against a validated
+> snapshot" contract is unchanged.
 
 Read alongside:
 

@@ -172,6 +172,81 @@ def _vocab_ta_tables_ready(con) -> bool:
     )
 
 
+def _ensure_vocab_loaded(
+    con, *, vocab_dir: Optional[str] = None
+) -> tuple[Optional[str], Optional[str]]:
+    """Load `vocab/*.yaml` into this warehouse if it does not already hold a
+    vocabulary the resolvers can read. Returns `(message, warning)`, at most one
+    of which is set; never raises, and never aborts the pull.
+
+    Therapeutic-area and drug-class resolution live inside `pull` because both
+    are functions of what the pull just landed. They read `vocab.*` tables, so a
+    warehouse pulled into *before* `vocab validate` ran used to land the raw
+    conditions and interventions and then skip both derived tables -- and
+    because resolution runs nowhere else, the only way to fill them in
+    afterwards was **another network pull**. The data had already arrived; only
+    the classification of it was missing. Loading the vocabulary here costs no
+    network and makes a single `endpoints pull` on an empty directory produce a
+    complete warehouse whatever order the operator ran things in.
+
+    Narrow on purpose: it fires only when an axis's tables are *absent*, so a
+    complete snapshot pinned by an earlier `vocab validate` (or by `--vocab-dir`
+    against an edited copy) is left exactly as it is, and an edit under `vocab/`
+    still does not take effect until you re-validate. The one case where it
+    rewrites rather than adds is a warehouse whose vocabulary predates an axis
+    entirely -- there the held snapshot has no answer to give, and the message
+    says the reload happened. The project's "every run is against a validated
+    snapshot" contract is kept rather than bypassed: what this writes is
+    validated by exactly the checks `vocab validate` runs, and refuses to write
+    anything if they fail.
+    """
+    ta_ready = _vocab_ta_tables_ready(con)
+    class_ready = _vocab_drug_class_tables_ready(con)
+    if ta_ready and class_ready:
+        return None, None
+    # A warehouse validated by a release older than an axis has some of the
+    # vocabulary and not the tables that axis needs. Reloading is right there --
+    # the held snapshot cannot answer the question being asked of it -- but it
+    # is a rewrite, not an addition, so the message below says which happened.
+    stale = ta_ready or class_ready
+
+    try:
+        resolved = Path(vocab_dir) if vocab_dir else default_vocab_dir()
+        docs = load_vocab(resolved)
+    except VocabError as exc:
+        # No `vocab/` on disk (an installed wheel that does not package it, say).
+        # The pull is unaffected; it just cannot classify what it landed.
+        return None, (
+            f"Could not load a vocabulary to resolve this pull against ({exc}). "
+            "The studies landed; run `endpoints vocab validate --vocab-dir <path>` "
+            "and re-run `pull` to classify them."
+        )
+
+    result = validate_vocab(docs)
+    if result.errors:
+        first = result.errors[0]
+        more = f" (+{len(result.errors) - 1} more)" if len(result.errors) > 1 else ""
+        return None, (
+            f"The vocabulary in {resolved} does not validate, so nothing was loaded and "
+            f"this pull could not be classified: {first}{more}. "
+            "Run `endpoints vocab validate` to see all of them."
+        )
+
+    counts = write_vocab_tables(con, docs, vocab_dir=resolved)
+    why = (
+        "this warehouse's vocabulary predates the tables the resolvers need, so it was "
+        "reloaded in full"
+        if stale
+        else "this warehouse had none"
+    )
+    return (
+        f"Loaded the vocabulary from {resolved} first -- {why} "
+        f"({sum(counts.values())} rows across {len(counts)} vocab.* tables). "
+        "Edits under vocab/ still need `endpoints vocab validate` to take effect.",
+        None,
+    )
+
+
 @app.command()
 def pull(
     phase: str = typer.Option(
@@ -185,16 +260,16 @@ def pull(
         None,
         "--ta",
         help="Therapeutic-area filter (comma-separated ids from therapeutic_areas.yaml, "
-        "e.g. oncology,respiratory). Requires `endpoints vocab validate` to have already "
-        "been run against this warehouse.",
+        "e.g. oncology,respiratory). Filters against the mapping loaded into vocab.*; "
+        "if this warehouse holds none, `pull` loads one first.",
     ),
     drug_class: Optional[str] = typer.Option(
         None,
         "--drug-class",
         help="Drug-class filter (comma-separated ids from drug_classes.yaml, e.g. "
         "glp1_receptor_agonist,sglt2_inhibitor). Applied client-side before --limit, "
-        "same as --ta -- neither backend can express it server-side. Requires "
-        "`endpoints vocab validate` to have already been run against this warehouse.",
+        "same as --ta -- neither backend can express it server-side. NOT needed to get "
+        "drug classes: every pull resolves them for whatever it lands.",
     ),
     org: Optional[str] = typer.Option(
         None,
@@ -229,12 +304,17 @@ def pull(
         'currently broken) or "aact" (requires .env credentials).',
     ),
 ) -> None:
-    """Pull filtered studies + design_outcomes/conditions into raw.*, log the pull,
-    and (once `vocab validate` has loaded the mappings) resolve therapeutic areas
-    into conformed.study_therapeutic_area and drug classes into
-    conformed.study_drug_class -- filtering down to `--ta`, `--drug-class` and/or
-    `--org` if given. Upserts by default; `--replace` discards everything raw.*
-    already held instead."""
+    """Pull filtered studies + design_outcomes/conditions/interventions into raw.*,
+    log the pull, and resolve therapeutic areas into
+    conformed.study_therapeutic_area and drug classes into
+    conformed.study_drug_class / arm_drug_class -- filtering down to `--ta`,
+    `--drug-class` and/or `--org` if given.
+
+    One pull, one wave: everything a study contributes is in the payload this
+    already fetches, so there is no second pull per axis. A warehouse holding no
+    vocabulary gets one loaded first, so a first `pull` into an empty directory
+    is complete on its own. Upserts by default; `--replace` discards everything
+    raw.* already held instead."""
     if source not in SOURCES:
         console.print(f"[red]--source must be one of {SOURCES}, got {source!r}[/red]")
         raise typer.Exit(code=1)
@@ -267,6 +347,16 @@ def pull(
 
     con = connect(warehouse)
     try:
+        # Before anything else, so that a first `pull` into an empty directory
+        # resolves what it lands instead of leaving the derived tables for a
+        # second, network-costing pull -- and so --ta/--drug-class below are
+        # answerable on a warehouse that has never been validated into.
+        vocab_message, vocab_warning = _ensure_vocab_loaded(con)
+        if vocab_message:
+            console.print(f"[green]{vocab_message}[/green]")
+        if vocab_warning:
+            console.print(f"[yellow]{vocab_warning}[/yellow]")
+
         if ta_ids and not _vocab_ta_tables_ready(con):
             console.print(
                 "[red]--ta requires the MeSH->TA vocabulary to already be loaded into this "
@@ -446,8 +536,9 @@ def pull(
         )
     elif not ta_ids:
         console.print(
-            "[yellow]Skipped therapeutic-area resolution: run `endpoints vocab validate` "
-            "to populate conformed.study_therapeutic_area.[/yellow]"
+            "[yellow]Skipped therapeutic-area resolution -- this warehouse has no "
+            "vocabulary and none could be loaded (see above). conformed.study_therapeutic_area "
+            "was not written.[/yellow]"
         )
 
     if result.get("interventions_warning"):
@@ -470,8 +561,9 @@ def pull(
             )
     elif not class_ids:
         console.print(
-            "[yellow]Skipped drug-class resolution: run `endpoints vocab validate` "
-            "to populate conformed.study_drug_class.[/yellow]"
+            "[yellow]Skipped drug-class resolution -- this warehouse has no vocabulary "
+            "and none could be loaded (see above). conformed.study_drug_class was not "
+            "written.[/yellow]"
         )
 
 
