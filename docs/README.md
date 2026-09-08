@@ -21,12 +21,13 @@ Each spec states its own status at the top. In short:
 | [`USDM_PROJECTION_INTEGRITY_SPEC.md`](USDM_PROJECTION_INTEGRITY_SPEC.md) | **implemented** | announced defaults, per-attribute `derived` flags, timepoint roles, and the v2 extension profile |
 | [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md) | **implemented** | the results section: landing it, conforming it, normalising reported spread into a standard deviation, and `endpoints stats` |
 | [`COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) | **not implemented** | decomposing composite endpoints into their components — a proposal, gated on a measurement that needs a live pull |
+| [`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md) | **not implemented** | grouping endpoints by the drug class under study — a proposal, gated on a measurement that needs a live pull |
 | [`RESULTS_CORRELATION_ROADMAP.md`](RESULTS_CORRELATION_ROADMAP.md) | **partly shipped** (D4–D9) | the menu the results spec was chosen from, and what was decided against |
 
 Read them in that order if you are new to the project: the first two explain
 how the pipeline gets its data and what it emits, the next two are corrections
 made after validating the projection against a real trial, the fifth is what
-the pipeline does with what trials reported, and the last two are proposals.
+the pipeline does with what trials reported, and the last three are proposals.
 
 ### Conventions
 
@@ -41,8 +42,8 @@ the pipeline does with what trials reported, and the last two are proposals.
 
 ## What is not implemented
 
-Beyond the composite spec above, three CLI commands are declared and exit with
-a message: `endpoints query`, `endpoints export`, and `endpoints review
+Beyond the composite and drug-class specs above, three CLI commands are declared
+and exit with a message: `endpoints query`, `endpoints export`, and `endpoints review
 resolve`. See [`USAGE.md`](USAGE.md#not-implemented) for what to use instead.
 
 Three measurements are owed by specs that are otherwise implemented, and all
