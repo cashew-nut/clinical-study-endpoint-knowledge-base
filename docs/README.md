@@ -7,6 +7,7 @@
 | [`../README.md`](../README.md) | what this is, the features, and a quickstart from install to a USDM payload |
 | [`USAGE.md`](USAGE.md) | every CLI command, its options, and what it writes |
 | [`QUERY_CHEATSHEET.md`](QUERY_CHEATSHEET.md) | copy-pasteable SQL against `warehouse.duckdb` |
+| [`QUESTIONS_THIS_ANSWERS.md`](QUESTIONS_THIS_ANSWERS.md) | six clinical / study-design questions the pipeline answers, and the commands that answer them |
 | [`../vocab/README.md`](../vocab/README.md) | the vocabulary schema, the judgment calls behind it, and measured coverage |
 
 ## Design specs

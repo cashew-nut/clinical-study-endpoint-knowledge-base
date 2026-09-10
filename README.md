@@ -20,7 +20,8 @@ Everything is a CLI plus a DuckDB file -- no server to stand up, no UI.
 * [Features](#features) · [Install](#install) · [Quickstart](#quickstart)
 * Usage examples: [`docs/USAGE.md`](docs/USAGE.md) (the CLI, end to end) and
   [`docs/QUERY_CHEATSHEET.md`](docs/QUERY_CHEATSHEET.md) (SQL against the
-  warehouse)
+  warehouse); [`docs/QUESTIONS_THIS_ANSWERS.md`](docs/QUESTIONS_THIS_ANSWERS.md)
+  is the same material framed as the questions it answers
 * Reference: [`vocab/README.md`](vocab/README.md) (the vocabulary schema) and
   [`docs/README.md`](docs/README.md) (design specs, and what is implemented)
 
@@ -345,6 +346,9 @@ can sit side by side -- one per therapeutic area, one per vocabulary revision.
   USDM projection and the HTTP API.
 * [`docs/QUERY_CHEATSHEET.md`](docs/QUERY_CHEATSHEET.md) -- SQL for the
   warehouse: coverage, cross-study comparability, one study end to end.
+* [`docs/QUESTIONS_THIS_ANSWERS.md`](docs/QUESTIONS_THIS_ANSWERS.md) -- the
+  other direction: six clinical / study-design questions, and what running the
+  pipeline gives back for each.
 * [`vocab/README.md`](vocab/README.md) -- how to read and extend the
   vocabularies.
 * [`docs/README.md`](docs/README.md) -- the design specs, each flagged
