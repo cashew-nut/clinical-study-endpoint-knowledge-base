@@ -22,9 +22,9 @@ runs first. Three schemas:
 
 | schema | written by | holds |
 |---|---|---|
-| `raw` | `pull` | studies, design outcomes, conditions, MeSH browse rows, the results section (`outcome_*`, `baseline_measurements`), the pull log |
-| `vocab` | `vocab validate` | the endpoint library, loaded from `vocab/*.yaml` |
-| `conformed` | `conform`, `results conform`, `pull` | `endpoints`, `review_queue`, `study_therapeutic_area`, `endpoint_results`, `endpoint_dispersion`, `results_review_queue` |
+| `raw` | `pull` | studies, design outcomes, conditions, MeSH browse rows, the registered interventions (`interventions`, `arm_interventions`, `browse_intervention_*`), the results section (`outcome_*`, `baseline_measurements`), the pull log |
+| `vocab` | `vocab validate`, `pull` | the endpoint library, loaded from `vocab/*.yaml` (`pull` loads it only if the warehouse has none -- it never rewrites a loaded one) |
+| `conformed` | `conform`, `results conform`, `pull` | `endpoints`, `review_queue`, `study_therapeutic_area`, `study_drug_class`, `arm_drug_class`, `drug_class_review_queue`, `endpoint_results`, `endpoint_dispersion`, `results_review_queue` |
 
 Every command that touches the warehouse takes `--warehouse <path>`, so several
 can sit side by side (one per therapeutic area, one per vocabulary revision):
@@ -47,6 +47,9 @@ uv run endpoints pull --phase "2,3" --since 2023-01-01 --limit 500
 uv run endpoints pull --phase 3 --limit 500 --org "Pfizer"
 uv run endpoints pull --phase 3 --limit 500 --org "Pfizer,AbbVie"
 
+# Only studies testing a given drug class (comma-separated, OR'd)
+uv run endpoints pull --phase 3 --limit 500 --drug-class glp1_receptor_agonist
+
 # Explicitly use AACT instead of the public API
 uv run endpoints pull --phase 3 --limit 500 --source aact
 
@@ -59,6 +62,51 @@ source-agnostic, which is what lets the two backends be interchangeable.
 Shows a progress bar while it runs -- per API page for `--source ctgov_api`
 (the eventual study count isn't known until pagination stops), per landed
 table for `--source aact`.
+
+### One pull, one wave
+
+One `pull` lands everything a study contributes and derives everything that can
+be derived from it without another request. There is no second pull for
+conditions, for interventions, for the results section, or for the drug-class
+axis:
+
+| written by one `pull` | |
+|---|---|
+| `raw.studies`, `raw.design_outcomes`, `raw.design_groups` | what was planned, and in which arms |
+| `raw.conditions`, `raw.browse_conditions`, `raw.browse_condition_branches` | what it was studying |
+| `raw.interventions`, `raw.intervention_other_names`, `raw.arm_interventions`, `raw.browse_interventions`, `raw.browse_intervention_ancestors`, `raw.browse_intervention_branches` | what it was testing |
+| `raw.outcome_*`, `raw.baseline_measurements` | what it reported, for studies that posted results (`--no-results` opts out) |
+| `conformed.study_therapeutic_area` | the therapeutic-area axis, resolved |
+| `conformed.study_drug_class`, `conformed.arm_drug_class`, `conformed.drug_class_review_queue` | the drug-class axis, resolved |
+
+Both derived axes are read out of `vocab.*` tables rather than the YAML, so a
+warehouse with no vocabulary in it cannot classify what it lands. Rather than
+land the studies and leave their classification to a *second, network-costing*
+pull, `pull` loads the vocabulary itself when the warehouse holds none, and
+says so:
+
+```
+Loaded the vocabulary from /path/to/vocab first -- this warehouse had none
+(5298 rows across 52 vocab.* tables). Edits under vocab/ still need
+`endpoints vocab validate` to take effect.
+```
+
+So `endpoints pull --phase 3` into an empty directory is a complete first run,
+and `--ta`/`--drug-class` work there too. The load is narrow: it fires only
+when the tables an axis needs are *absent*. A complete snapshot pinned by an
+earlier `vocab validate` -- including one validated from an edited
+`--vocab-dir` -- is left exactly as it is, and an edit under `vocab/` still
+takes effect only when you re-validate. The one case where `pull` rewrites
+rather than adds is a warehouse whose vocabulary predates an axis entirely
+(validated by an older release, so it has the therapeutic-area tables and not
+the drug-class ones); there the held snapshot has no answer to give, and the
+message says the reload happened rather than claiming the warehouse had
+nothing. What `pull` writes is checked by exactly the validations `vocab
+validate` runs, and it writes nothing if they fail.
+
+The one thing a pull cannot backfill is a study it never fetched. Studies landed
+by a pull from *before* a table existed have no rows in it; re-pull to cover
+them, which is why `pull` warns when a schema migration adds a column.
 
 ### The two backends
 
@@ -216,9 +264,10 @@ heavily toward whichever conditions dominate trial activity generally
 (oncology). The scan is capped (`ingest/ctgov_api.py`'s `MAX_PAGES_TA_FILTERED`,
 `ingest/aact.py`'s `TA_MAX_SCANNED`); a `--ta` for a niche area combined with a
 wide `--phase`/`--since` can still land fewer than `--limit` studies, and
-`pull` says so when that happens. `--ta` requires `vocab validate` to have run
-against this warehouse first, since it filters against the loaded mapping
-rather than the YAML.
+`pull` says so when that happens. `--ta` filters against the mapping loaded
+into `vocab.*`, never the YAML -- but it does not require you to have run
+`vocab validate` yourself: a `pull` into a warehouse that holds no vocabulary
+loads one first (see [One pull, one wave](#one-pull-one-wave)).
 
 `--ta` only ever affects studies *this* pull lands: a study an earlier pull
 with different filters already landed is never removed just because it
@@ -241,6 +290,84 @@ without a MeSH expert. See
 [`SAMPLING_AND_TA_RESOLUTION_SPEC.md`](SAMPLING_AND_TA_RESOLUTION_SPEC.md) for
 the resolution order and
 [`vocab/README.md`](../vocab/README.md) for the mapping itself.
+
+## Drug classes
+
+`pull` also resolves what each study was *testing* -- its interventions -- into
+`conformed.study_drug_class`. There is no separate drug-class pull and no
+separate resolve step: the interventions are in the payload `pull` already
+fetches, so an ordinary `endpoints pull --phase 3` lands them and classifies
+them in the same pass. `--drug-class` is a *filter* on that, not the way you
+obtain the data.
+
+Like therapeutic areas, all matched classes are kept, with one marked
+`is_primary` by the precedence in `drug_classes.yaml`. Unlike therapeutic
+areas, every class declares a `kind`:
+
+| kind | example | what it claims |
+|---|---|---|
+| `mechanism` | `glp1_receptor_agonist` | the target or pathway acted on -- the axis that carries signal for comparing endpoints |
+| `pharmacologic` | `antineoplastic_agent` | the coarse action level, from CT.gov's browse branches |
+| `modality` | `monoclonal_antibody` | what kind of product it is; orthogonal to the other two |
+| `control` | `placebo` | a comparator arm, so it can be excluded |
+
+A study normally carries several at once, and that is correct: pembrolizumab is
+a PD-1 inhibitor *and* a monoclonal antibody, and a trial of pembrolizumab plus
+carboplatin is a checkpoint-inhibitor trial *and* a platinum-chemotherapy trial.
+Filter on `kind` whenever you group, or you will compare a mechanism against a
+modality as though they were alternatives.
+
+```bash
+# Every study's classes, from an ordinary pull -- no flag needed
+uv run endpoints pull --phase 3 --limit 500
+
+# ...or narrow the corpus to one class, or several (OR'd)
+uv run endpoints pull --phase 3 --limit 500 --drug-class glp1_receptor_agonist
+uv run endpoints pull --phase 3 --limit 500 --drug-class sglt2_inhibitor,dpp4_inhibitor
+```
+
+`--drug-class` filters exactly as `--ta` does, and for the same reason: neither
+backend can express it server-side, so `pull` scans past non-matching studies
+*before* `--limit` truncates, under the same cap.
+
+### What the corpus is made of, and what it missed
+
+```bash
+uv run endpoints drug-class distribution                 # every matched class
+uv run endpoints drug-class distribution --kind mechanism --primary-only
+uv run endpoints drug-class coverage                     # the denominator, and the review queue
+```
+
+`distribution` always prints the share of studies carrying a named class,
+because a class list without its denominator is a machine for making a thin axis
+look complete. `coverage` adds the breakdown by kind and lists the most frequent
+interventions no layer could class -- those go to
+`conformed.drug_class_review_queue` and are the input to the next vocabulary
+round, exactly as `endpoints review list` is on the endpoint side.
+
+### Where the two backends differ
+
+The CT.gov API exposes MeSH intervention *ancestors* and coarse pharmacologic
+*browse branches*; AACT publishes neither, so on an AACT pull those two layers
+contribute nothing and classification rests on the curated agent names and WHO
+INN stems. AACT is the stronger of the two for the **arm** tier, though: it has
+a real `design_group_interventions` join table where the API offers only arm
+labels to string-match. `conformed.arm_drug_class.link_method` records which
+path produced each row.
+
+```bash
+uv run endpoints drug-class diff-ancestors --out drug_class_ancestor_diff.csv
+```
+
+`diff-ancestors` runs the curated layers alone and NLM's ancestry alone and
+reports every disagreement -- each one is either a wrong `agent_names` entry or
+a wrong `ancestor_rules` entry in `vocab/drug_class_mesh_mapping.yaml`. It
+reports; it does not reconcile. On an AACT pull it will correctly say there was
+nothing to diff.
+
+See [`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md) for the layer order, what is
+deliberately *not* modelled (ATC codes, chemical structure), and the four counts
+a first live pull still owes this axis.
 
 ## The vocabulary
 
@@ -418,6 +545,9 @@ see [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md#the-gate).
 uv run endpoints stats --measurement fev1
 uv run endpoints stats --measurement fev1 --form change_from_baseline --scale litres
 uv run endpoints stats --measurement fev1 --ta respiratory --phase PHASE3
+uv run endpoints stats --measurement fev1 --drug-class muscarinic_antagonist
+uv run endpoints stats --measurement fev1 --by drug-class
+uv run endpoints stats --measurement fev1 --by drug-class --analyses
 uv run endpoints stats --measurement fev1 --source baseline
 uv run endpoints stats --measurement fev1 --analyses
 uv run endpoints stats --measurement fev1 --json
@@ -438,6 +568,24 @@ measurement=fev1, source=outcome
 
 No SD from: dispersion_type_unrecognised 1
 ```
+
+**`--drug-class` filters; `--by drug-class` stratifies**, and which you want
+depends on what you are asking. On the SD side the filter is the useful one
+("what should I assume for FEV1 in LAMA trials"): the SD is mostly a property of
+the population, the assay and the timepoint rather than the drug, so stratifying
+mostly buys smaller denominators -- its real use is as a homogeneity check,
+because strata that differ sharply mean the pooled number was never
+exchangeable. On `--analyses` that inverts and the stratifier is the point:
+pooling treatment effects across mechanisms is a category error, and a median
+effect across "all drugs" has no referent. `--by drug-class` stratifies over
+`mechanism` classes by default (`--by-kind` changes that) and the strata are not
+disjoint -- a combination trial appears under every class it used.
+
+`--drug-class` is the **study** tier: it narrows to trials that used the class.
+It does not claim the SD came from an arm that received it. See
+[`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md#class-is-an-arm-property-not-a-study-property)
+for why the arm tier, which is written to `conformed.arm_drug_class`, is not
+joined here yet.
 
 One block per **(form, unit)** group, always: the SD of a change from baseline
 is not the SD of a raw value, and the SD in litres is not the SD in

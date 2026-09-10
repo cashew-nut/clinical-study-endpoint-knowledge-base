@@ -280,6 +280,13 @@ def test_run_pull_lands_conditions_and_mesh_tables(tmp_path, monkeypatch):
         "browse_conditions": 1,
         "browse_interventions": 1,
         "browse_condition_branches": 1,
+        # The interventions (docs/DRUG_CLASS_SPEC.md): landed by default from
+        # the same payload, and empty here because this fixture registers none.
+        "interventions": 0,
+        "intervention_other_names": 0,
+        "arm_interventions": 0,
+        "browse_intervention_ancestors": 0,
+        "browse_intervention_branches": 0,
         # The results section (D4): landed by default, but this study posted
         # none, which is the ordinary case rather than an error.
         "outcome_measures": 0,
@@ -334,6 +341,13 @@ def test_run_pull_lands_studies_sorted_desc_and_logs(tmp_path, monkeypatch):
         "browse_conditions": 0,
         "browse_interventions": 0,
         "browse_condition_branches": 0,
+        # The interventions (docs/DRUG_CLASS_SPEC.md): landed by default from
+        # the same payload, and empty here because this fixture registers none.
+        "interventions": 0,
+        "intervention_other_names": 0,
+        "arm_interventions": 0,
+        "browse_intervention_ancestors": 0,
+        "browse_intervention_branches": 0,
         "outcome_measures": 0,
         "outcome_groups": 0,
         "outcome_measurements": 0,

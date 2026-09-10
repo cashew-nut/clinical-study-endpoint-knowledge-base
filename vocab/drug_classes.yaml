@@ -1,0 +1,1084 @@
+# Dimension: DRUG CLASS.
+#
+# Not a native field on either ingestion backend -- like therapeutic area, it is
+# derived from what the study registered as its interventions (see
+# drug_class_mesh_mapping.yaml). This file is only the closed list of classes
+# plus the rules for resolving a study that maps to several.
+#
+# WHAT A "CLASS" MEANS HERE, and it is the decision the whole axis rests on:
+# MeSH classifies a substance twice, structurally (metformin is a *biguanide*)
+# and functionally (metformin is a *hypoglycemic agent*). For grouping
+# ENDPOINTS, mechanism is the axis that carries signal -- two drugs that lower
+# HbA1c through the same receptor should behave alike on an HbA1c endpoint; two
+# drugs that share a ring system should not. So every term declares a `kind`:
+#
+#   mechanism     the target or pathway acted on -- GLP-1 receptor agonist,
+#                 PD-1 inhibitor, SGLT2 inhibitor. The useful axis.
+#   pharmacologic the coarse action level, which is what CT.gov's intervention
+#                 browse branches give directly -- antineoplastic agent,
+#                 cardiovascular agent. A weaker claim, never a mechanism one.
+#   modality      what kind of thing it is -- small molecule, monoclonal
+#                 antibody, cell therapy, device, behavioural intervention.
+#                 Orthogonal to the other two; a study is normally both.
+#   control       placebo, sham, standard of care, no intervention.
+#
+# `kind` is MANDATORY so that a query has to say which axis it means, the same
+# way docs/COMPOSITE_ENDPOINTS_SPEC.md makes composite `kind` mandatory. A
+# GROUP BY that mixes them silently compares "PD-1 inhibitor" against
+# "monoclonal antibody" as if they were alternatives.
+#
+# STRUCTURAL CLASS IS NOT MODELLED. Not modelled badly -- absent. If a use for
+# it appears it is a fourth `kind`, not a redefinition of these.
+#
+# `control` is a first-class kind rather than bookkeeping: half the arms in a
+# placebo-controlled corpus are placebo arms, and an axis that cannot name them
+# cannot exclude them, which makes the first honest question anyone asks --
+# what does this class do relative to placebo? -- unanswerable.
+#
+# PRECEDENCE BANDS. Lower wins the primary class. The bands encode "the most
+# specific claim about what is being tested wins":
+#
+#     10-199   mechanism    a named target beats everything, and within a
+#                           family a CHILD outranks its PARENT -- `pd1_inhibitor`
+#                           beats `checkpoint_inhibitor`, because the specific
+#                           claim is the one worth grouping by. The loader
+#                           enforces this (`_validate_drug_classes`).
+#    200-299   pharmacologic
+#    300-399   modality     how it is made is the weakest useful claim
+#    400-499   control      a placebo-controlled trial of drug X is a trial
+#                           of drug X
+#    900+      defaults     only when nothing else matched
+#
+# `parent` is one shallow level of rollup (pd1_inhibitor -> checkpoint_inhibitor),
+# validated acyclic. It is NOT the recursive structure
+# docs/COMPOSITE_ENDPOINTS_SPEC.md argues for, and should not grow into one.
+#
+# COVERAGE IS DELIBERATELY PARTIAL. This is the first round, scoped to the
+# classes a Phase 3 corpus is mostly made of across the therapeutic areas
+# therapeutic_areas.yaml already covers. It is not a pharmacopoeia and must not
+# become one by coverage pressure: an intervention that matches nothing goes to
+# conformed.drug_class_review_queue and stays `unclassified_agent` until a human
+# review round adds the term. See vocab/README.md, "Adding or changing a term".
+
+version: 1
+dimension: drug_class
+terms:
+
+  # --- mechanism: oncology ------------------------------------------------
+  # The densest block, because oncology dominates Phase 3 registration volume
+  # and because combination therapy is the norm there -- which is exactly why
+  # `resolution.keep_all_matches` matters more here than anywhere else.
+
+  - id: checkpoint_inhibitor
+    label: "Immune checkpoint inhibitor"
+    inline_label: "an immune checkpoint inhibitor"
+    kind: mechanism
+    precedence: 13
+    definition: "Blocks an inhibitory immune checkpoint receptor or ligand, releasing T-cell antitumour activity."
+    synonyms: ["checkpoint inhibitor", "immune checkpoint inhibitor", "checkpoint blockade", "immunotherapy checkpoint"]
+
+  - id: pd1_inhibitor
+    label: "PD-1 inhibitor"
+    inline_label: "a PD-1 inhibitor"
+    kind: mechanism
+    parent: checkpoint_inhibitor
+    precedence: 10
+    definition: "Monoclonal antibody against programmed cell death protein 1."
+    synonyms: ["pd-1 inhibitor", "pd1 inhibitor", "anti-pd-1", "anti-pd1", "pd-1 blockade"]
+
+  - id: pdl1_inhibitor
+    label: "PD-L1 inhibitor"
+    inline_label: "a PD-L1 inhibitor"
+    kind: mechanism
+    parent: checkpoint_inhibitor
+    precedence: 11
+    definition: "Monoclonal antibody against programmed death-ligand 1."
+    synonyms: ["pd-l1 inhibitor", "pdl1 inhibitor", "anti-pd-l1", "anti-pdl1"]
+
+  - id: ctla4_inhibitor
+    label: "CTLA-4 inhibitor"
+    inline_label: "a CTLA-4 inhibitor"
+    kind: mechanism
+    parent: checkpoint_inhibitor
+    precedence: 12
+    definition: "Monoclonal antibody against cytotoxic T-lymphocyte-associated protein 4."
+    synonyms: ["ctla-4 inhibitor", "ctla4 inhibitor", "anti-ctla-4", "anti-ctla4"]
+
+  - id: car_t_therapy
+    label: "CAR-T cell therapy"
+    inline_label: "a CAR-T cell therapy"
+    kind: mechanism
+    precedence: 14
+    definition: "Autologous or allogeneic T cells engineered with a chimeric antigen receptor."
+    synonyms: ["car-t", "car t", "chimeric antigen receptor", "car-t cell therapy"]
+
+  - id: bispecific_engager
+    label: "Bispecific T-cell engager"
+    inline_label: "a bispecific T-cell engager"
+    kind: mechanism
+    precedence: 15
+    definition: "Bispecific antibody construct that cross-links a tumour antigen to CD3 on T cells."
+    synonyms: ["bispecific t-cell engager", "bite", "bispecific antibody", "t-cell engager"]
+
+  - id: tyrosine_kinase_inhibitor
+    label: "Tyrosine kinase inhibitor"
+    inline_label: "a tyrosine kinase inhibitor"
+    kind: mechanism
+    precedence: 23
+    definition: "Small-molecule inhibitor of one or more receptor or non-receptor tyrosine kinases."
+    synonyms: ["tyrosine kinase inhibitor", "tki", "kinase inhibitor"]
+
+  - id: egfr_inhibitor
+    label: "EGFR inhibitor"
+    inline_label: "an EGFR inhibitor"
+    kind: mechanism
+    parent: tyrosine_kinase_inhibitor
+    precedence: 20
+    definition: "Targets the epidermal growth factor receptor, as a small molecule or antibody."
+    synonyms: ["egfr inhibitor", "anti-egfr", "egfr tki"]
+
+  - id: alk_inhibitor
+    label: "ALK inhibitor"
+    inline_label: "an ALK inhibitor"
+    kind: mechanism
+    parent: tyrosine_kinase_inhibitor
+    precedence: 21
+    definition: "Targets anaplastic lymphoma kinase rearrangements."
+    synonyms: ["alk inhibitor", "anti-alk"]
+
+  - id: btk_inhibitor
+    label: "BTK inhibitor"
+    inline_label: "a BTK inhibitor"
+    kind: mechanism
+    parent: tyrosine_kinase_inhibitor
+    precedence: 22
+    definition: "Targets Bruton's tyrosine kinase, chiefly in B-cell malignancies."
+    synonyms: ["btk inhibitor", "bruton tyrosine kinase inhibitor"]
+
+  - id: her2_targeted_therapy
+    label: "HER2-targeted therapy"
+    inline_label: "a HER2-targeted therapy"
+    kind: mechanism
+    precedence: 24
+    definition: "Targets human epidermal growth factor receptor 2, as an antibody, conjugate or kinase inhibitor."
+    synonyms: ["her2-targeted", "anti-her2", "her2 inhibitor"]
+
+  - id: vegf_inhibitor
+    label: "VEGF pathway inhibitor"
+    inline_label: "a VEGF pathway inhibitor"
+    kind: mechanism
+    precedence: 25
+    definition: "Inhibits vascular endothelial growth factor or its receptor; antiangiogenic."
+    synonyms: ["vegf inhibitor", "anti-vegf", "vegfr inhibitor", "antiangiogenic"]
+    notes: >-
+      Spans oncology and ophthalmology -- the same mechanism treats metastatic
+      colorectal cancer and neovascular AMD. That is a feature of the axis, not
+      a collision: the therapeutic area separates them, the mechanism does not.
+
+  - id: parp_inhibitor
+    label: "PARP inhibitor"
+    inline_label: "a PARP inhibitor"
+    kind: mechanism
+    precedence: 26
+    definition: "Inhibits poly(ADP-ribose) polymerase, exploiting homologous-recombination deficiency."
+    synonyms: ["parp inhibitor", "poly adp-ribose polymerase inhibitor"]
+
+  - id: cdk_inhibitor
+    label: "CDK4/6 inhibitor"
+    inline_label: "a CDK4/6 inhibitor"
+    kind: mechanism
+    precedence: 27
+    definition: "Inhibits cyclin-dependent kinases 4 and 6, arresting the G1-S transition."
+    synonyms: ["cdk4/6 inhibitor", "cdk inhibitor", "cyclin-dependent kinase inhibitor"]
+
+  - id: braf_mek_inhibitor
+    label: "BRAF/MEK inhibitor"
+    inline_label: "a BRAF or MEK inhibitor"
+    kind: mechanism
+    precedence: 28
+    definition: "Inhibits BRAF kinase or downstream MEK in the MAPK pathway."
+    synonyms: ["braf inhibitor", "mek inhibitor", "mapk inhibitor"]
+
+  - id: proteasome_inhibitor
+    label: "Proteasome inhibitor"
+    inline_label: "a proteasome inhibitor"
+    kind: mechanism
+    precedence: 29
+    definition: "Inhibits the 26S proteasome, chiefly in plasma-cell malignancies."
+    synonyms: ["proteasome inhibitor"]
+
+  - id: anti_cd20_antibody
+    label: "Anti-CD20 antibody"
+    inline_label: "an anti-CD20 antibody"
+    kind: mechanism
+    precedence: 30
+    definition: "Depletes CD20-expressing B cells."
+    synonyms: ["anti-cd20", "cd20 antibody", "cd20-directed"]
+
+  - id: platinum_chemotherapy
+    label: "Platinum chemotherapy"
+    inline_label: "platinum chemotherapy"
+    kind: mechanism
+    precedence: 40
+    definition: "Platinum coordination complex forming DNA cross-links."
+    synonyms: ["platinum chemotherapy", "platinum-based chemotherapy", "platinum doublet"]
+
+  - id: taxane_chemotherapy
+    label: "Taxane chemotherapy"
+    inline_label: "taxane chemotherapy"
+    kind: mechanism
+    precedence: 41
+    definition: "Microtubule-stabilising cytotoxic agent."
+    synonyms: ["taxane", "taxane chemotherapy"]
+
+  - id: antimetabolite_chemotherapy
+    label: "Antimetabolite chemotherapy"
+    inline_label: "antimetabolite chemotherapy"
+    kind: mechanism
+    precedence: 42
+    definition: "Nucleoside or folate analogue interfering with DNA/RNA synthesis."
+    synonyms: ["antimetabolite", "pyrimidine analogue", "purine analogue", "antifolate"]
+
+  - id: anthracycline_chemotherapy
+    label: "Anthracycline chemotherapy"
+    inline_label: "anthracycline chemotherapy"
+    kind: mechanism
+    precedence: 43
+    definition: "Topoisomerase II-interacting cytotoxic antibiotic."
+    synonyms: ["anthracycline"]
+
+  - id: alkylating_chemotherapy
+    label: "Alkylating chemotherapy"
+    inline_label: "alkylating chemotherapy"
+    kind: mechanism
+    precedence: 44
+    definition: "Alkylating agent forming covalent DNA adducts."
+    synonyms: ["alkylating agent", "alkylator"]
+
+  - id: aromatase_inhibitor
+    label: "Aromatase inhibitor"
+    inline_label: "an aromatase inhibitor"
+    kind: mechanism
+    precedence: 45
+    definition: "Blocks peripheral conversion of androgens to oestrogens."
+    synonyms: ["aromatase inhibitor"]
+
+  - id: antiandrogen
+    label: "Androgen receptor antagonist"
+    inline_label: "an androgen receptor antagonist"
+    kind: mechanism
+    precedence: 46
+    definition: "Blocks androgen receptor signalling or androgen synthesis."
+    synonyms: ["antiandrogen", "androgen receptor antagonist", "androgen deprivation"]
+
+  - id: immunomodulatory_imide
+    label: "Immunomodulatory imide drug"
+    inline_label: "an immunomodulatory imide drug"
+    kind: mechanism
+    precedence: 47
+    definition: "Cereblon-binding immunomodulator used in plasma-cell and myelodysplastic disease."
+    synonyms: ["imid", "immunomodulatory imide"]
+
+  # --- mechanism: metabolic and endocrine ---------------------------------
+
+  - id: glp1_receptor_agonist
+    label: "GLP-1 receptor agonist"
+    inline_label: "a GLP-1 receptor agonist"
+    kind: mechanism
+    precedence: 61
+    definition: "Agonist at the glucagon-like peptide-1 receptor."
+    synonyms: ["glp-1 receptor agonist", "glp1 receptor agonist", "glp-1 agonist", "glp-1 ra", "incretin mimetic"]
+
+  - id: gip_glp1_coagonist
+    label: "GIP/GLP-1 co-agonist"
+    inline_label: "a GIP/GLP-1 co-agonist"
+    kind: mechanism
+    parent: glp1_receptor_agonist
+    precedence: 60
+    definition: "Dual agonist at the glucose-dependent insulinotropic polypeptide and GLP-1 receptors."
+    synonyms: ["gip/glp-1", "dual agonist", "twincretin"]
+
+  - id: sglt2_inhibitor
+    label: "SGLT2 inhibitor"
+    inline_label: "an SGLT2 inhibitor"
+    kind: mechanism
+    precedence: 62
+    definition: "Inhibits renal sodium-glucose co-transporter 2."
+    synonyms: ["sglt2 inhibitor", "sglt-2 inhibitor", "gliflozin"]
+    notes: >-
+      Registered in diabetes, heart failure and chronic kidney disease alike.
+      Like vegf_inhibitor, one mechanism across three therapeutic areas -- and
+      one of the clearest cases for why endpoint choice is worth cross-tabbing
+      against class rather than against area alone.
+
+  - id: dpp4_inhibitor
+    label: "DPP-4 inhibitor"
+    inline_label: "a DPP-4 inhibitor"
+    kind: mechanism
+    precedence: 63
+    definition: "Inhibits dipeptidyl peptidase-4, prolonging endogenous incretin action."
+    synonyms: ["dpp-4 inhibitor", "dpp4 inhibitor", "gliptin"]
+
+  - id: insulin_therapy
+    label: "Insulin"
+    inline_label: "insulin"
+    kind: mechanism
+    precedence: 64
+    definition: "Exogenous insulin or an insulin analogue, of any duration of action."
+    synonyms: ["insulin", "basal insulin", "insulin analogue", "insulin analog"]
+
+  - id: biguanide
+    label: "Biguanide"
+    inline_label: "a biguanide"
+    kind: mechanism
+    precedence: 65
+    definition: "Reduces hepatic glucose output; metformin and congeners."
+    synonyms: ["biguanide"]
+    notes: >-
+      The one term in this file whose common name is structural. It is kept as
+      `mechanism` because the class is functionally coherent in practice (there
+      is one biguanide in wide use and it is a first-line antihyperglycaemic),
+      not as a precedent for adding structural classes.
+
+  - id: sulfonylurea
+    label: "Sulfonylurea"
+    inline_label: "a sulfonylurea"
+    kind: mechanism
+    precedence: 66
+    definition: "Closes pancreatic beta-cell K-ATP channels, stimulating insulin secretion."
+    synonyms: ["sulfonylurea", "sulphonylurea"]
+
+  - id: thyroid_hormone_therapy
+    label: "Thyroid hormone therapy"
+    inline_label: "thyroid hormone therapy"
+    kind: mechanism
+    precedence: 67
+    definition: "Thyroid hormone replacement or suppression."
+    synonyms: ["levothyroxine", "thyroid hormone"]
+
+  - id: gnrh_analogue
+    label: "GnRH analogue"
+    inline_label: "a GnRH analogue"
+    kind: mechanism
+    precedence: 68
+    definition: "Agonist or antagonist at the gonadotropin-releasing hormone receptor."
+    synonyms: ["gnrh agonist", "gnrh antagonist", "gnrh analogue", "lhrh agonist"]
+
+  - id: bone_resorption_inhibitor
+    label: "Bone resorption inhibitor"
+    inline_label: "a bone resorption inhibitor"
+    kind: mechanism
+    precedence: 69
+    definition: "Bisphosphonate or RANKL inhibitor suppressing osteoclast-mediated resorption."
+    synonyms: ["bisphosphonate", "rankl inhibitor", "antiresorptive"]
+
+  # --- mechanism: cardiovascular ------------------------------------------
+
+  - id: statin
+    label: "Statin"
+    inline_label: "a statin"
+    kind: mechanism
+    precedence: 80
+    definition: "HMG-CoA reductase inhibitor."
+    synonyms: ["statin", "hmg-coa reductase inhibitor"]
+
+  - id: pcsk9_inhibitor
+    label: "PCSK9 inhibitor"
+    inline_label: "a PCSK9 inhibitor"
+    kind: mechanism
+    precedence: 81
+    definition: "Inhibits proprotein convertase subtilisin/kexin type 9, raising LDL-receptor density."
+    synonyms: ["pcsk9 inhibitor", "anti-pcsk9"]
+
+  - id: ace_inhibitor
+    label: "ACE inhibitor"
+    inline_label: "an ACE inhibitor"
+    kind: mechanism
+    precedence: 82
+    definition: "Inhibits angiotensin-converting enzyme."
+    synonyms: ["ace inhibitor", "angiotensin-converting enzyme inhibitor"]
+
+  - id: angiotensin_receptor_blocker
+    label: "Angiotensin receptor blocker"
+    inline_label: "an angiotensin receptor blocker"
+    kind: mechanism
+    precedence: 83
+    definition: "Antagonist at the angiotensin II type 1 receptor."
+    synonyms: ["angiotensin receptor blocker", "arb", "angiotensin ii receptor antagonist"]
+
+  - id: arni
+    label: "Angiotensin receptor-neprilysin inhibitor"
+    inline_label: "an angiotensin receptor-neprilysin inhibitor"
+    kind: mechanism
+    precedence: 84
+    definition: "Combined angiotensin receptor blockade and neprilysin inhibition."
+    synonyms: ["arni", "neprilysin inhibitor"]
+
+  - id: beta_blocker
+    label: "Beta blocker"
+    inline_label: "a beta blocker"
+    kind: mechanism
+    precedence: 85
+    definition: "Antagonist at beta-adrenergic receptors."
+    synonyms: ["beta blocker", "beta-blocker", "beta-adrenergic antagonist"]
+
+  - id: calcium_channel_blocker
+    label: "Calcium channel blocker"
+    inline_label: "a calcium channel blocker"
+    kind: mechanism
+    precedence: 86
+    definition: "Blocks voltage-gated calcium channels in vascular smooth muscle or myocardium."
+    synonyms: ["calcium channel blocker", "calcium antagonist"]
+
+  - id: diuretic
+    label: "Diuretic"
+    inline_label: "a diuretic"
+    kind: mechanism
+    precedence: 87
+    definition: "Increases renal sodium and water excretion."
+    synonyms: ["diuretic", "loop diuretic", "thiazide"]
+
+  - id: mineralocorticoid_antagonist
+    label: "Mineralocorticoid receptor antagonist"
+    inline_label: "a mineralocorticoid receptor antagonist"
+    kind: mechanism
+    precedence: 88
+    definition: "Antagonist at the mineralocorticoid receptor, steroidal or non-steroidal."
+    synonyms: ["mineralocorticoid receptor antagonist", "mra", "aldosterone antagonist"]
+
+  - id: anticoagulant
+    label: "Anticoagulant"
+    inline_label: "an anticoagulant"
+    kind: mechanism
+    precedence: 89
+    definition: "Inhibits a coagulation factor -- vitamin K antagonist, direct oral anticoagulant or heparin."
+    synonyms: ["anticoagulant", "doac", "noac", "factor xa inhibitor", "direct thrombin inhibitor", "heparin"]
+
+  - id: antiplatelet
+    label: "Antiplatelet agent"
+    inline_label: "an antiplatelet agent"
+    kind: mechanism
+    precedence: 90
+    definition: "Inhibits platelet activation or aggregation."
+    synonyms: ["antiplatelet", "p2y12 inhibitor", "platelet aggregation inhibitor"]
+
+  # --- mechanism: immunology, inflammation and rheumatology ---------------
+
+  - id: tnf_inhibitor
+    label: "TNF inhibitor"
+    inline_label: "a TNF inhibitor"
+    kind: mechanism
+    precedence: 100
+    definition: "Neutralises tumour necrosis factor alpha."
+    synonyms: ["tnf inhibitor", "anti-tnf", "tnf-alpha inhibitor"]
+
+  - id: il6_inhibitor
+    label: "IL-6 pathway inhibitor"
+    inline_label: "an IL-6 pathway inhibitor"
+    kind: mechanism
+    precedence: 101
+    definition: "Blocks interleukin-6 or its receptor."
+    synonyms: ["il-6 inhibitor", "il6 inhibitor", "anti-il-6", "il-6 receptor antagonist"]
+
+  - id: il17_inhibitor
+    label: "IL-17 inhibitor"
+    inline_label: "an IL-17 inhibitor"
+    kind: mechanism
+    precedence: 102
+    definition: "Blocks interleukin-17A or its receptor."
+    synonyms: ["il-17 inhibitor", "il17 inhibitor", "anti-il-17"]
+
+  - id: il23_inhibitor
+    label: "IL-23/IL-12 inhibitor"
+    inline_label: "an IL-23 inhibitor"
+    kind: mechanism
+    precedence: 103
+    definition: "Blocks the p19 or p40 subunit of interleukin-23/interleukin-12."
+    synonyms: ["il-23 inhibitor", "il23 inhibitor", "anti-il-23", "il-12/23 inhibitor"]
+
+  - id: il4_il13_inhibitor
+    label: "IL-4/IL-13 inhibitor"
+    inline_label: "an IL-4/IL-13 inhibitor"
+    kind: mechanism
+    precedence: 104
+    definition: "Blocks type 2 cytokine signalling through IL-4 receptor alpha or IL-13."
+    synonyms: ["il-4 inhibitor", "il-13 inhibitor", "il-4 receptor alpha antagonist"]
+
+  - id: jak_inhibitor
+    label: "JAK inhibitor"
+    inline_label: "a JAK inhibitor"
+    kind: mechanism
+    precedence: 105
+    definition: "Small-molecule inhibitor of one or more Janus kinases."
+    synonyms: ["jak inhibitor", "janus kinase inhibitor"]
+
+  - id: integrin_inhibitor
+    label: "Integrin inhibitor"
+    inline_label: "an integrin inhibitor"
+    kind: mechanism
+    precedence: 106
+    definition: "Blocks leucocyte trafficking through alpha-4 or alpha-4/beta-7 integrin."
+    synonyms: ["integrin inhibitor", "anti-integrin"]
+
+  - id: s1p_modulator
+    label: "S1P receptor modulator"
+    inline_label: "an S1P receptor modulator"
+    kind: mechanism
+    precedence: 107
+    definition: "Modulates sphingosine-1-phosphate receptors, sequestering lymphocytes in lymph nodes."
+    synonyms: ["s1p modulator", "sphingosine-1-phosphate receptor modulator"]
+
+  - id: complement_inhibitor
+    label: "Complement inhibitor"
+    inline_label: "a complement inhibitor"
+    kind: mechanism
+    precedence: 108
+    definition: "Inhibits a complement component, chiefly C5 or C3."
+    synonyms: ["complement inhibitor", "anti-c5", "c5 inhibitor"]
+
+  - id: calcineurin_inhibitor
+    label: "Calcineurin inhibitor"
+    inline_label: "a calcineurin inhibitor"
+    kind: mechanism
+    precedence: 109
+    definition: "Inhibits calcineurin-dependent T-cell activation; the transplantation backbone."
+    synonyms: ["calcineurin inhibitor"]
+
+  - id: corticosteroid
+    label: "Corticosteroid"
+    inline_label: "a corticosteroid"
+    kind: mechanism
+    precedence: 127
+    definition: "Systemic or local glucocorticoid."
+    synonyms: ["corticosteroid", "glucocorticoid", "steroid"]
+
+  # --- mechanism: respiratory ---------------------------------------------
+
+  - id: inhaled_corticosteroid
+    label: "Inhaled corticosteroid"
+    inline_label: "an inhaled corticosteroid"
+    kind: mechanism
+    parent: corticosteroid
+    precedence: 120
+    definition: "Glucocorticoid delivered to the airway."
+    synonyms: ["inhaled corticosteroid", "ics"]
+
+  - id: beta2_agonist
+    label: "Beta-2 agonist"
+    inline_label: "a beta-2 agonist"
+    kind: mechanism
+    precedence: 121
+    definition: "Bronchodilator agonist at beta-2 adrenergic receptors, short- or long-acting."
+    synonyms: ["beta-2 agonist", "beta2 agonist", "laba", "saba", "bronchodilator beta agonist"]
+
+  - id: muscarinic_antagonist
+    label: "Muscarinic antagonist"
+    inline_label: "a muscarinic antagonist"
+    kind: mechanism
+    precedence: 122
+    definition: "Antimuscarinic bronchodilator, short- or long-acting."
+    synonyms: ["muscarinic antagonist", "lama", "anticholinergic bronchodilator"]
+
+  - id: leukotriene_modifier
+    label: "Leukotriene modifier"
+    inline_label: "a leukotriene modifier"
+    kind: mechanism
+    precedence: 123
+    definition: "Leukotriene receptor antagonist or synthesis inhibitor."
+    synonyms: ["leukotriene modifier", "leukotriene receptor antagonist"]
+
+  - id: ige_inhibitor
+    label: "Anti-IgE antibody"
+    inline_label: "an anti-IgE antibody"
+    kind: mechanism
+    precedence: 124
+    definition: "Binds free immunoglobulin E."
+    synonyms: ["anti-ige", "ige inhibitor"]
+
+  - id: il5_inhibitor
+    label: "IL-5 pathway inhibitor"
+    inline_label: "an IL-5 pathway inhibitor"
+    kind: mechanism
+    precedence: 125
+    definition: "Blocks interleukin-5 or its receptor; anti-eosinophil."
+    synonyms: ["il-5 inhibitor", "anti-il-5", "il-5 receptor antagonist"]
+
+  - id: cftr_modulator
+    label: "CFTR modulator"
+    inline_label: "a CFTR modulator"
+    kind: mechanism
+    precedence: 126
+    definition: "Corrects or potentiates the cystic fibrosis transmembrane conductance regulator."
+    synonyms: ["cftr modulator", "cftr corrector", "cftr potentiator"]
+
+  # --- mechanism: infectious disease --------------------------------------
+
+  - id: antibacterial
+    label: "Antibacterial"
+    inline_label: "an antibacterial"
+    kind: mechanism
+    precedence: 140
+    definition: "Antibiotic active against bacteria."
+    synonyms: ["antibacterial", "antibiotic"]
+
+  - id: antiviral
+    label: "Antiviral"
+    inline_label: "an antiviral"
+    kind: mechanism
+    precedence: 142
+    definition: "Agent active against a viral pathogen."
+    synonyms: ["antiviral"]
+
+  - id: antiretroviral
+    label: "Antiretroviral"
+    inline_label: "an antiretroviral"
+    kind: mechanism
+    parent: antiviral
+    precedence: 141
+    definition: "Agent active against HIV, of any antiretroviral class."
+    synonyms: ["antiretroviral", "art", "integrase inhibitor", "nrti", "nnrti", "protease inhibitor hiv"]
+
+  - id: antifungal
+    label: "Antifungal"
+    inline_label: "an antifungal"
+    kind: mechanism
+    precedence: 143
+    definition: "Agent active against a fungal pathogen."
+    synonyms: ["antifungal"]
+
+  - id: antiparasitic
+    label: "Antiparasitic"
+    inline_label: "an antiparasitic"
+    kind: mechanism
+    precedence: 144
+    definition: "Agent active against a protozoal or helminthic pathogen, including antimalarials."
+    synonyms: ["antiparasitic", "antimalarial", "anthelmintic"]
+
+  - id: antimycobacterial
+    label: "Antimycobacterial"
+    inline_label: "an antimycobacterial"
+    kind: mechanism
+    precedence: 145
+    definition: "Agent active against mycobacteria, chiefly tuberculosis."
+    synonyms: ["antimycobacterial", "antitubercular", "anti-tb"]
+
+  # --- mechanism: neurology, psychiatry and pain --------------------------
+
+  - id: ssri_snri
+    label: "SSRI or SNRI"
+    inline_label: "an SSRI or SNRI"
+    kind: mechanism
+    precedence: 160
+    definition: "Selective serotonin, or serotonin-noradrenaline, reuptake inhibitor."
+    synonyms: ["ssri", "snri", "serotonin reuptake inhibitor"]
+
+  - id: antipsychotic
+    label: "Antipsychotic"
+    inline_label: "an antipsychotic"
+    kind: mechanism
+    precedence: 161
+    definition: "Dopamine D2-receptor antagonist or partial agonist."
+    synonyms: ["antipsychotic", "neuroleptic"]
+
+  - id: antiepileptic
+    label: "Antiepileptic"
+    inline_label: "an antiepileptic"
+    kind: mechanism
+    precedence: 162
+    definition: "Anticonvulsant used to suppress seizure activity."
+    synonyms: ["antiepileptic", "anticonvulsant", "antiseizure"]
+
+  - id: anti_amyloid_antibody
+    label: "Anti-amyloid antibody"
+    inline_label: "an anti-amyloid antibody"
+    kind: mechanism
+    precedence: 163
+    definition: "Monoclonal antibody targeting amyloid-beta species in Alzheimer's disease."
+    synonyms: ["anti-amyloid", "amyloid beta antibody", "anti-abeta"]
+
+  - id: cgrp_inhibitor
+    label: "CGRP pathway inhibitor"
+    inline_label: "a CGRP pathway inhibitor"
+    kind: mechanism
+    precedence: 164
+    definition: "Blocks calcitonin gene-related peptide or its receptor, for migraine."
+    synonyms: ["cgrp inhibitor", "anti-cgrp", "gepant"]
+
+  - id: cholinesterase_inhibitor
+    label: "Cholinesterase inhibitor"
+    inline_label: "a cholinesterase inhibitor"
+    kind: mechanism
+    precedence: 165
+    definition: "Inhibits acetylcholinesterase, chiefly in dementia and myasthenia."
+    synonyms: ["cholinesterase inhibitor", "acetylcholinesterase inhibitor"]
+
+  - id: opioid_analgesic
+    label: "Opioid analgesic"
+    inline_label: "an opioid analgesic"
+    kind: mechanism
+    precedence: 166
+    definition: "Agonist at opioid receptors, used for analgesia or opioid-use disorder."
+    synonyms: ["opioid", "opioid analgesic", "mu-opioid agonist"]
+
+  - id: nsaid
+    label: "NSAID"
+    inline_label: "an NSAID"
+    kind: mechanism
+    precedence: 167
+    definition: "Non-steroidal anti-inflammatory cyclooxygenase inhibitor."
+    synonyms: ["nsaid", "non-steroidal anti-inflammatory", "cox inhibitor"]
+
+  # --- mechanism: other systems -------------------------------------------
+
+  - id: proton_pump_inhibitor
+    label: "Proton pump inhibitor"
+    inline_label: "a proton pump inhibitor"
+    kind: mechanism
+    precedence: 180
+    definition: "Irreversibly inhibits gastric H+/K+-ATPase."
+    synonyms: ["proton pump inhibitor", "ppi"]
+
+  - id: erythropoiesis_stimulating_agent
+    label: "Erythropoiesis-stimulating agent"
+    inline_label: "an erythropoiesis-stimulating agent"
+    kind: mechanism
+    precedence: 181
+    definition: "Erythropoietin or analogue stimulating red-cell production."
+    synonyms: ["erythropoiesis-stimulating agent", "esa", "erythropoietin"]
+
+  - id: clotting_factor_replacement
+    label: "Clotting factor replacement"
+    inline_label: "clotting factor replacement"
+    kind: mechanism
+    precedence: 182
+    definition: "Replacement or mimetic of a deficient coagulation factor."
+    synonyms: ["factor viii", "factor ix", "clotting factor", "factor replacement"]
+
+  # --- mechanism: vaccines ------------------------------------------------
+  # Platform, not pathogen: which infection a vaccine targets is a therapeutic
+  # -area question and therapeutic_areas.yaml already answers it. What this axis
+  # adds is how the antigen is delivered, which is what differs between two
+  # trials of "the same" vaccine.
+
+  - id: mrna_vaccine
+    label: "mRNA vaccine"
+    inline_label: "an mRNA vaccine"
+    kind: mechanism
+    precedence: 190
+    definition: "Nucleoside-modified messenger RNA encoding the antigen, usually lipid-nanoparticle delivered."
+    synonyms: ["mrna vaccine", "messenger rna vaccine"]
+
+  - id: viral_vector_vaccine
+    label: "Viral vector vaccine"
+    inline_label: "a viral vector vaccine"
+    kind: mechanism
+    precedence: 191
+    definition: "Replication-deficient or attenuated viral vector encoding the antigen."
+    synonyms: ["viral vector vaccine", "adenovirus vector vaccine"]
+
+  - id: subunit_vaccine
+    label: "Protein subunit vaccine"
+    inline_label: "a protein subunit vaccine"
+    kind: mechanism
+    precedence: 192
+    definition: "Purified or recombinant protein antigen, usually adjuvanted."
+    synonyms: ["subunit vaccine", "recombinant protein vaccine", "adjuvanted vaccine"]
+
+  - id: conjugate_vaccine
+    label: "Conjugate or polysaccharide vaccine"
+    inline_label: "a conjugate vaccine"
+    kind: mechanism
+    precedence: 193
+    definition: "Capsular polysaccharide, alone or conjugated to a carrier protein."
+    synonyms: ["conjugate vaccine", "polysaccharide vaccine"]
+
+  - id: whole_pathogen_vaccine
+    label: "Inactivated or live-attenuated vaccine"
+    inline_label: "a whole-pathogen vaccine"
+    kind: mechanism
+    precedence: 194
+    definition: "Whole inactivated or live-attenuated organism."
+    synonyms: ["inactivated vaccine", "live attenuated vaccine", "killed vaccine"]
+
+  # --- pharmacologic: the coarse action level -----------------------------
+  # What CT.gov's intervention browse branches give directly. A weaker claim
+  # than any mechanism term, and never a substitute for one: these exist so a
+  # study whose interventions resolve to no mechanism still lands somewhere
+  # honest rather than in `unclassified_agent`.
+
+  - id: antineoplastic_agent
+    label: "Antineoplastic agent"
+    inline_label: "an antineoplastic agent"
+    kind: pharmacologic
+    precedence: 200
+    definition: "Any agent used to treat malignancy, mechanism unspecified."
+    synonyms: ["antineoplastic agent", "antineoplastic", "anticancer agent"]
+
+  - id: anti_infective_agent
+    label: "Anti-infective agent"
+    inline_label: "an anti-infective agent"
+    kind: pharmacologic
+    precedence: 201
+    definition: "Any agent used against an infectious pathogen, mechanism unspecified."
+    synonyms: ["anti-infective agent", "anti-infective", "antimicrobial"]
+
+  - id: cardiovascular_agent
+    label: "Cardiovascular agent"
+    inline_label: "a cardiovascular agent"
+    kind: pharmacologic
+    precedence: 202
+    definition: "Any agent acting on the heart or vasculature, mechanism unspecified."
+    synonyms: ["cardiovascular agent", "cardiac agent", "antihypertensive agent"]
+
+  - id: cns_agent
+    label: "Central nervous system agent"
+    inline_label: "a central nervous system agent"
+    kind: pharmacologic
+    precedence: 203
+    definition: "Any centrally acting agent, mechanism unspecified."
+    synonyms: ["central nervous system agent", "cns agent", "psychotropic", "neuroactive agent"]
+
+  - id: immunomodulating_agent
+    label: "Immunomodulating agent"
+    inline_label: "an immunomodulating agent"
+    kind: pharmacologic
+    precedence: 204
+    definition: "Any agent that suppresses or stimulates immune function, mechanism unspecified."
+    synonyms: ["immunomodulating agent", "immunosuppressant", "immunostimulant", "immunologic factor"]
+
+  - id: antidiabetic_agent
+    label: "Antidiabetic agent"
+    inline_label: "an antidiabetic agent"
+    kind: pharmacologic
+    precedence: 205
+    definition: "Any glucose-lowering agent, mechanism unspecified."
+    synonyms: ["antidiabetic agent", "hypoglycemic agent", "hypoglycaemic agent", "glucose lowering agent"]
+
+  - id: gastrointestinal_agent
+    label: "Gastrointestinal agent"
+    inline_label: "a gastrointestinal agent"
+    kind: pharmacologic
+    precedence: 206
+    definition: "Any agent acting on the gastrointestinal tract or liver, mechanism unspecified."
+    synonyms: ["gastrointestinal agent"]
+
+  - id: respiratory_agent
+    label: "Respiratory system agent"
+    inline_label: "a respiratory system agent"
+    kind: pharmacologic
+    precedence: 207
+    definition: "Any agent acting on the airways, mechanism unspecified."
+    synonyms: ["respiratory system agent", "respiratory agent", "bronchodilator"]
+
+  - id: hormonal_agent
+    label: "Hormonal agent"
+    inline_label: "a hormonal agent"
+    kind: pharmacologic
+    precedence: 208
+    definition: "Any hormone, hormone analogue or hormone antagonist, mechanism unspecified."
+    synonyms: ["hormonal agent", "hormone", "hormone antagonist"]
+
+  - id: analgesic_agent
+    label: "Analgesic"
+    inline_label: "an analgesic"
+    kind: pharmacologic
+    precedence: 209
+    definition: "Any agent given for pain, mechanism unspecified."
+    synonyms: ["analgesic", "analgesic agent", "pain medication"]
+
+  - id: dermatologic_agent
+    label: "Dermatologic agent"
+    inline_label: "a dermatologic agent"
+    kind: pharmacologic
+    precedence: 210
+    definition: "Any agent applied to or acting on the skin, mechanism unspecified."
+    synonyms: ["dermatologic agent", "dermatological agent"]
+
+  - id: ophthalmic_agent
+    label: "Ophthalmic agent"
+    inline_label: "an ophthalmic agent"
+    kind: pharmacologic
+    precedence: 211
+    definition: "Any agent given into or for the eye, mechanism unspecified."
+    synonyms: ["ophthalmic agent", "ophthalmic solution"]
+
+  - id: haematologic_agent
+    label: "Haematologic agent"
+    inline_label: "a haematologic agent"
+    kind: pharmacologic
+    precedence: 212
+    definition: "Any agent acting on blood cells or coagulation, mechanism unspecified."
+    synonyms: ["haematologic agent", "hematologic agent", "blood product"]
+
+  - id: nutritional_agent
+    label: "Nutritional or supplement agent"
+    inline_label: "a nutritional supplement"
+    kind: pharmacologic
+    precedence: 213
+    definition: "Vitamin, mineral, or other dietary supplement given as an intervention."
+    synonyms: ["dietary supplement", "vitamin", "mineral supplement", "nutritional supplement"]
+
+  # --- modality: what kind of thing it is ---------------------------------
+  # Orthogonal to mechanism and pharmacologic class. Sourced from the registry's
+  # own `intervention_type` where it is coarse (DEVICE, BEHAVIORAL) and from the
+  # drug name where it is not (DRUG and BIOLOGICAL cover everything from a
+  # tablet to a CAR-T product). `modality_rules` in the mapping always fires, so
+  # every intervention carries at least one of these.
+
+  - id: small_molecule
+    label: "Small molecule"
+    inline_label: "a small molecule"
+    kind: modality
+    precedence: 300
+    definition: "Conventional low-molecular-weight chemical entity."
+    synonyms: ["small molecule"]
+
+  - id: monoclonal_antibody
+    label: "Monoclonal antibody"
+    inline_label: "a monoclonal antibody"
+    kind: modality
+    precedence: 302
+    definition: "Monoclonal immunoglobulin or antibody fragment."
+    synonyms: ["monoclonal antibody", "mab", "antibody"]
+
+  - id: antibody_drug_conjugate
+    label: "Antibody-drug conjugate"
+    inline_label: "an antibody-drug conjugate"
+    kind: modality
+    parent: monoclonal_antibody
+    precedence: 301
+    definition: "Cytotoxic payload covalently linked to a targeting antibody."
+    synonyms: ["antibody-drug conjugate", "adc"]
+
+  - id: fusion_protein
+    label: "Recombinant or fusion protein"
+    inline_label: "a recombinant protein"
+    kind: modality
+    precedence: 303
+    definition: "Recombinant protein, peptide or receptor-Fc fusion."
+    synonyms: ["fusion protein", "recombinant protein", "peptide therapeutic"]
+
+  - id: cell_therapy
+    label: "Cell therapy"
+    inline_label: "a cell therapy"
+    kind: modality
+    precedence: 304
+    definition: "Living cells administered as the therapeutic product."
+    synonyms: ["cell therapy", "cellular therapy", "stem cell transplant"]
+
+  - id: gene_therapy
+    label: "Gene therapy"
+    inline_label: "a gene therapy"
+    kind: modality
+    precedence: 305
+    definition: "Delivery or editing of genetic material as the therapeutic product."
+    synonyms: ["gene therapy", "gene transfer", "gene editing"]
+
+  - id: oligonucleotide_therapy
+    label: "Oligonucleotide therapy"
+    inline_label: "an oligonucleotide therapy"
+    kind: modality
+    precedence: 306
+    definition: "Antisense oligonucleotide or small interfering RNA."
+    synonyms: ["antisense oligonucleotide", "sirna", "rna interference", "oligonucleotide"]
+
+  - id: device_intervention
+    label: "Device"
+    inline_label: "a device"
+    kind: modality
+    precedence: 307
+    definition: "Medical device, diagnostic or digital therapeutic."
+    synonyms: ["device", "medical device", "digital therapeutic"]
+
+  - id: procedure_intervention
+    label: "Procedure or surgery"
+    inline_label: "a procedure"
+    kind: modality
+    precedence: 308
+    definition: "Surgical or interventional procedure, including radiotherapy."
+    synonyms: ["procedure", "surgery", "surgical intervention", "radiotherapy", "radiation therapy"]
+
+  - id: behavioural_intervention
+    label: "Behavioural intervention"
+    inline_label: "a behavioural intervention"
+    kind: modality
+    precedence: 309
+    definition: "Behavioural, educational, dietary or other non-pharmacological intervention."
+    synonyms: ["behavioral intervention", "behavioural intervention", "lifestyle intervention", "counseling"]
+
+  # --- control ------------------------------------------------------------
+
+  - id: placebo
+    label: "Placebo"
+    inline_label: "placebo"
+    kind: control
+    precedence: 400
+    definition: "Inactive comparator matched to the investigational product."
+    synonyms: ["placebo", "matching placebo", "vehicle control"]
+
+  - id: sham
+    label: "Sham procedure"
+    inline_label: "a sham procedure"
+    kind: control
+    precedence: 401
+    definition: "Procedural or device analogue of a placebo."
+    synonyms: ["sham", "sham procedure", "sham comparator"]
+
+  - id: standard_of_care
+    label: "Standard of care"
+    inline_label: "standard of care"
+    kind: control
+    precedence: 402
+    definition: "Usual care, physician's choice, or an active comparator given as the standard regimen."
+    synonyms: ["standard of care", "usual care", "physician's choice", "best supportive care", "treatment as usual"]
+
+  - id: no_intervention
+    label: "No intervention"
+    inline_label: "no intervention"
+    kind: control
+    precedence: 403
+    definition: "An arm that receives nothing, as distinct from one that receives a placebo."
+    synonyms: ["no intervention", "observation only", "watchful waiting"]
+
+  # --- defaults -----------------------------------------------------------
+
+  - id: unclassified_agent
+    label: "Unclassified agent"
+    inline_label: "an unclassified agent"
+    kind: pharmacologic
+    precedence: 900
+    definition: "The study registered an intervention that no layer of the mapping could class."
+    synonyms: []
+    notes: >-
+      A finding, not a bucket. Every intervention that reaches this term is also
+      written to conformed.drug_class_review_queue, so the coverage number and
+      the work queue are the same list -- the property conformed.review_queue
+      already has on the endpoint side. Never pool this into a named class to
+      make one look better populated.
+
+  - id: no_interventions_stated
+    label: "No interventions stated"
+    inline_label: "no stated intervention"
+    kind: pharmacologic
+    precedence: 901
+    definition: "The study registered no interventions at all, so nothing can be classed."
+    synonyms: []
+    notes: >-
+      Distinct from `unclassified_agent` the same way `not_stated` is distinct
+      from `other` in therapeutic_areas.yaml: there is nothing to classify,
+      rather than nothing that matched. Observational registrations and some
+      device studies land here legitimately.
+
+# How a study with several matching classes is resolved.
+resolution:
+  keep_all_matches: true              # study_drug_class is many-to-many
+  primary_by: precedence              # lowest `precedence` wins the primary class
+  tie_break: intervention_frequency   # then the class backed by most interventions
+  notes: >-
+    Combination therapy is the norm, not an edge case -- a trial of
+    pembrolizumab plus chemotherapy is a checkpoint-inhibitor trial AND a
+    platinum-chemotherapy trial, and collapsing it to one would be the same
+    mistake therapeutic_areas.yaml refuses for a lung-cancer trial. Every
+    matched class is kept; precedence only picks which one a single-column
+    `GROUP BY` gets. A query that wants the combination has the full set
+    alongside it.

@@ -31,6 +31,15 @@ def test_run_pull_lands_filtered_studies_and_outcomes(fake_aact_con):
         "browse_conditions": 3,  # NCT001 has two MeSH conditions, NCT002 one; NCT003 excluded (PHASE1)
         "browse_interventions": 2,
         "mesh_terms": 0,  # AACT's mesh_terms is empty in the fake, same as the real database today
+        # The interventions (docs/DRUG_CLASS_SPEC.md). NCT003 is excluded (PHASE1),
+        # so 3 of the fake's 4 interventions land, with one alias and the four
+        # arm<->intervention links AACT's join table carries.
+        "interventions": 3,
+        "intervention_other_names": 1,
+        "arm_interventions": 4,
+        # AACT publishes neither, so both stay empty-but-correctly-shaped.
+        "browse_intervention_ancestors": 0,
+        "browse_intervention_branches": 0,
         # The results section (D4), landed by default. Only NCT001 posted one.
         "outcome_measures": 2,
         "outcome_groups": 4,
@@ -95,6 +104,11 @@ def test_run_pull_logs_every_invocation(fake_aact_con):
         "browse_conditions",
         "browse_interventions",
         "mesh_terms",
+        "interventions",
+        "intervention_other_names",
+        "arm_interventions",
+        "browse_intervention_ancestors",
+        "browse_intervention_branches",
         "outcome_measures",
         "outcome_groups",
         "outcome_measurements",
@@ -109,6 +123,11 @@ def test_run_pull_logs_every_invocation(fake_aact_con):
         "browse_conditions": 3,
         "browse_interventions": 2,
         "mesh_terms": 0,
+        "interventions": 3,
+        "intervention_other_names": 1,
+        "arm_interventions": 4,
+        "browse_intervention_ancestors": 0,
+        "browse_intervention_branches": 0,
         "outcome_measures": 2,
         "outcome_groups": 4,
         "outcome_measurements": 4,
@@ -479,3 +498,51 @@ def test_run_pull_replace_reports_no_migrations(fake_aact_con):
     assert result["migrations"] == []
     nct_ids = {r[0] for r in fake_aact_con.execute("SELECT nct_id FROM raw.studies").fetchall()}
     assert nct_ids == {"NCT001", "NCT002"}  # NCT_OLD is gone, not migrated in alongside them
+
+
+def test_run_pull_lands_interventions_and_the_join_table_arm_link(fake_aact_con):
+    """The AACT side of docs/DRUG_CLASS_SPEC.md phase 1. The arm link is the
+    reason this backend is the stronger of the two for the arm tier: it has a
+    real join table where the CT.gov API offers only labels to string-match."""
+    run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
+
+    interventions = fake_aact_con.execute(
+        "SELECT nct_id, ordinal, intervention_type, name, name_normalised "
+        "FROM raw.interventions ORDER BY nct_id, ordinal"
+    ).fetchall()
+    assert interventions == [
+        ("NCT001", 0, "Biological", "Pembrolizumab", "pembrolizumab"),
+        ("NCT001", 1, "Drug", "Carboplatin", "carboplatin"),
+        ("NCT002", 0, "Biological", "Trastuzumab", "trastuzumab"),
+    ]  # NCT003 is PHASE1, so it is not pulled
+
+    # The alias joins back to the ordinal this pull assigned, not to AACT's
+    # surrogate id, which is not stable across AACT's own rebuilds.
+    assert fake_aact_con.execute(
+        "SELECT nct_id, ordinal, other_name, other_name_normalised FROM raw.intervention_other_names"
+    ).fetchall() == [("NCT001", 0, "MK-3475", "mk-3475")]
+
+    assert fake_aact_con.execute(
+        "SELECT group_title, intervention_ordinal, link_method FROM raw.arm_interventions "
+        "ORDER BY group_title, intervention_ordinal"
+    ).fetchall() == [
+        ("Chemotherapy", 1, "join_table"),
+        ("Pembrolizumab", 0, "join_table"),
+        ("Pembrolizumab", 1, "join_table"),
+        ("Trastuzumab", 0, "join_table"),
+    ]
+
+    # AACT publishes neither, so both stay present and empty rather than absent.
+    for table in ("browse_intervention_ancestors", "browse_intervention_branches"):
+        assert fake_aact_con.execute(f"SELECT count(*) FROM raw.{table}").fetchone()[0] == 0
+
+
+def test_run_pull_reports_when_aact_cannot_supply_interventions(fake_aact_con):
+    """A backend that cannot supply them must cost the drug-class axis, never
+    the pull -- the same contract the results section already has."""
+    fake_aact_con.execute("DROP TABLE aact.ctgov.interventions")
+    result = run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
+
+    assert result["row_counts"]["studies"] == 2  # the pull itself is unaffected
+    assert result["row_counts"]["interventions"] == 0
+    assert "ctgov.interventions" in result["interventions_warning"]

@@ -162,8 +162,73 @@ def fake_aact_con() -> duckdb.DuckDBPyConnection:
     # fake here has zero rows too, to match `_pull_mesh_terms`'s degrade path.
     con.execute("CREATE TABLE aact.ctgov.mesh_terms (mesh_term VARCHAR, tree_number VARCHAR)")
 
+    _add_fake_aact_interventions(con)
     _add_fake_aact_results(con)
     return con
+
+
+def _add_fake_aact_interventions(con: duckdb.DuckDBPyConnection) -> None:
+    """The intervention half of the fake AACT database (docs/DRUG_CLASS_SPEC.md).
+
+    Includes `design_group_interventions`, the join table that is the whole
+    reason the arm tier is stronger on this backend than on the API one, and an
+    `intervention_other_names` row so the alias path is exercised. Column lists
+    are AACT's documented ones; `ingest/aact_interventions.py` introspects
+    rather than assuming them.
+    """
+    con.execute(
+        """
+        CREATE TABLE aact.ctgov.interventions (
+            id INTEGER, nct_id VARCHAR, intervention_type VARCHAR,
+            name VARCHAR, description VARCHAR
+        )
+        """
+    )
+    con.execute(
+        """
+        INSERT INTO aact.ctgov.interventions VALUES
+            (1, 'NCT001', 'Biological', 'Pembrolizumab', '200 mg Q3W'),
+            (2, 'NCT001', 'Drug', 'Carboplatin', 'AUC 5'),
+            (3, 'NCT002', 'Biological', 'Trastuzumab', 'Loading then maintenance'),
+            (4, 'NCT003', 'Drug', 'Tiotropium', 'Inhaled')
+        """
+    )
+
+    con.execute(
+        """
+        CREATE TABLE aact.ctgov.intervention_other_names (
+            id INTEGER, nct_id VARCHAR, intervention_id INTEGER, name VARCHAR
+        )
+        """
+    )
+    con.execute(
+        "INSERT INTO aact.ctgov.intervention_other_names VALUES (1, 'NCT001', 1, 'MK-3475')"
+    )
+
+    # AACT gives design_groups a surrogate id; the join table keys on it, and
+    # `_pull_arm_links` resolves it back to the arm title so both backends key
+    # raw.arm_interventions the same way.
+    con.execute("ALTER TABLE aact.ctgov.design_groups ADD COLUMN id INTEGER")
+    con.execute("UPDATE aact.ctgov.design_groups SET id = 10 WHERE title = 'Pembrolizumab'")
+    con.execute("UPDATE aact.ctgov.design_groups SET id = 11 WHERE title = 'Chemotherapy'")
+    con.execute("UPDATE aact.ctgov.design_groups SET id = 12 WHERE title = 'Trastuzumab'")
+
+    con.execute(
+        """
+        CREATE TABLE aact.ctgov.design_group_interventions (
+            id INTEGER, nct_id VARCHAR, design_group_id INTEGER, intervention_id INTEGER
+        )
+        """
+    )
+    con.execute(
+        """
+        INSERT INTO aact.ctgov.design_group_interventions VALUES
+            (1, 'NCT001', 10, 1),
+            (2, 'NCT001', 10, 2),
+            (3, 'NCT001', 11, 2),
+            (4, 'NCT002', 12, 3)
+        """
+    )
 
 
 def _add_fake_aact_results(con: duckdb.DuckDBPyConnection) -> None:
@@ -537,13 +602,29 @@ RESULTS_BASELINE_MEASUREMENTS = [
 ]
 
 
+RESULTS_INTERVENTIONS = [
+    # (nct_id, ordinal, intervention_type, name, name_normalised, description)
+    ("NCT10000001", 0, "DRUG", "Tiotropium", "tiotropium", "Inhaled, once daily"),
+    ("NCT10000001", 1, "DRUG", "Placebo", "placebo", "Matching placebo"),
+    ("NCT10000002", 0, "DRUG", "Budesonide/Formoterol", "budesonide/formoterol", None),
+    ("NCT10000003", 0, "BIOLOGICAL", "ACME-1234", "acme-1234", "Uncoded, unclassifiable"),
+]
+
+RESULTS_ARM_INTERVENTIONS = [
+    ("NCT10000001", "Drug arm", 0, "arm_label"),
+    ("NCT10000001", "Placebo arm", 1, "arm_label"),
+]
+
+
 @pytest.fixture(scope="session")
 def results_warehouse_path(tmp_path_factory) -> str:
     """A warehouse with vocabularies loaded, three studies pulled with their
     results section, `conform` run and `results conform` run -- the state every
     D5-D9 test assumes."""
     from clinical_endpoints.conform.pipeline import run_conform
+    from clinical_endpoints.drug_class.resolver import run_drug_class_resolution
     from clinical_endpoints.ingest.design import STUDIES_DDL
+    from clinical_endpoints.ingest.interventions import INTERVENTION_TABLES
     from clinical_endpoints.ingest.results import RESULTS_TABLES
     from clinical_endpoints.results.pipeline import run_results_conform
     from clinical_endpoints.vocab.loader import default_vocab_dir, load_vocab, write_vocab_tables
@@ -585,8 +666,23 @@ def results_warehouse_path(tmp_path_factory) -> str:
             f"INSERT INTO raw.{table} VALUES (" + ", ".join(["?"] * len(columns)) + ")", rows
         )
 
+    # The interventions and the drug-class axis (docs/DRUG_CLASS_SPEC.md), so
+    # `stats --drug-class` / `--by drug-class` have something to select on. Two
+    # respiratory trials of different mechanisms plus one with a control arm is
+    # the smallest fixture that makes a stratification meaningful rather than
+    # a single block.
+    for table, ddl, _columns in INTERVENTION_TABLES:
+        con.execute(f"CREATE TABLE raw.{table} ({ddl})")
+    con.executemany(
+        "INSERT INTO raw.interventions VALUES (?, ?, ?, ?, ?, ?)", RESULTS_INTERVENTIONS
+    )
+    con.executemany(
+        "INSERT INTO raw.arm_interventions VALUES (?, ?, ?, ?)", RESULTS_ARM_INTERVENTIONS
+    )
+
     run_conform(con)
     run_results_conform(con)
+    run_drug_class_resolution(con, vocab_dir=vocab_dir)
     con.close()
     return str(path)
 

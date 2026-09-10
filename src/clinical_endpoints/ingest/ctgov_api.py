@@ -23,6 +23,7 @@ description AACT's `design_outcomes.population` column carries.
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from datetime import date
 from typing import Any, Callable, Optional
 
@@ -38,6 +39,11 @@ from clinical_endpoints.ingest.design import (
     normalise_healthy_volunteers,
 )
 from clinical_endpoints.ingest.filters import PullFilters, normalize_phases
+from clinical_endpoints.ingest.interventions import (
+    INTERVENTION_TABLE_NAMES,
+    INTERVENTION_TABLES,
+    extract_ctgov_interventions,
+)
 from clinical_endpoints.ingest.pull_log import write_pull_log
 from clinical_endpoints.ingest.results import (
     RESULTS_TABLE_NAMES,
@@ -46,6 +52,11 @@ from clinical_endpoints.ingest.results import (
     has_results,
 )
 from clinical_endpoints.ingest.upsert import SchemaReconciler, replace_children, upsert_rows
+from clinical_endpoints.drug_class.resolver import (
+    Intervention,
+    load_drug_class_mapping,
+    resolve_study_drug_class_matches,
+)
 from clinical_endpoints.ta.resolver import (
     branch_abbrev_to_tree_prefix,
     load_ta_mapping,
@@ -67,7 +78,7 @@ SOURCE_TABLES = (
     "browse_conditions",
     "browse_interventions",
     "browse_condition_branches",
-)
+) + INTERVENTION_TABLE_NAMES
 
 # ...plus the results section, when `--no-results` was not given. Recorded
 # separately so raw._pull_log.source_tables says which of the two shapes a
@@ -88,6 +99,9 @@ MAX_PAGES = 25  # safety cap: at PAGE_SIZE=200 this scans up to 5000 studies
 # `--limit` matches -- see the bug this constant fixes: `--ta respiratory`
 # landing only a handful of studies because 500 non-respiratory studies filled
 # the pull first. This cap only applies when `--ta` is given.
+# `--drug-class` has exactly the same problem and widens the scan the same way,
+# under this same cap -- CT.gov cannot express a drug class server-side either.
+# See docs/DRUG_CLASS_SPEC.md's CLI section.
 MAX_PAGES_TA_FILTERED = 150  # up to 30,000 studies scanned
 
 
@@ -314,6 +328,34 @@ def _extract_condition_branch_rows(study: dict) -> list[dict]:
     return rows
 
 
+def _interventions_for_matching(intervention_rows: dict[str, list[tuple]]) -> list[Intervention]:
+    """The rows `extract_ctgov_interventions` produced -> the `Intervention`
+    objects the drug-class resolver takes.
+
+    The conversion lives here rather than in the resolver because this is the
+    one module that owns both shapes: the resolver reads raw.* tables and should
+    not also know the positional layout of an extractor's tuples.
+    """
+    aliases: dict[int, list[str]] = defaultdict(list)
+    for _nct_id, ordinal, _other_name, other_name_normalised in intervention_rows.get(
+        "intervention_other_names", []
+    ):
+        if other_name_normalised:
+            aliases[ordinal].append(other_name_normalised)
+    return [
+        Intervention(
+            ordinal=ordinal,
+            intervention_type=intervention_type,
+            name=name,
+            name_normalised=name_normalised,
+            other_names_normalised=tuple(aliases.get(ordinal, ())),
+        )
+        for _nct_id, ordinal, intervention_type, name, name_normalised, _description in (
+            intervention_rows.get("interventions", [])
+        )
+    ]
+
+
 def run_pull(
     con: duckdb.DuckDBPyConnection,
     filters: PullFilters,
@@ -338,6 +380,11 @@ def run_pull(
     judged by the exact same layered rules `ta/resolver.py` uses to write
     conformed.study_therapeutic_area, via `resolve_study_ta_matches`, so a
     pull-time match always agrees with the truth `pull` resolves afterward.
+
+    `filters.drug_class`, if given, is applied the same way and for the same
+    reason as `ta` -- the API has no server-side notion of a drug class either,
+    so it is judged client-side, before `limit`, by `resolve_study_drug_class_matches`.
+    It shares `ta`'s widened scan cap rather than adding one of its own.
 
     `filters.org`, if given, is unlike `ta`: the API *can* express it
     server-side (AREA[LeadSponsorName] in query.term), so it needs none of
@@ -367,7 +414,9 @@ def run_pull(
     wanted_org_fragments: Optional[tuple[str, ...]] = (
         tuple(o.lower() for o in filters.org) if filters.org else None
     )
-    max_pages = MAX_PAGES_TA_FILTERED if wanted_ta_ids else MAX_PAGES
+    wanted_class_ids: Optional[set[str]] = set(filters.drug_class) if filters.drug_class else None
+    class_mapping = load_drug_class_mapping(con) if wanted_class_ids else None
+    max_pages = MAX_PAGES_TA_FILTERED if (wanted_ta_ids or wanted_class_ids) else MAX_PAGES
 
     studies: list[dict] = []
     outcomes_by_nct: dict[str, list[dict]] = {}
@@ -377,6 +426,7 @@ def run_pull(
     browse_conditions_by_nct: dict[str, list[dict]] = {}
     browse_interventions_by_nct: dict[str, list[dict]] = {}
     condition_branches_by_nct: dict[str, list[dict]] = {}
+    interventions_by_nct: dict[str, dict[str, list[tuple]]] = {}
     seen_nct_ids: set[str] = set()
     target = max(filters.limit * 3, filters.limit + 50)
     studies_scanned = 0
@@ -430,6 +480,29 @@ def run_pull(
                 if not (set(matches) & wanted_ta_ids):
                     continue
 
+            study_interventions = extract_ctgov_interventions(study)
+
+            if wanted_class_ids is not None:
+                # Judged by the exact same per-study match `drug_class/resolver.py`
+                # uses to write conformed.study_drug_class, so a pull-time match
+                # always agrees with the truth `pull` resolves afterward -- the
+                # property `--ta` already has via `resolve_study_ta_matches`.
+                class_matches = resolve_study_drug_class_matches(
+                    interventions=_interventions_for_matching(study_interventions),
+                    mesh_terms=[m["mesh_term"] for m in browse_interventions],
+                    ancestors=[
+                        row_[1] for row_ in study_interventions["browse_intervention_ancestors"]
+                    ],
+                    branches=[
+                        row_[2]
+                        for row_ in study_interventions["browse_intervention_branches"]
+                        if row_[2]
+                    ],
+                    mapping=class_mapping,
+                )
+                if not (set(class_matches) & wanted_class_ids):
+                    continue
+
             seen_nct_ids.add(nct_id)
             studies.append(row)
             outcomes_by_nct[nct_id] = _extract_outcome_rows(study)
@@ -444,6 +517,7 @@ def run_pull(
             browse_conditions_by_nct[nct_id] = browse_conditions
             browse_interventions_by_nct[nct_id] = browse_interventions
             condition_branches_by_nct[nct_id] = condition_branches
+            interventions_by_nct[nct_id] = study_interventions
 
         if on_page:
             on_page(page_index, len(studies))
@@ -469,6 +543,10 @@ def run_pull(
     condition_branches = [
         b for nct_id in kept_nct_ids for b in condition_branches_by_nct.get(nct_id, [])
     ]
+    intervention_rows: dict[str, list[tuple]] = {name: [] for name in INTERVENTION_TABLE_NAMES}
+    for nct_id in kept_nct_ids:
+        for name, table_rows in (interventions_by_nct.get(nct_id) or {}).items():
+            intervention_rows[name].extend(table_rows)
 
     schema = SchemaReconciler(con, replace=filters.replace)
     schema.ensure("studies", STUDIES_DDL)
@@ -564,6 +642,12 @@ def run_pull(
         [(b["nct_id"], b["branch_abbrev"], b["branch_name"]) for b in condition_branches],
     )
 
+    for table, ddl, columns in INTERVENTION_TABLES:
+        schema.ensure(table, ddl)
+        replace_children(
+            con, table, list(columns), "nct_id", kept_nct_ids, intervention_rows[table]
+        )
+
     results_rows: dict[str, list[tuple]] = {name: [] for name in RESULTS_TABLE_NAMES}
     if filters.with_results:
         for nct_id in kept_nct_ids:
@@ -583,6 +667,7 @@ def run_pull(
         "browse_conditions": len(browse_conditions),
         "browse_interventions": len(browse_interventions),
         "browse_condition_branches": len(condition_branches),
+        **{name: len(rows) for name, rows in intervention_rows.items()},
     }
     if filters.with_results:
         row_counts.update({name: len(rows) for name, rows in results_rows.items()})

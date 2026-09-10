@@ -42,6 +42,13 @@ class PullFilters:
     #: a `ctgov.sponsors` join), so it needs none of `ta`'s client-side scan-cap
     #: machinery.
     org: tuple[str, ...] | None = None
+    #: `--drug-class`: keep only studies whose interventions resolve to one of
+    #: these drug-class ids. Like `ta` and unlike `org`, neither backend can
+    #: express this server-side, so it is applied client-side *before* `limit`
+    #: truncates -- see docs/DRUG_CLASS_SPEC.md and `ingest/ctgov_api.py`'s
+    #: MAX_PAGES_TA_FILTERED for why filtering after truncation starves a
+    #: narrow class of the matches it actually has.
+    drug_class: tuple[str, ...] | None = None
     #: `--replace`: drop and recreate raw.* rather than upsert into it, so this
     #: pull's results are all the warehouse holds afterward -- studies landed by
     #: any earlier pull, with any filters, are discarded. False (upsert) is the
@@ -64,6 +71,8 @@ class PullFilters:
             d["ta"] = list(self.ta)
         if self.org:
             d["org"] = list(self.org)
+        if self.drug_class:
+            d["drug_class"] = list(self.drug_class)
         if self.replace:
             d["replace"] = True
         if not self.with_results:
