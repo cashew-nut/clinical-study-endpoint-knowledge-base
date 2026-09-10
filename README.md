@@ -346,6 +346,9 @@ can sit side by side -- one per therapeutic area, one per vocabulary revision.
   USDM projection and the HTTP API.
 * [`docs/QUERY_CHEATSHEET.md`](docs/QUERY_CHEATSHEET.md) -- SQL for the
   warehouse: coverage, cross-study comparability, one study end to end.
+* [`docs/CONFORMED_ERD.md`](docs/CONFORMED_ERD.md) -- the entity-relationship
+  diagram of the `conformed` schema: every table's grain and key, what joins to
+  what, and the five edges that are not what they look like.
 * [`docs/QUESTIONS_THIS_ANSWERS.md`](docs/QUESTIONS_THIS_ANSWERS.md) -- the
   other direction: six clinical / study-design questions, and what running the
   pipeline gives back for each.
