@@ -25,12 +25,13 @@ Each spec states its own status at the top. In short:
 | [`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md) | **implemented** (phases 1–4; phase 0, the measurement, needs a live pull) | grouping endpoints by the drug class under study: landing the interventions, the class vocabulary, the layered resolver, and `--drug-class` / `--by drug-class` |
 | [`COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) | **not implemented** | decomposing composite endpoints into their components — a proposal, gated on a measurement that needs a live pull |
 | [`RESULTS_CORRELATION_ROADMAP.md`](RESULTS_CORRELATION_ROADMAP.md) | **partly shipped** (D4–D9) | the menu the results spec was chosen from, and what was decided against |
+| [`CORPUS_ACQUISITION_SPEC.md`](CORPUS_ACQUISITION_SPEC.md) | **not implemented** | how `pull` obtains candidate studies — why `--limit` is the wrong control surface, and three ways out, ranked — a proposal |
 
 Read them in that order if you are new to the project: the first two explain
 how the pipeline gets its data and what it emits, the next two are corrections
 made after validating the projection against a real trial, the fifth is what
 the pipeline does with what trials reported, the sixth is how endpoints are
-grouped by what was being tested, and the last two are proposals.
+grouped by what was being tested, and the last three are proposals.
 
 ### Conventions
 
@@ -60,4 +61,6 @@ and the four results-section numbers
 drug-class counts
 ([`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md#phasing-with-a-gate)) — the last two
 of which have commands, `endpoints results coverage` and `endpoints drug-class
-coverage`, waiting to take them.
+coverage`, waiting to take them. [`CORPUS_ACQUISITION_SPEC.md`](CORPUS_ACQUISITION_SPEC.md)
+proposes the acquisition change that would make all four takeable in an
+environment that cannot reach a live backend.
