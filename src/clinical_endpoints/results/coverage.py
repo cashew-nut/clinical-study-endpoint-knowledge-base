@@ -1,28 +1,9 @@
-"""The gate, made measurable rather than assumed.
-
-The roadmap this tier implements gated the whole of Tier 1 on one live pull,
-measuring four numbers before any of it was designed in full:
+"""`endpoints results coverage`: four measurements of the results section.
 
 1. what share of conformed studies have results posted;
-2. what share of results-section outcome titles match the planned `measure`
-   string exactly -- and what the conformance engine does with the rest;
-3. the observed distribution of `dispersion_type` and `param_type`, and the
-   exact value sets both fields use;
-4. the share of results rows whose `unit_of_measure` normalises against
-   `scales.yaml` as it stands.
-
-That pull could not be run here: clinicaltrials.gov and AACT are both
-unreachable from this project's build environment (the same constraint
-`ingest/ctgov_api.py`'s CAVEAT records), and an egress policy is not something
-code can work around. So the gate ships as a command instead of as a number.
-Everything downstream of it was built to be measured rather than to assume a
-measurement: the two enumerations are recognised from an open set and an
-unrecognised value is reported rather than coerced, so running
-`endpoints results coverage` after a real pull answers all four questions and
-names exactly which strings the vocabulary is still missing.
-
-This is not a substitute for the measurement. It is the instrument for taking
-it.
+2. what share of reported outcome titles match a planned `measure`;
+3. the observed `dispersion_type` and `param_type` value sets;
+4. the share of `unit_of_measure` strings that resolve against scales.yaml.
 """
 
 from __future__ import annotations
@@ -42,11 +23,10 @@ def _table_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str) -> bo
 
 
 class NoResults(RuntimeError):
-    """The warehouse holds no results section to measure."""
+    pass
 
 
 def gate_measurements(con: duckdb.DuckDBPyConnection, *, top: int = 20) -> dict:
-    """The four gate numbers, plus the exact value sets behind them."""
     if not _table_exists(con, "raw", "outcome_measures"):
         raise NoResults(
             "raw.outcome_measures is empty -- run `endpoints pull` (without --no-results) first"
@@ -61,11 +41,9 @@ def gate_measurements(con: duckdb.DuckDBPyConnection, *, top: int = 20) -> dict:
 
 
 def _posting(con: duckdb.DuckDBPyConnection) -> dict:
-    """Gate 1. Three denominators, because they answer different questions:
-    every study pulled, every study whose endpoints conformed, and every study
-    whose results actually landed. The registry's own `has_results` flag is a
-    claim about the record; `landed` is what this pipeline could parse out of
-    it, and the two are not the same number."""
+    """Three denominators: studies pulled, studies conformed, and studies whose
+    results landed. The registry's `has_results` flag is a claim about the
+    record; `landed` is what parsed."""
     pulled = con.execute("SELECT count(*) FROM raw.studies").fetchone()[0]
     flagged = con.execute(
         "SELECT count(*) FROM raw.studies WHERE has_results"
@@ -96,8 +74,6 @@ def _posting(con: duckdb.DuckDBPyConnection) -> dict:
 
 
 def _titles(con: duckdb.DuckDBPyConnection) -> dict:
-    """Gate 2. The link-method mix `results conform` recorded, which is the
-    same question asked once the answer is a table rather than a guess."""
     if not _table_exists(con, "conformed", "endpoint_results"):
         return {"computed": False}
     mix = dict(
@@ -135,10 +111,8 @@ def _titles(con: duckdb.DuckDBPyConnection) -> dict:
 
 
 def _enumerations(con: duckdb.DuckDBPyConnection, *, top: int) -> dict:
-    """Gate 3. The exact value sets `param_type` and `dispersion_type` use in
-    this warehouse, each with the kind `results/dispersion.py` folded it to --
-    so the rows reading `unknown` are a to-do list for the next vocabulary
-    round rather than an invisible loss."""
+    """The value sets `param_type` and `dispersion_type` use, each with the
+    kind results/dispersion.py folded it to."""
     if not _table_exists(con, "conformed", "endpoint_dispersion"):
         return {"computed": False}
     out: dict = {"computed": True}
@@ -174,8 +148,6 @@ def _enumerations(con: duckdb.DuckDBPyConnection, *, top: int) -> dict:
 
 
 def _units(con: duckdb.DuckDBPyConnection, *, top: int) -> dict:
-    """Gate 4. What share of `unit_of_measure` strings scales.yaml recognises
-    as it stands today, and the exact strings it does not."""
     if not _table_exists(con, "conformed", "endpoint_dispersion"):
         return {"computed": False}
     total, matched, convertible = con.execute(

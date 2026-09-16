@@ -89,9 +89,9 @@ def test_pull_rejects_unknown_source(tmp_path, monkeypatch):
 
 
 def test_pull_loads_the_vocabulary_itself_when_the_warehouse_has_none(tmp_path, monkeypatch):
-    """The whole point of the auto-load: `--ta` is answerable on a warehouse
-    that has never been validated into, so nobody has to land the studies in
-    one wave and classify them in another."""
+    """The auto-load makes `--ta` answerable on a warehouse that has never
+    been validated into, so studies need not be landed in one wave and
+    classified in another."""
     monkeypatch.chdir(tmp_path)
     studies = [
         _make_study("NCT001", "2024-01-01", condition_meshes=[{"id": "D1", "term": "Lung Neoplasms"}])
@@ -143,13 +143,9 @@ def test_pull_resolves_and_optionally_filters_by_ta(tmp_path, monkeypatch):
     finally:
         con.close()
 
-    # A later, differently-filtered pull that re-scans the same underlying
-    # studies must only ever land/keep matches for --ta -- it must not prune
-    # NCT002, which an earlier pull (with no --ta) already legitimately
-    # landed. `pull` never discards a study landed by an earlier pull with
-    # different filters (see ingest/aact.py's `run_pull` docstring); --ta is
-    # no exception, so NCT002 survives even though it doesn't match this
-    # pull's --ta.
+    # `pull` never discards a study landed by an earlier pull with different
+    # filters, and --ta is no exception, so NCT002 survives even though it
+    # does not match this pull's --ta.
     filtered = runner.invoke(
         app, ["pull", "--phase", "3", "--ta", "oncology", "--warehouse", str(warehouse)]
     )
@@ -164,7 +160,7 @@ def test_pull_resolves_and_optionally_filters_by_ta(tmp_path, monkeypatch):
             ("NCT002",),
         ]
         # conformed.study_therapeutic_area is recomputed from every study in
-        # raw.studies each pull, regardless of --ta -- it still covers both.
+        # raw.studies each pull, regardless of --ta, so it covers both.
         rows = con.execute(
             "SELECT nct_id, ta_id FROM conformed.study_therapeutic_area WHERE is_primary ORDER BY nct_id"
         ).fetchall()
@@ -174,9 +170,9 @@ def test_pull_resolves_and_optionally_filters_by_ta(tmp_path, monkeypatch):
 
 
 def test_pull_skips_resolution_only_when_no_vocabulary_can_be_found(tmp_path, monkeypatch):
-    """The degradation path -- an install that does not ship `vocab/`. The pull
-    still lands its studies; it just cannot classify them, and says so instead
-    of writing empty derived tables."""
+    """An install that does not ship `vocab/` still lands its studies. It
+    cannot classify them, and says so instead of writing empty derived
+    tables."""
     monkeypatch.chdir(tmp_path)
     studies = [_make_study("NCT001", "2024-01-01")]
     monkeypatch.setattr(ctgov_api.requests, "get", lambda *a, **k: _FakeResponse(studies))
@@ -189,7 +185,7 @@ def test_pull_skips_resolution_only_when_no_vocabulary_can_be_found(tmp_path, mo
     assert "Could not load a vocabulary" in result.output
     assert "Skipped therapeutic-area resolution" in result.output
     assert "Skipped drug-class resolution" in result.output
-    # The studies themselves landed -- only the classification of them is missing.
+    # The studies themselves landed; only the classification is missing.
     con = duckdb.connect(str(tmp_path / "warehouse.duckdb"), read_only=True)
     try:
         assert con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 1
@@ -198,11 +194,10 @@ def test_pull_skips_resolution_only_when_no_vocabulary_can_be_found(tmp_path, mo
 
 
 def test_pull_does_not_rewrite_a_vocabulary_the_warehouse_already_holds(tmp_path, monkeypatch):
-    """A *complete* snapshot pinned by an earlier `vocab validate` -- including
-    one validated from an edited `--vocab-dir` -- is left exactly as it is, so
-    an edit under vocab/ still takes effect only on re-validation. (The one case
-    that does get rewritten is a vocabulary predating an axis entirely; that is
-    the test above.)"""
+    """A complete snapshot pinned by an earlier `vocab validate`, including
+    one validated from an edited `--vocab-dir`, is left as it is, so an edit
+    under vocab/ takes effect only on re-validation. A vocabulary predating an
+    axis entirely is the one case that is rewritten, covered above."""
     monkeypatch.chdir(tmp_path)
     warehouse = tmp_path / "wh.duckdb"
     assert runner.invoke(app, ["vocab", "validate", "--warehouse", str(warehouse)]).exit_code == 0
@@ -247,9 +242,9 @@ def test_ta_diff_tree_reports_disagreements(tmp_path, monkeypatch):
     warehouse = tmp_path / "wh.duckdb"
     runner.invoke(app, ["vocab", "validate", "--warehouse", str(warehouse)])
 
-    # a study whose CT.gov branch letter says oncology (BC04 -> C04) but whose
-    # condition descriptor reads as respiratory -- an intentional disagreement
-    # to exercise the diff tool via the CT.gov backend's coarse tree signal.
+    # A study whose CT.gov branch letter says oncology (BC04 -> C04) but whose
+    # condition descriptor reads as respiratory: an intentional disagreement
+    # to exercise the diff tool against the backend's coarse tree signal.
     studies = [
         _make_study(
             "NCT001",
@@ -494,11 +489,10 @@ def test_usdm_coverage_reports_the_tier_mix(usdm_warehouse_path):
 
 
 def test_usdm_coverage_reports_defaulted_tag_counts(tmp_path):
-    """docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1: the tier mix alone
-    cannot show how much of `templated` is standing on an announced default --
-    a standalone warehouse with one reference-fallback-triggering endpoint
-    ("CFB in HbA1c", no reference in the text) exercises the count end to end
-    through the CLI."""
+    """The tier mix alone does not show how much of `templated` stands on an
+    announced default. A standalone warehouse with one endpoint that triggers
+    the reference fallback, "CFB in HbA1c" with no reference in the text,
+    exercises the count through the CLI."""
     from clinical_endpoints.conform.pipeline import run_conform
     from clinical_endpoints.db import SCHEMAS
     from clinical_endpoints.ingest.design import STUDIES_DDL
@@ -594,9 +588,9 @@ def test_pull_refuses_a_table_it_cannot_migrate(tmp_path, monkeypatch):
 
 def test_pull_reloads_a_vocabulary_that_predates_an_axis_and_says_so(tmp_path, monkeypatch):
     """A warehouse validated by a release older than the drug-class axis holds
-    the TA tables and not the drug-class ones. Reloading is right -- the held
-    snapshot has no answer to give -- but it is a rewrite, so the message must
-    not claim the warehouse had no vocabulary."""
+    the TA tables and not the drug-class ones. It is reloaded, since the held
+    snapshot has no answer to give, but the message says so rather than
+    claiming the warehouse had no vocabulary."""
     monkeypatch.chdir(tmp_path)
     warehouse = tmp_path / "wh.duckdb"
     assert runner.invoke(app, ["vocab", "validate", "--warehouse", str(warehouse)]).exit_code == 0
@@ -623,8 +617,8 @@ def test_pull_reloads_a_vocabulary_that_predates_an_axis_and_says_so(tmp_path, m
 
 
 def test_pull_drug_class_filter_works_on_a_never_validated_warehouse(tmp_path, monkeypatch):
-    """One command, one wave: the interventions land, the vocabulary loads, and
-    the filter is applied, from an empty directory."""
+    """In one command from an empty directory: the interventions land, the
+    vocabulary loads, and the filter is applied."""
     monkeypatch.chdir(tmp_path)
     studies = [
         _make_study("NCT001", "2024-01-01", interventions=[{"type": "DRUG", "name": "Semaglutide"}]),

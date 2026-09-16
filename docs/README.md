@@ -50,14 +50,16 @@ and exit with a message: `endpoints query`, `endpoints export`, and `endpoints r
 resolve`. See [`USAGE.md`](USAGE.md#not-implemented) for what to use instead.
 
 Four measurements are owed by specs that are otherwise implemented, and all
-four need an environment that can reach an ingestion backend: the MeSH
-tree-prefix diff against real conditions
-([`SAMPLING_AND_TA_RESOLUTION_SPEC.md`](SAMPLING_AND_TA_RESOLUTION_SPEC.md#still-owed)),
-event coverage on event-family rows
-([`EVENT_SEMANTICS_SPEC.md`](EVENT_SEMANTICS_SPEC.md#migration-and-measurement)),
-and the four results-section numbers
-([`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md#the-gate)), and the four
-drug-class counts
-([`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md#phasing-with-a-gate)) — the last two
-of which have commands, `endpoints results coverage` and `endpoints drug-class
-coverage`, waiting to take them.
+four need an environment that can reach an ingestion backend:
+
+* the MeSH tree-prefix diff against real conditions
+  ([`SAMPLING_AND_TA_RESOLUTION_SPEC.md`](SAMPLING_AND_TA_RESOLUTION_SPEC.md#still-owed))
+* event coverage on event-family rows
+  ([`EVENT_SEMANTICS_SPEC.md`](EVENT_SEMANTICS_SPEC.md#migration-and-measurement))
+* the results-section numbers
+  ([`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md#the-gate))
+* the drug-class counts
+  ([`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md#phasing-with-a-gate))
+
+The last two have commands waiting to take them: `endpoints results coverage`
+and `endpoints drug-class coverage`.

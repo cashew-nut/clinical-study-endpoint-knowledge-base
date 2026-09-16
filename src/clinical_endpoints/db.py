@@ -1,8 +1,6 @@
 """DuckDB warehouse connection and AACT Postgres attach.
 
-The warehouse is a single gitignored DuckDB file with three schemas:
-raw (as pulled) / vocab (the endpoint library) / conformed (the pipeline's
-output). See docs/USAGE.md, "The warehouse".
+The warehouse is a single DuckDB file with three schemas: raw, vocab, conformed.
 """
 
 from __future__ import annotations
@@ -23,15 +21,14 @@ REQUIRED_AACT_ENV_VARS = ("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWOR
 
 
 class MissingAactCredentialsError(RuntimeError):
-    """Raised when AACT Postgres credentials are not available in the environment."""
+    pass
 
 
 class AactConnectionError(RuntimeError):
-    """Raised when the ATTACH to AACT's Postgres instance fails (network/auth)."""
+    pass
 
 
 def connect(warehouse_path: Path | str = DEFAULT_WAREHOUSE_PATH) -> duckdb.DuckDBPyConnection:
-    """Open (creating if needed) the warehouse and ensure its schemas exist."""
     con = duckdb.connect(str(warehouse_path))
     for schema in SCHEMAS:
         con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
@@ -39,12 +36,11 @@ def connect(warehouse_path: Path | str = DEFAULT_WAREHOUSE_PATH) -> duckdb.DuckD
 
 
 def attach_aact(con: duckdb.DuckDBPyConnection, *, alias: str = "aact") -> None:
-    """Load `.env` (if present) and ATTACH the AACT Postgres database as `alias`.
+    """ATTACH the AACT Postgres database as `alias`.
 
-    Credentials are read from the process environment (PGHOST/PGPORT/PGDATABASE/
-    PGUSER/PGPASSWORD) by the postgres extension itself, following libpq
-    conventions via an empty connection string -- they are never interpolated
-    into SQL text.
+    Credentials come from the PG* environment variables (loaded from `.env` if
+    present) via the postgres extension's libpq conventions; they are never
+    interpolated into SQL.
     """
     load_dotenv()
     missing = [v for v in REQUIRED_AACT_ENV_VARS if not os.environ.get(v)]
@@ -71,30 +67,16 @@ def attach_aact(con: duckdb.DuckDBPyConnection, *, alias: str = "aact") -> None:
         host = os.environ.get("PGHOST")
         port = os.environ.get("PGPORT")
         raise AactConnectionError(
-            f"Could not connect to AACT Postgres at {host}:{port}: {exc}\n\n"
-            "Credentials loaded correctly (host/port resolved above), so this is "
-            "almost always a network reachability issue rather than a bug in this "
-            "tool -- e.g. a corporate firewall/VPN blocking outbound TCP 5432 "
-            "(many networks only allow 80/443 out). To narrow it down:\n"
-            f"  1. `nc -vz {host} {port}` (or `telnet {host} {port}`) -- if that "
-            "also hangs/fails, it's network-level, not this tool.\n"
-            f"  2. Try `psql -h {host} -p {port} -U $PGUSER -d $PGDATABASE` directly, "
-            "if you have psql installed.\n"
-            "  3. Try a different network (e.g. a phone hotspot) to rule out a "
-            "local firewall/VPN blocking port 5432 outbound.\n"
-            "  4. Confirm your AACT registration is fully approved -- check for a "
-            "confirmation email, not just the signup form."
+            f"Could not connect to AACT Postgres at {host}:{port}: {exc}\n"
+            f"Check that outbound TCP {port} is allowed (`nc -vz {host} {port}`) and that "
+            "your AACT registration has been approved."
         ) from exc
 
 
 def _infer_arrow_type(values: list) -> pa.DataType:
-    """One column's pyarrow type, from its first non-NULL value -- every
-    column `bulk_insert` is ever asked to load is homogeneous (one dataclass
-    field), so the first value that isn't NULL settles it. `bool` is checked
-    before `int` because `bool` is a Python `int` subclass. A column that is
-    NULL in every row of this batch falls back to string(); DuckDB casts a
-    NULL of any Arrow type to whatever the target column declares, so the
-    fallback type only matters when there's an actual value to carry."""
+    """Arrow type from the first non-NULL value. `bool` before `int` because
+    bool subclasses int. An all-NULL column falls back to string; DuckDB casts
+    a NULL of any type to the target column."""
     for value in values:
         if value is None:
             continue
@@ -118,16 +100,11 @@ def bulk_insert(
     *,
     on_conflict: Optional[str] = None,
 ) -> None:
-    """Load `rows` into `table` (schema-qualified, e.g. "raw.studies") via a
-    zero-copy Arrow table rather than `execute`/`executemany`'s scalar
-    parameter binding -- see the `pyarrow` entry in pyproject.toml's
-    `dependencies` for why that binding path is worth avoiding here.
+    """Insert `rows` into `table` through an Arrow table. Scalar parameter
+    binding is far slower in DuckDB's Python client when pandas is absent.
 
-    `on_conflict`, if given, is appended verbatim after the SELECT (e.g.
-    "ON CONFLICT (nct_id) DO UPDATE SET title = excluded.title") -- like
-    `table` and `columns`, always one of this codebase's own hardcoded
-    strings, never external input, so building it into the SQL text is safe
-    the same way the DDL-building elsewhere in this codebase already is.
+    `table`, `columns` and `on_conflict` are hardcoded strings, never user
+    input.
     """
     if not rows:
         return

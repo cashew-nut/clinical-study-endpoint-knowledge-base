@@ -1,27 +1,9 @@
-"""Shared helpers so a `pull` is an upsert, not a wholesale table replace:
-repeated runs keep every previously-pulled study (and its children) intact,
-touching only the rows for studies in *this* pull -- update where a row
-already exists, insert where it doesn't, never drop rows for studies outside
-the current pull.
+"""Upsert helpers: a `pull` updates rows for the studies it landed and never
+drops rows from earlier pulls.
 
-That guarantee only holds if the live table still has the shape the pull code
-expects, and `CREATE TABLE IF NOT EXISTS` does not check: a raw.* table created
-by an earlier release keeps its original columns and constraints forever, and
-the mismatch only surfaces at insert time as a binder error. Two such changes
-have already shipped -- the switch from `CREATE OR REPLACE TABLE ... AS SELECT`
-to a declared DDL with a PRIMARY KEY, and the design/eligibility columns
-raw.studies gained for the USDM projection -- so `ensure_table` reconciles the
-live table against the DDL instead, migrating the rows across.
-
-Migration rather than a refresh is the point. Dropping raw.studies and
-re-pulling would discard every study landed by an earlier pull with different
-filters, which is exactly what upserting exists to prevent; a schema change is
-not a reason to lose them.
-
-The one place this file *does* drop and recreate: `--replace`, an explicit,
-opt-in override of all of the above, for an operator who wants the warehouse
-to hold only this pull rather than accumulate. See `ensure_table`'s `replace`
-parameter.
+`CREATE TABLE IF NOT EXISTS` does not check that an existing table has the
+expected shape, so `ensure_table` reconciles the live table against the DDL
+and migrates rows across. `--replace` is the one opt-in drop-and-recreate.
 """
 
 from __future__ import annotations
@@ -33,20 +15,16 @@ import duckdb
 
 from clinical_endpoints.db import bulk_insert
 
-#: raw.* table and column names are literals in this codebase, never user input.
-#: Checked anyway because these get interpolated into DDL, where a bound
-#: parameter isn't available.
+# Table and column names are literals in this codebase; checked anyway since
+# they are interpolated into DDL.
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _SCRATCH = "_ensure_table_expected"
 
 
 class SchemaMigrationError(RuntimeError):
-    """raw.<table> exists in a shape its rows can't be carried across into.
-
-    Raised instead of dropping the table: the rows in it came from a pull that
-    may not be repeatable, so which of them to lose is the operator's call.
-    """
+    """raw.<table> exists in a shape its rows cannot be carried across into.
+    Raised instead of dropping the table."""
 
 
 @dataclass(frozen=True)
@@ -58,9 +36,7 @@ class ColumnSpec:
 
 @dataclass(frozen=True)
 class SchemaChange:
-    """What `ensure_table` had to do to bring a table up to its DDL. Returned so
-    callers can report it -- a migration rewrites the operator's warehouse, and
-    doing that silently would hide both the dropped columns and the row loss."""
+    """What `ensure_table` did to bring a table up to its DDL, for the caller to report."""
 
     table: str
     added: tuple[str, ...] = ()
@@ -117,9 +93,7 @@ def _columns(con: duckdb.DuckDBPyConnection, qualified: str) -> tuple[ColumnSpec
 
 
 def _expected_columns(con: duckdb.DuckDBPyConnection, ddl: str) -> tuple[ColumnSpec, ...]:
-    """The shape `ddl` describes, read back from a throwaway table rather than
-    parsed -- DuckDB is the authority on its own DDL, and a hand-rolled parser
-    for it would be one more thing to keep in step."""
+    """The shape `ddl` describes, read back from a throwaway table rather than parsed."""
     con.execute(f"CREATE OR REPLACE TEMP TABLE {_SCRATCH} ({ddl})")
     try:
         return _columns(con, _SCRATCH)
@@ -132,17 +106,9 @@ def ensure_table(
 ) -> SchemaChange | None:
     """Create raw.<table>, or bring an existing one up to `ddl`.
 
-    `replace=True` (the pull's `--replace` flag) drops the table first, so
-    this always falls into the "doesn't exist" branch below and starts from
-    an empty table on the current schema. That is deliberate data loss, not a
-    migration -- there is no shape to reconcile and nothing worth carrying
-    across -- so it never produces a `SchemaChange`; the caller reports
-    `--replace` itself, once, rather than per table (see cli/main.py's `pull`).
-
-    Returns None when nothing had to change (the overwhelmingly common case:
-    one PRAGMA against a table that already matches, or a `replace`),
-    otherwise the `SchemaChange` describing the migration, for the caller to
-    report.
+    `replace=True` drops the table first; that is deliberate data loss, not a
+    migration, so it never produces a `SchemaChange`. Returns None when
+    nothing had to change.
     """
     _check_identifier(table)
     if replace:
@@ -159,13 +125,7 @@ def ensure_table(
 
 
 class SchemaReconciler:
-    """Runs a pull's `ensure_table` calls and remembers the ones that had to
-    migrate, so `run_pull` can hand them back and the CLI can report them.
-
-    `replace=True` threads `--replace` through every `ensure` call, so each
-    raw.* table this pull touches is dropped and recreated empty before this
-    pull's rows land in it -- see `ensure_table`.
-    """
+    """Runs a pull's `ensure_table` calls and remembers the ones that migrated."""
 
     def __init__(self, con: duckdb.DuckDBPyConnection, *, replace: bool = False) -> None:
         self._con = con
@@ -212,9 +172,8 @@ def _migrate(
         source = column.name if column.name in actual_by_name else "NULL"
         select_exprs.append(f"CAST({source} AS {column.type}) AS {column.name}")
 
-    # A table that didn't carry this key may hold rows that violate it. Keep one
-    # row per key rather than letting the INSERT abort: the duplicates are
-    # re-pullable, the rest of the table may not be.
+    # A table that did not carry this key may hold rows that violate it; keep
+    # one row per key rather than letting the INSERT abort.
     predicate = ""
     if key and actual_key != key:
         predicate = " WHERE " + " AND ".join(f"{k} IS NOT NULL" for k in key)
@@ -262,17 +221,12 @@ def upsert_rows(
     key_columns: list[str],
     rows: list[tuple],
 ) -> None:
-    """Insert `rows` into raw.<table>, updating rows whose key already exists
-    and inserting the rest. Rows already in the table whose key is not in
-    `rows` are left untouched. Requires raw.<table> to have a PRIMARY KEY/
-    UNIQUE constraint on `key_columns` (see `ensure_table`'s DDL)."""
+    """Insert `rows` into raw.<table>, updating rows whose key already exists.
+    Requires a PRIMARY KEY/UNIQUE constraint on `key_columns`."""
     if not rows:
         return
-    # An INSERT ... ON CONFLICT cannot update the same key twice within one
-    # statement (DuckDB, like Postgres, rejects that) -- deduplicate on
-    # `key_columns` first, keeping the last occurrence, so a caller that (like
-    # the single-row executemany this replaced) relied on "later rows win"
-    # still gets that behaviour.
+    # ON CONFLICT cannot update the same key twice in one statement;
+    # deduplicate first, keeping the last occurrence.
     key_indexes = [columns.index(k) for k in key_columns]
     deduped: dict[tuple, tuple] = {}
     for row in rows:
@@ -293,10 +247,7 @@ def replace_children(
     key_values: list,
     rows: list[tuple],
 ) -> None:
-    """Replace every row belonging to `key_values` (e.g. the nct_ids just
-    pulled) in raw.<table> with `rows` -- a scoped delete-then-insert, so
-    rows for keys outside `key_values` (studies from earlier pulls) are never
-    touched."""
+    """Replace every row belonging to `key_values` in raw.<table> with `rows`."""
     if key_values:
         con.execute(f"DELETE FROM raw.{table} WHERE {key_column} = ANY(?)", [list(key_values)])
     bulk_insert(con, f"raw.{table}", columns, rows)

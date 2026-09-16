@@ -1,18 +1,13 @@
 """Project the conformed warehouse into USDM 4.0 endpoint-module objects.
 
-The rendering step, not an inference step: every dimension was resolved by
-`conform`, with a match method and a confidence recorded, and this module turns
-those decisions into `Objective` / `Endpoint` / `SyntaxTemplateDictionary` /
-`BiomedicalConceptSurrogate` / `AnalysisPopulation` instances. Nothing here
-re-parses registry text.
+A rendering step, not an inference step: every dimension was resolved by
+`conform`, and this turns those decisions into `Objective` / `Endpoint` /
+`SyntaxTemplateDictionary` / `BiomedicalConceptSurrogate` /
+`AnalysisPopulation` instances.
 
-The invariant that makes "all endpoints in a trial" honest: **every row in
-`raw.design_outcomes` for the NCT id becomes exactly one USDM `Endpoint`**,
-at one of three fidelity tiers. `conform` deliberately routes rows whose
-measurement did not resolve to `conformed.review_queue` rather than conforming
-them at low confidence; serving only `conformed.endpoints` would silently drop
-those, and a consumer counting primary endpoints would get a wrong answer with
-no signal.
+Every row in `raw.design_outcomes` for the NCT id becomes exactly one USDM
+`Endpoint`, at one of three fidelity tiers, so a study whose endpoints did not
+conform never appears to have fewer endpoints.
 """
 
 from __future__ import annotations
@@ -35,9 +30,7 @@ from clinical_endpoints.usdm.tags import (
 )
 from clinical_endpoints.usdm.templates import Rendered, parse_template, render
 
-#: Term ids that mean "absent" rather than naming a thing. A tag resolving to
-#: one of these is unresolved: "Change from No reference (absolute quantity) in
-#: FEV1" is worse than dropping the group.
+# Term ids that mean "absent". A tag resolving to one of these is unresolved.
 UNRESOLVED_TERM_IDS = frozenset({"none", "not_stated", "", None})
 
 TIER_TEMPLATED = "templated"
@@ -46,14 +39,11 @@ TIER_VERBATIM = "verbatim"
 
 
 class NotPulled(LookupError):
-    """The NCT id is not in raw.studies -- it was never pulled."""
+    pass
 
 
 class NotConformed(RuntimeError):
-    """The trial was pulled but `endpoints conform` has not run over it."""
-
-
-# --------------------------------------------------------------------- rules
+    pass
 
 
 @dataclass(frozen=True)
@@ -77,9 +67,6 @@ class ProjectionRules:
     measurement_domain: dict[str, str]
     event_family: dict[str, bool]
     event_concept: dict[str, str]
-    #: docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 3: timepoint_pattern id ->
-    #: its vocabulary-declared role (assessment_time, observation_window,
-    #: event_horizon, unresolved).
     timepoint_role: dict[str, str] = field(default_factory=dict)
     vocab_version: str | None = None
 
@@ -99,12 +86,7 @@ def _table_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str) -> bo
 
 
 def _inline_map(con: duckdb.DuckDBPyConnection, table: str) -> dict[str, str]:
-    """`inline_label` where the term declares one, else `label`.
-
-    A term with no `inline_label` falls back to its display label; a term whose
-    *id* means absence is filtered separately, by id, so the two cases never get
-    confused (see UNRESOLVED_TERM_IDS).
-    """
+    """`inline_label` where the term declares one, else `label`."""
     rows = con.execute(f"SELECT id, coalesce(inline_label, label) FROM vocab.{table}").fetchall()
     return {term_id: value for term_id, value in rows if value}
 
@@ -177,9 +159,6 @@ def _vocab_version(con: duckdb.DuckDBPyConnection) -> str | None:
     return row[0].isoformat() if row and row[0] else None
 
 
-# ---------------------------------------------------------------- source rows
-
-
 @dataclass(frozen=True)
 class SourceRow:
     endpoint_id: str
@@ -235,11 +214,8 @@ FROM conformed.review_queue WHERE nct_id = ?
 
 
 def fetch_rows(con: duckdb.DuckDBPyConnection, nct_id: str) -> list[SourceRow]:
-    """Every design_outcome for this trial, from both conformed tables.
-
-    The two share `conform`'s `_row_id` content hash, so the union is the raw
-    row set with no duplicates and no gaps.
-    """
+    """Every design_outcome for this trial, from both conformed tables. The
+    two share `conform`'s content hash, so the union has no duplicates."""
     if not _table_exists(con, "raw", "studies"):
         raise NotPulled(f"{nct_id} is not in the warehouse -- run `endpoints pull` first")
     if not con.execute("SELECT 1 FROM raw.studies WHERE nct_id = ?", [nct_id]).fetchone():
@@ -289,9 +265,6 @@ def _raw_outcome_count(con: duckdb.DuckDBPyConnection, nct_id: str) -> int:
     ).fetchone()[0]
 
 
-# ----------------------------------------------------------------- projection
-
-
 @dataclass
 class Projection:
     nct_id: str
@@ -301,11 +274,8 @@ class Projection:
     bc_surrogates: list[dict] = field(default_factory=list)
     analysis_populations: list[dict] = field(default_factory=list)
     tiers: dict[str, int] = field(default_factory=dict)
-    #: Per-tag count of endpoints whose host carries an announced default
-    #: (docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1) -- e.g. {"reference": 3}
-    #: for three endpoints whose reference host came from `reference_fallback`.
-    #: A subset of `tiers["templated"]`: the tier can no longer hide how much
-    #: of it is standing on defaults.
+    # Per-tag count of endpoints whose host carries an announced default,
+    # e.g. {"reference": 3}. A subset of `tiers["templated"]`.
     defaulted: dict[str, int] = field(default_factory=dict)
     endpoint_count: int = 0
 
@@ -326,7 +296,6 @@ def _code(ids: IdFactory, code: str, decode: str) -> dict:
 
 
 def _extension(ids: IdFactory, url: str, **value: Any) -> dict:
-    """One ExtensionAttribute. USDM: "values or extension attributes, never both"."""
     attribute = {
         "id": ids.mint("ExtensionAttribute"),
         "url": f"{codes.EXTENSION_NS}:{url}",
@@ -343,16 +312,8 @@ def _humanise(term_id: str) -> str:
 def _resolve_tags(
     row: SourceRow, spec: TemplateSpec, rules: ProjectionRules
 ) -> tuple[dict[str, str | None], bool]:
-    """Every tag's rendered value, or None where the dimension did not resolve.
-
-    Also reports whether `reference` came from `spec.reference_fallback` --
-    the announced default docs/USDM_PROJECTION_INTEGRITY_SPEC.md requires a
-    `derived: reference` flag for. The caller still has to check the value
-    actually reached the rendered text (`_build_endpoint`): a fallback
-    resolved here but never used by the template (e.g. the endpoint degrades
-    to a template with no `{reference}` tag) minted no host, so no flag is
-    owed.
-    """
+    """Every tag's rendered value (None where unresolved), and whether
+    `reference` came from `spec.reference_fallback`."""
     measurement = rules.inline_label("measurement", row.measurement_id)
     concept_id = rules.measurement_concept.get(row.measurement_id or "")
     reference = rules.inline_label("reference", row.reference_id)
@@ -373,7 +334,6 @@ def _resolve_tags(
 
 
 def _verbatim_text(row: SourceRow) -> str:
-    """The registry string, used as-is when no template applies."""
     for candidate in (row.measure_raw, row.description_raw):
         text = " ".join((candidate or "").split())
         if text:
@@ -382,8 +342,7 @@ def _verbatim_text(row: SourceRow) -> str:
 
 
 class _SharedInstances:
-    """BiomedicalConceptSurrogates and AnalysisPopulations, minted once per trial
-    and shared by every endpoint that resolves the same term."""
+    """BiomedicalConceptSurrogates and AnalysisPopulations, minted once per trial."""
 
     def __init__(self, ids: IdFactory, rules: ProjectionRules) -> None:
         self._ids = ids
@@ -422,11 +381,7 @@ class _SharedInstances:
 
 
 def _timepoint_extracted_fields(extracted: Any) -> list[tuple[str, str]]:
-    """`timepoint_extracted`'s parsed fields, as `timepoint<Field>` pairs --
-    the structured duration `conform` already parses (`{"value": 6, "unit":
-    "month"}`) but the projection used to discard. Sorted by key, so the
-    projection stays deterministic regardless of dict/JSON key order.
-    """
+    """`timepoint_extracted`'s fields as `timepoint<Field>` pairs, sorted by key."""
     if isinstance(extracted, str):
         try:
             extracted = json.loads(extracted)
@@ -447,15 +402,8 @@ def _timepoint_extracted_fields(extracted: Any) -> list[tuple[str, str]]:
 def _decomposition(
     ids: IdFactory, row: SourceRow, rules: ProjectionRules, analysis_population_id: str | None = None
 ) -> dict:
-    """What the endpoint MEANS, as one nested ExtensionAttribute: the resolved
-    vocabulary terms, never how confidently or by what method they were
-    resolved -- that lives in `_conformance` instead
-    (docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 4: two different questions,
-    kept apart on purpose).
-
-    A standards-only consumer ignores it; a consumer of this warehouse gets the
-    full decomposition without a second call.
-    """
+    """What the endpoint means: the resolved vocabulary terms, as one nested
+    ExtensionAttribute. How they were decided lives in `_conformance`."""
     inner: list[dict] = []
 
     def add(url: str, value: Any) -> None:
@@ -496,12 +444,7 @@ def _decomposition(
 
 
 def _conformance(ids: IdFactory, row: SourceRow, tier: str) -> dict:
-    """How the decomposition's semantics were decided: match methods and
-    confidences per dimension, the fidelity tier, and the sourcing
-    bookkeeping (`docs/USDM_PROJECTION_INTEGRITY_SPEC.md` change 4). A
-    consumer asking "what does this endpoint mean" reads `decomposition`
-    alone; one asking "how sure is the pipeline" reads this instead.
-    """
+    """How the decomposition was decided: match methods, confidences, tier."""
     inner: list[dict] = []
 
     def add(url: str, value: Any) -> None:
@@ -536,13 +479,6 @@ def _conformance(ids: IdFactory, row: SourceRow, tier: str) -> dict:
 
 @dataclass(frozen=True)
 class _RenderResult:
-    """What one row renders to, and how. `_build_endpoint` needs all four
-    fields (the dictionary/parameterMaps below are built from `values`); the
-    `usdm_text` column `conform` stores needs only `text`. One function
-    computes it for both, so the stored column can never drift from what
-    `usdm show` serves live for the same row.
-    """
-
     text: str
     tier: str
     rendered: Rendered | None
@@ -558,12 +494,8 @@ def _render(row: SourceRow, rules: ProjectionRules) -> _RenderResult:
     if row.conformed and spec and not spec.verbatim and spec.parts:
         rendered = render(spec.parts, values)
         if rendered is None and rules.event_family.get(row.form_id or ""):
-            # docs/EVENT_SEMANTICS_SPEC.md: an event-family row whose event (or
-            # other required tag) did not resolve must not fall all the way to
-            # raw verbatim registry text -- it degrades to the not_stated
-            # frame ({measurement}[ {timepoint}]) instead, which asserts only
-            # what actually resolved and never renders the assessment into
-            # the event's place.
+            # An event-family row whose event did not resolve degrades to the
+            # not_stated frame rather than to verbatim registry text.
             fallback_spec = rules.templates.get("not_stated")
             if fallback_spec and fallback_spec.parts:
                 rendered = render(fallback_spec.parts, values)
@@ -583,11 +515,7 @@ def _render(row: SourceRow, rules: ProjectionRules) -> _RenderResult:
 
 
 def render_endpoint_text(row: SourceRow, rules: ProjectionRules) -> str:
-    """`Endpoint.text` for one row: the syntax template with tags unresolved,
-    or (at verbatim tier) the escaped registry string -- an HTML fragment,
-    exactly what `usdm show` serves for this row. `conform` calls this to
-    populate `conformed.endpoints.usdm_text`, so that column is never a second,
-    potentially drifting, implementation of the same rendering."""
+    """`Endpoint.text` for one row; `conform` stores this as `usdm_text`."""
     return _render(row, rules).text
 
 
@@ -598,15 +526,12 @@ def _build_endpoint(
     shared: _SharedInstances,
     ordinal: int,
 ) -> tuple[dict, dict | None, str, frozenset[str]]:
-    """One Endpoint, its dictionary (or None at verbatim tier), its tier, and
-    the set of tags whose host carries an announced default (today, at most
-    `{"reference"}` -- docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1)."""
+    """One Endpoint, its dictionary (None at verbatim tier), its tier, and the
+    tags whose host carries an announced default."""
     result = _render(row, rules)
     rendered, tier, values = result.rendered, result.tier, result.values
 
-    # The flag is only owed once the default actually reached the document:
-    # a fallback the template never used (e.g. the row degraded to a
-    # template with no {reference} tag) minted no host, so nothing to flag.
+    # Flagged only once the default reached the document.
     defaulted: frozenset[str] = (
         frozenset({"reference"})
         if result.reference_defaulted and rendered is not None and "reference" in rendered.tags
@@ -657,13 +582,8 @@ def _build_endpoint(
             "instanceType": "SyntaxTemplateDictionary",
         }
 
-    # docs/EVENT_SEMANTICS_SPEC.md: minted for every conformed endpoint with a
-    # resolved measurement, tag-referenced or not. With event-family sentences
-    # now using {event} rather than {measurement}, PFS-shaped rows would
-    # otherwise stop carrying the tumour_burden_recist surrogate -- silently
-    # dropping the cross-study SAME_MEASUREMENT join from the document. No
-    # ParameterMap: this is presence in bcSurrogates for a consumer to join
-    # on, not something any endpoint's text points at.
+    # The measurement surrogate is minted for every conformed endpoint,
+    # tag-referenced or not, so event-family rows keep the cross-study join.
     measurement_label = values.get("measurement")
     if row.conformed and row.measurement_id not in UNRESOLVED_TERM_IDS and measurement_label:
         shared.surrogate(f"measurement:{row.measurement_id}", row.measurement_id, measurement_label, "measurement")
@@ -696,11 +616,8 @@ def _build_endpoint(
 
 
 def _endpoint_concept(row: SourceRow, rules: ProjectionRules) -> str:
-    """docs/EVENT_SEMANTICS_SPEC.md: an event-family endpoint's objective is
-    about the EVENT, not the assessment -- NCT01777919's primary objective
-    becomes "the effect ... on disease progression", not "on tumour burden".
-    Falls back to the measurement's concept where the form is not
-    event-family, or is but the event itself did not resolve."""
+    """An event-family endpoint's objective is about the event, not the
+    assessment; otherwise the measurement's concept."""
     if rules.event_family.get(row.form_id or "") and row.event_id not in UNRESOLVED_TERM_IDS:
         concept = rules.event_concept.get(row.event_id or "")
         if concept:
@@ -725,8 +642,7 @@ def project(
     levels: Iterable[str] | None = None,
     tiers: Iterable[str] | None = None,
 ) -> Projection:
-    """Project one trial's endpoints. Deterministic: same warehouse state in,
-    byte-identical document out."""
+    """Project one trial's endpoints. Deterministic for a given warehouse state."""
     rules = rules or load_projection_rules(con)
     rows = fetch_rows(con, nct_id)
     wanted_levels = set(levels) if levels else None
@@ -762,11 +678,8 @@ def project(
         concept_list = _concept_list(concepts, rules.concept_list_limit)
         template = rules.objective_templates.get(level, "")
         if concept_list and template:
-            # Rendered to plain prose, not tag markup, and with no dictionary:
-            # {concept_list} names several concepts, and a ParameterMap
-            # references exactly one instance, so there is nothing for a tag to
-            # point at. All three CDISC examples carry plain prose in
-            # Objective.text for the same reason.
+            # Plain prose with no dictionary: {concept_list} names several
+            # concepts, and a ParameterMap references exactly one instance.
             label = render(parse_template(template), {"concept_list": concept_list}).label
         else:
             label = rules.objective_templates.get("_unresolved", "")

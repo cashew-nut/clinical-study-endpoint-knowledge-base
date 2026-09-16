@@ -1,17 +1,9 @@
 """The two response envelopes: the endpoints module, and a full USDM `Wrapper`.
 
-`module` is the default and the right answer for "give me this trial's
-endpoints": the endpoint-module objects and nothing else, each a schema-valid
-USDM class instance, with provenance.
-
-`wrapper` is a full USDM `Wrapper` for consumers whose tooling only eats one.
-It is buildable at all because `raw.studies` now carries the design and
-eligibility facts USDM requires (see ingest/design.py) -- before that, a valid
-Wrapper meant asserting `StudyDesignPopulation.includesHealthySubjects` and
-`InterventionalStudyDesign.model` out of thin air. Anything still unsourceable
-is emitted as an empty string or a declared default and named in
-`provenance.synthesized[]`: **a placeholder that is not announced is a
-fabricated clinical fact.**
+`module` is the endpoint-module objects with provenance. `wrapper` is a full
+Wrapper for consumers whose tooling needs one; anything USDM requires that the
+registry does not state is emitted as an empty string or a declared default
+and named in `provenance.synthesized[]`.
 """
 
 from __future__ import annotations
@@ -25,11 +17,8 @@ from clinical_endpoints.usdm import codes
 from clinical_endpoints.usdm.ids import IdFactory
 from clinical_endpoints.usdm.project import Projection
 
-#: Where CDISC publishes no mapping for a ClinicalTrials.gov value -- arm type,
-#: intervention model, primary purpose -- the Code is scoped to the registry it
-#: came from rather than given an invented CDISC C-code. `codeSystem` is a free
-#: string in USDM, so this says exactly what it means: this value is
-#: ClinicalTrials.gov's, not CDISC CT's.
+# Where CDISC publishes no mapping for a ClinicalTrials.gov value (arm type,
+# intervention model, primary purpose), the Code is scoped to the registry.
 CTGOV_CODE_SYSTEM = "https://clinicaltrials.gov"
 
 TITLE_BRIEF = ("C207615", "Brief Study Title")
@@ -37,7 +26,6 @@ TITLE_OFFICIAL = ("C207616", "Official Study Title")
 CHARACTERISTIC_RANDOMISED = ("C46079", "Randomized")
 DATA_ORIGIN_WITHIN_STUDY = ("C188866", "Data Generated Within Study")
 
-#: The pilot uses a single "Both" code for a study open to all sexes.
 PLANNED_SEX_CODES = {
     "all": ("C49636", "Both"),
     "female": ("C16576", "Female"),
@@ -86,11 +74,8 @@ def _quantity(ids: IdFactory, value: float | int | None) -> dict | None:
     }
 
 
-#: raw._pull_log.pulled_at is TIMESTAMPTZ, and duckdb's Python client needs pytz
-#: -- which it does not itself depend on -- to materialise one as a datetime.
-#: Only the ISO string is wanted here, so DuckDB renders it: converting to UTC
-#: explicitly (rather than trusting the session's TimeZone setting) and pinning
-#: the offset reproduces exactly what `datetime.isoformat()` used to return.
+# raw._pull_log.pulled_at is TIMESTAMPTZ, which duckdb's Python client needs
+# pytz to materialise. Only the ISO string is wanted, so DuckDB renders it.
 _PULLED_AT_ISO = (
     "CASE WHEN pulled_at IS NULL THEN NULL ELSE "
     "strftime(pulled_at AT TIME ZONE 'UTC', '%Y-%m-%dT%H:%M:%S.%f') || '+00:00' END"
@@ -120,10 +105,8 @@ def provenance(
         "vocabVersion": vocab_version,
         "projectedAt": _now(),
         "tiers": dict(sorted(projection.tiers.items())),
-        # docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1: per-tag count of
-        # endpoints whose host carries an announced default (a subset of
-        # tiers["templated"]), so the tier mix can no longer hide how much
-        # of it is standing on defaults.
+        # Per-tag count of endpoints whose host carries an announced default,
+        # a subset of tiers["templated"].
         "defaulted": dict(sorted(projection.defaulted.items())),
     }
 
@@ -145,11 +128,6 @@ def module_envelope(
     flatten: bool = False,
 ) -> dict:
     body: dict[str, Any] = {
-        # docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 5: first key, so the
-        # boundary between the knowledge-base envelope and USDM class
-        # instances is machine-readable from the artefact alone, not just
-        # implied by `systemName`. `envelope=wrapper` carries no `profile` --
-        # it is the standard's own shape.
         "profile": codes.MODULE_PROFILE,
         "usdmVersion": codes.USDM_VERSION,
         "systemName": codes.SYSTEM_NAME,
@@ -409,11 +387,7 @@ def wrapper_envelope(
 
 def _age_range(ids: IdFactory, minimum_age: str | None, maximum_age: str | None) -> dict | None:
     """CT.gov ages are "18 Years" / "N/A"; USDM wants a Range of Quantity.
-
-    The unit is left null, as the CDISC pilot does for enrolment, and the source
-    strings travel verbatim in extensions rather than being mapped onto a unit
-    codelist this projection cannot verify.
-    """
+    The unit is left null and the source strings travel in extensions."""
     low, high = _age_value(minimum_age), _age_value(maximum_age)
     if low is None and high is None:
         return None

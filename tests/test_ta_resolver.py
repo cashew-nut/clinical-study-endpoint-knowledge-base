@@ -91,8 +91,8 @@ def test_load_ta_mapping_reads_defaults_from_yaml_not_vocab_tables(con, vocab_di
 
 def test_load_ta_mapping_preserves_file_order_for_term_patterns(con, vocab_dir):
     """oncology's term_patterns rule is listed before infectious_disease's in
-    ta_mesh_mapping.yaml -- the resolver depends on that file order for
-    first-hit-wins regex matching, so this pins the assumption that DuckDB's
+    ta_mesh_mapping.yaml, and the resolver depends on that order for
+    first-hit-wins regex matching. This pins the assumption that DuckDB's
     unordered scan of vocab.ta_mesh_term_patterns preserves insertion order."""
     mapping = load_ta_mapping(con, vocab_dir=vocab_dir)
     ta_order = [ta_id for ta_id, _ in mapping.condition_patterns]
@@ -282,15 +282,15 @@ def test_filter_raw_tables_by_nct_ids(con, vocab_dir):
 
 
 def test_filter_raw_tables_by_nct_ids_never_touches_studies_outside_this_pull(con, vocab_dir):
-    """A `--ta` filter must only drop studies landed by *this* pull -- studies
-    from an earlier, unrelated pull that also fail to match must survive."""
+    """A `--ta` filter only drops studies landed by this pull. Studies from an
+    earlier pull that also fail to match survive."""
     _insert_study(con, "NCT001")
     _insert_condition(con, "NCT001", "Lung Neoplasms")
     run_ta_resolution(con, vocab_dir=vocab_dir)
 
-    # A later pull lands NCT002 (asthma -- won't match a hypothetical oncology
-    # filter) and NCT003 (lung cancer -- matches). NCT001 was never part of
-    # this pull at all.
+    # A later pull lands NCT002 (asthma, no match for a hypothetical oncology
+    # filter) and NCT003 (lung cancer, a match). NCT001 was never part of this
+    # pull.
     _insert_study(con, "NCT002")
     _insert_condition(con, "NCT002", "Asthma")
     _insert_study(con, "NCT003")

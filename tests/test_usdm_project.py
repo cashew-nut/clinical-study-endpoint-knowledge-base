@@ -66,8 +66,8 @@ def projection(usdm_con):
 
 
 def test_every_raw_outcome_row_becomes_exactly_one_endpoint(usdm_con):
-    """Never fewer. A trial whose endpoints did not conform is a trial whose
-    endpoints render less richly -- not one that appears to have fewer."""
+    """A trial whose endpoints did not conform renders them less richly rather
+    than appearing to have fewer."""
     rules = load_projection_rules(usdm_con)
     for (nct_id, raw_count) in usdm_con.execute(
         "SELECT nct_id, count(*) FROM raw.design_outcomes GROUP BY nct_id ORDER BY nct_id"
@@ -79,7 +79,7 @@ def test_review_queue_rows_are_projected_verbatim_not_dropped(projection):
     verbatim = [e for e in projection.endpoints() if e["dictionaryId"] is None]
     assert [e["label"] for e in verbatim] == ["Sponsor internal reference code"]
     assert projection.tiers["verbatim"] == 1
-    # The raw string survives in `text` as well, so nothing is lost.
+    # The raw string survives in `text` too.
     assert verbatim[0]["text"] == "<p>Sponsor internal reference code</p>"
 
 
@@ -91,8 +91,7 @@ def test_tiers_split_templated_partial_and_verbatim(projection):
 
 
 def test_every_tag_in_text_has_exactly_one_parameter_map_and_vice_versa(usdm_con):
-    """The property that catches most renderer bugs: a document where the two
-    disagree is malformed, whatever else is right about it."""
+    """A document whose tags and parameterMaps disagree is malformed."""
     rules = load_projection_rules(usdm_con)
     for nct_id in ("NCT00000001", "NCT00000002"):
         p = project(usdm_con, nct_id, rules=rules)
@@ -115,8 +114,8 @@ def test_rendered_label_has_no_residual_markup(usdm_con):
 
 
 def test_every_reference_resolves_to_an_instance_in_the_document(projection):
-    """`ParameterMap.reference` is a usdm:ref naming klass/id/attribute -- a
-    reference to an id that is nowhere in the document is a dangling pointer."""
+    """`ParameterMap.reference` is a usdm:ref naming klass, id and attribute;
+    an id that is nowhere in the document is a dangling pointer."""
     known = {s["id"] for s in projection.bc_surrogates}
     known |= {a["id"] for a in projection.analysis_populations}
     for endpoint in projection.endpoints():
@@ -152,13 +151,12 @@ def test_a_measurement_surrogate_is_shared_and_carries_its_vocabulary_reference(
 )
 def test_both_backends_outcome_type_vocabularies_map_to_a_level(outcome_type, level):
     """ctgov_api writes lowercase primary/secondary/other; aact passes AACT's
-    title-case values through untouched. Both have to land."""
+    title-case values through."""
     assert level_for_outcome_type(outcome_type) == level
 
 
 def test_an_unknown_outcome_type_raises_rather_than_defaulting():
-    """Defaulting would mislabel a primary endpoint, which is the one thing a
-    consumer of this API most relies on."""
+    """Defaulting would mislabel a primary endpoint."""
     with pytest.raises(UnknownOutcomeType):
         level_for_outcome_type("tertiary")
 
@@ -219,7 +217,7 @@ def test_objectives_are_synthesized_and_say_so(projection):
             ext["url"].endswith(":derived") and ext["valueString"] == "objective"
             for ext in objective["extensionAttributes"]
         )
-    # A concept list cannot be one reference, so an objective carries no dictionary.
+    # A concept list is not one reference, so an objective carries no dictionary.
     assert all(o["dictionaryId"] is None for o in projection.objectives)
     assert "<usdm:tag" not in projection.objectives[0]["text"]
 
@@ -253,7 +251,7 @@ def test_the_wrapper_envelope_validates_as_a_usdm_wrapper(usdm_con):
 
 
 def test_the_wrapper_names_every_placeholder_it_had_to_invent(usdm_con):
-    """A placeholder that is not announced is a fabricated clinical fact."""
+    """An unannounced placeholder reads as a sourced clinical fact."""
     body = wrapper_envelope(usdm_con, project(usdm_con, "NCT00000002"))
     synthesized = " ".join(body["provenance"]["synthesized"])
     assert "includesHealthySubjects" in synthesized
@@ -274,8 +272,8 @@ def test_the_wrapper_uses_sourced_design_facts_when_the_pull_has_them(usdm_con):
 
 
 def test_a_concept_tag_resolves_to_a_shared_surrogate(usdm_con):
-    """`{concept}` is a legal tag no shipped template uses yet, so exercise it
-    directly rather than leaving the path untested."""
+    """`{concept}` is a legal tag no shipped template uses, so it is exercised
+    directly here."""
     import dataclasses
 
     from clinical_endpoints.usdm.project import TemplateSpec
@@ -305,10 +303,9 @@ def test_a_concept_tag_resolves_to_a_shared_surrogate(usdm_con):
 
 
 def test_provenance_carries_the_pull_it_came_from(usdm_con):
-    """raw._pull_log.pulled_at is a TIMESTAMPTZ, which duckdb's Python client can
-    only hand back as a datetime when pytz is importable -- and it does not
-    depend on pytz. Reading it as text keeps the projection working on an
-    install that hasn't got it."""
+    """raw._pull_log.pulled_at is a TIMESTAMPTZ, which duckdb's Python client
+    can only return as a datetime when pytz is importable, and it does not
+    depend on pytz. Reading it as text keeps the projection working without."""
     body = module_envelope(usdm_con, project(usdm_con, "NCT00000001"), vocab_version="test")
 
     assert body["provenance"]["source"] == "ctgov_api"
@@ -317,19 +314,17 @@ def test_provenance_carries_the_pull_it_came_from(usdm_con):
     parsed = datetime.fromisoformat(pulled_at)
     assert parsed.tzinfo is not None
     assert parsed.utcoffset() == timedelta(0)
-    # Same shape datetime.isoformat() produced before it was rendered in SQL.
+    # The same shape datetime.isoformat() produced before it was rendered in SQL.
     assert parsed.isoformat() == pulled_at
 
 
-# ------------------------------------------------- event semantics (Phase C)
+# ----------------------------------------------------------- event semantics
 
 
 @pytest.fixture(scope="module")
 def nct01777919_con():
-    """A standalone warehouse carrying exactly the two NCT01777919 outcomes
-    the spec's incident and worked example are built from, isolated from the
-    shared `usdm_con` fixture so this test pins its own expectations without
-    perturbing every other test that relies on the shared one."""
+    """A standalone warehouse carrying the NCT01777919 outcomes, isolated from
+    the shared `usdm_con` fixture."""
     from clinical_endpoints.conform.pipeline import run_conform
     from clinical_endpoints.db import SCHEMAS
     from clinical_endpoints.ingest.design import DESIGN_GROUPS_DDL, STUDIES_DDL
@@ -363,8 +358,7 @@ def nct01777919_con():
         [
             ("NCT01777919", "primary", "Progression-free survival", "6 months", None, None),
             ("NCT01777919", "secondary", "Overall survival", "2 years", None, None),
-            # A third, synthetic row: event-family (time_to_event) but names no
-            # recognisable event -- exercises the degraded not_stated frame.
+            # Event-family, but names no recognisable event: the degraded frame.
             ("NCT01777919", "other", "Time to RECIST assessment", None, None, None),
         ],
     )
@@ -378,9 +372,8 @@ def nct01777919_con():
 
 
 def test_nct01777919_pfs_row_projects_the_worked_example(nct01777919_con):
-    """The regression test the incident earns, at the projection layer: PFS no
-    longer renders 'Time from randomisation to Tumour burden (RECIST)' -- the
-    wrong-endpoint-definition defect this whole spec exists to fix."""
+    """At the projection layer: PFS renders its event, not 'Time from
+    randomisation to Tumour burden (RECIST)'."""
     projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
     pfs = next(e for e in projection.endpoints() if e["description"] == "Progression-free survival")
 
@@ -397,8 +390,8 @@ def test_nct01777919_pfs_row_projects_the_worked_example(nct01777919_con):
     assert deco["namedEndpoint"] == "pfs"
     assert conformance["eventMatchMethod"] == "named_endpoint"
     assert conformance["fidelity"] == "templated"
-    # fidelity/matchMethod are process bookkeeping, not semantics -- they no
-    # longer ride along in `decomposition` (change 4).
+    # fidelity and matchMethod are bookkeeping, not semantics, so they live in
+    # `conformance` rather than `decomposition`.
     assert "fidelity" not in deco
     assert "eventMatchMethod" not in deco
 
@@ -413,7 +406,7 @@ def test_nct01777919_pfs_row_projects_the_worked_example(nct01777919_con):
     dictionary = next(d for d in projection.dictionaries if d["id"] == pfs["dictionaryId"])
     tags_used = {pm["tag"] for pm in dictionary["parameterMaps"]}
     assert tags_used == {"reference", "event", "timepoint"}
-    assert "measurement" not in tags_used  # present in bcSurrogates, not referenced by this dictionary
+    assert "measurement" not in tags_used  # in bcSurrogates, not in this dictionary
 
 
 def test_nct01777919_os_row_projects_the_worked_example(nct01777919_con):
@@ -423,18 +416,16 @@ def test_nct01777919_os_row_projects_the_worked_example(nct01777919_con):
 
 
 def test_nct01777919_primary_objective_is_about_progression_not_tumour_burden(nct01777919_con):
-    """"To evaluate the effect of the study intervention on tumour burden" was
-    the defect (point 4 in the spec's "defect, shown on the first live trial"
-    section) -- the objective must now name the event's concept."""
+    """The objective names the event's concept, not "tumour burden"."""
     projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
     primary = next(o for o in projection.objectives if o["level"]["decode"] == "Primary Objective")
     assert primary["label"] == "To evaluate the effect of the study intervention on disease progression"
 
 
 def test_event_family_row_with_unresolvable_event_degrades_to_the_not_stated_frame(nct01777919_con):
-    """An event-family row whose event does not resolve must not render the
-    assessment into the event's slot -- it degrades to {measurement}[
-    {timepoint}] at partial tier instead of falling to raw verbatim text."""
+    """An event-family row whose event does not resolve degrades to
+    {measurement}[ {timepoint}] at partial tier rather than rendering the
+    assessment into the event's slot or falling to verbatim text."""
     projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
     degraded = next(e for e in projection.endpoints() if e["description"] == "Time to RECIST assessment")
 
@@ -447,10 +438,8 @@ def test_event_family_row_with_unresolvable_event_degrades_to_the_not_stated_fra
 
 
 def test_usdm_text_column_matches_the_live_projection(nct01777919_con):
-    """conformed.endpoints.usdm_text is written by `conform`, via the exact
-    same renderer `usdm show` calls at request time (usdm/project.py's
-    `render_endpoint_text`) -- so the stored column and the live projection's
-    Endpoint.text can never drift apart for the same row, at any tier."""
+    """`conform` writes usdm_text through the same renderer `usdm show` calls
+    at request time, so the stored column and the live Endpoint.text agree."""
     projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
     projected_by_measure = {e["description"]: e["text"] for e in projection.endpoints()}
 
@@ -461,8 +450,8 @@ def test_usdm_text_column_matches_the_live_projection(nct01777919_con):
     )
 
     assert stored == projected_by_measure
-    # Pinned to the same literal strings the projection-layer tests above
-    # already assert, at both the templated and the degraded-partial tier.
+    # The same literal strings the projection-layer tests above assert, at both
+    # the templated and the degraded-partial tier.
     assert stored["Progression-free survival"] == (
         '<p>Time from <usdm:tag name="reference"/> to <usdm:tag name="event"/> '
         '<usdm:tag name="timepoint"/></p>'
@@ -487,12 +476,12 @@ def test_provenance_survives_a_warehouse_with_no_pull_log(usdm_warehouse_path, t
     assert body["provenance"]["pulledAt"] is None
 
 
-# ------------------------------------------ projection integrity (USDM_PROJECTION_INTEGRITY_SPEC)
+# ------------------------------------------------------- projection integrity
 
 
 def test_module_envelope_names_its_profile_first(usdm_con):
-    """docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 5: the module payload
-    states its own boundary; the wrapper -- USDM's own shape -- does not."""
+    """The module payload states its own boundary; the wrapper, being USDM's
+    own shape, does not."""
     module = module_envelope(usdm_con, project(usdm_con, "NCT00000001"))
     assert list(module.keys())[0] == "profile"
     assert module["profile"] == codes.MODULE_PROFILE
@@ -502,9 +491,8 @@ def test_module_envelope_names_its_profile_first(usdm_con):
 
 
 def test_timepoint_role_and_extracted_values_are_projected(nct01777919_con):
-    """docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 3: a bare "6 months" is an
-    observation window, not an assessment timepoint, and the projection now
-    says so and carries the structure `conform` already parsed."""
+    """A bare "6 months" is an observation window, not an assessment
+    timepoint, and the projection carries the structure `conform` parsed."""
     projection = project(nct01777919_con, "NCT01777919", rules=load_projection_rules(nct01777919_con))
     pfs = next(e for e in projection.endpoints() if e["description"] == "Progression-free survival")
     deco = _extension_class(pfs, "decomposition")
@@ -517,11 +505,9 @@ def test_timepoint_role_and_extracted_values_are_projected(nct01777919_con):
 
 
 def test_timepoint_extracted_fields_camel_case_every_pattern_specific_key():
-    """The projection previously discarded `timepoint_extracted` entirely --
-    this exercises the field-name mapping directly for every kind of key the
-    eleven patterns in timepoint_patterns.yaml can populate (value/value_end,
-    window_pm, anchor, start_anchor, estimated_max_value, ...), independent of
-    getting a live pull to classify into each one."""
+    """The field-name mapping for every key the eleven patterns in
+    timepoint_patterns.yaml can populate, without needing a live pull to
+    classify into each one."""
     import json as _json
 
     from clinical_endpoints.usdm.project import _timepoint_extracted_fields
@@ -547,8 +533,7 @@ def test_timepoint_extracted_fields_camel_case_every_pattern_specific_key():
     assert fields["timepointApproximate"] == "True"
     assert fields["timepointHasBaseline"] == "False"
 
-    # Accepts the JSON-text shape `conformed.endpoints.timepoint_extracted`
-    # is actually stored as, and is silent on absence.
+    # Accepts the JSON-text shape the column is stored as, and is silent on absence.
     assert dict(_timepoint_extracted_fields(_json.dumps({"anchor": "surgery"}))) == {
         "timepointAnchor": "surgery"
     }
@@ -559,12 +544,9 @@ def test_timepoint_extracted_fields_camel_case_every_pattern_specific_key():
 
 @pytest.fixture(scope="module")
 def reference_fallback_con():
-    """A standalone warehouse with one change_from_baseline-shaped endpoint
-    whose text names no reference at all ("CFB in HbA1c") -- the ordinary
-    reference cascade is silent, so usdm_templates.yaml's
-    `reference_fallback: patient_baseline` fires. Isolated from `usdm_con` so
-    this test pins the announced-default path without perturbing the shared
-    fixture's tier/endpoint counts other tests rely on."""
+    """One change_from_baseline endpoint whose text names no reference ("CFB in
+    HbA1c"), so the cascade is silent and usdm_templates.yaml's
+    `reference_fallback: patient_baseline` fires."""
     from clinical_endpoints.conform.pipeline import run_conform
     from clinical_endpoints.db import SCHEMAS
     from clinical_endpoints.ingest.design import STUDIES_DDL
@@ -605,11 +587,9 @@ def reference_fallback_con():
 
 
 def test_reference_fallback_is_announced_and_counted(reference_fallback_con):
-    """docs/USDM_PROJECTION_INTEGRITY_SPEC.md changes 1-2: a fallback-filled
-    reference host is flagged `derived: reference`, the decomposition keeps
-    the pipeline's honest `not_stated` rather than being edited to agree with
-    the rendering, and the projection counts the default so the tier cannot
-    hide it."""
+    """A fallback-filled reference host is flagged `derived: reference`, the
+    decomposition keeps `not_stated` rather than being edited to agree with
+    the rendering, and the projection counts the default."""
     rules = load_projection_rules(reference_fallback_con)
     projection = project(reference_fallback_con, "NCT03000000", rules=rules)
     endpoint = projection.endpoints()[0]
@@ -621,7 +601,7 @@ def test_reference_fallback_is_announced_and_counted(reference_fallback_con):
     assert flags == {"purpose", "reference"}
 
     deco = _extension_class(endpoint, "decomposition")
-    assert deco["reference"] == "not_stated"  # the pipeline's testimony, never edited to match the host
+    assert deco["reference"] == "not_stated"  # what the pipeline resolved, not the host's value
     assert _extension_class(endpoint, "conformance")["fidelity"] == "templated"
 
     dictionary = next(d for d in projection.dictionaries if d["id"] == endpoint["dictionaryId"])
@@ -636,14 +616,11 @@ def test_reference_fallback_is_announced_and_counted(reference_fallback_con):
 
 
 def test_tag_hosts_match_the_decomposition_rendering_unless_derived_flags_it(usdm_con, reference_fallback_con):
-    """The host contract, stated at last (change 4): a `tag:*` extension (or a
-    measurement/event surrogate) carries the RENDERING of the matching
-    decomposition/conformance field, and the only way the two may legitimately
-    disagree is a `derived` flag naming that tag. Recomputes the expected
-    rendering independently, from the row `conform` wrote, using the same
-    render functions the projection itself calls -- so a template rendering
-    one thing while the decomposition claims another (the exact shape of the
-    incident this spec exists to prevent) fails here."""
+    """A `tag:*` extension, or a measurement or event surrogate, carries the
+    rendering of the matching decomposition field, and the two may disagree
+    only where a `derived` flag names that tag. The expected rendering is
+    recomputed from the row `conform` wrote, so a template rendering one thing
+    while the decomposition claims another fails here."""
     from clinical_endpoints.usdm.tags import render_threshold, render_timepoint
 
     for con, nct_ids in ((usdm_con, ("NCT00000001", "NCT00000002")), (reference_fallback_con, ("NCT03000000",))):
@@ -695,8 +672,7 @@ def test_tag_hosts_match_the_decomposition_rendering_unless_derived_flags_it(usd
 
 
 def test_derived_flags_are_from_the_closed_set(usdm_con, reference_fallback_con):
-    """No endpoint or objective may announce a synthesis the vocabulary has
-    not signed off on (docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 2)."""
+    """No endpoint or objective announces a synthesis outside DERIVED_ATTRIBUTES."""
     from clinical_endpoints.vocab.schema import DERIVED_ATTRIBUTES
 
     projections = [

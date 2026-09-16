@@ -1,21 +1,22 @@
 # Clinical Study Endpoint Knowledge Base
 
-Public study registrations describe their endpoints in free text -- `"PFS"`,
+Public study registrations describe their endpoints in free text: `"PFS"`,
 `"Change from baseline in FEV1 at Week 24"`, `"Proportion of participants
 achieving PASI 75"`. Three sponsors write the same endpoint three ways, so
-nothing about them is comparable across studies without first deciding what
-each string actually says.
+nothing about them is comparable across studies until something decides what
+each string says.
 
 This project makes that decision explicit and re-runnable. It holds a library
 of controlled vocabularies for the parameters an endpoint is built from, a
 conformance engine that maps registry free text onto that library, an
-in-process database to explore the result, an API that projects any single
-study's endpoints into CDISC USDM 4.0 -- and, on top of that join key, an
-empirical answer to *what variability should I expect for this endpoint?*,
-assembled from what the trials themselves reported, sliceable by the drug class
-under study.
+in-process database to explore the result, and an API that projects any single
+study's endpoints into CDISC USDM 4.0. On top of that join key it assembles an
+empirical answer to what variability to expect for a given endpoint, taken from
+what the trials themselves reported and sliceable by the drug class under
+study.
 
-Everything is a CLI plus a DuckDB file -- no server to stand up, no UI.
+Everything is a CLI plus a DuckDB file. There is no server to stand up and no
+UI.
 
 * [Features](#features) · [Install](#install) · [Quickstart](#quickstart)
 * Usage examples: [`docs/USAGE.md`](docs/USAGE.md) (the CLI, end to end) and
@@ -40,24 +41,24 @@ assembled from:
 | `references.yaml` | 17 | what it is measured against (own baseline, randomisation, comparator arm) |
 | `events.yaml` | 38 | what occurrence stops the clock on a time-to-event endpoint |
 | `named_endpoints.yaml` | 12 | what a literature name means (PFS, OS, MACE) |
-| `directions.yaml` | 7 | which way is better -- derived from form + measurement, never matched |
+| `directions.yaml` | 7 | which way is better, derived from form plus measurement and never matched |
 | `scales.yaml` | 67 | the unit |
 | `timepoint_patterns.yaml` | 11 | `time_frame` categories, and the regexes that extract values from them |
 | `therapeutic_areas.yaml` | 24 | therapeutic area, resolved from MeSH |
-| `drug_classes.yaml` | 116 | what the study was testing -- mechanism, pharmacologic class, modality, or control |
+| `drug_classes.yaml` | 116 | what the study was testing: mechanism, pharmacologic class, modality, or control |
 | `usdm_templates.yaml` | 18 | one USDM syntax template per form |
 
-Three files are not term lists. `matching.yaml` states *how* a synonym is
+Three files are not term lists. `matching.yaml` states how a synonym is
 compared to a registry string, `ta_mesh_mapping.yaml` maps MeSH conditions and
 interventions to therapeutic areas, and `drug_class_mesh_mapping.yaml` maps
 registered interventions to drug classes.
 
-The library is the contract: `endpoints vocab validate` checks id uniqueness,
+The library is the contract. `endpoints vocab validate` checks id uniqueness,
 synonyms claimed by two terms, regex compilability, cross-file referential
 integrity and closed value sets, then loads all of it into `vocab.*` tables.
 The conforming pipeline reads those tables, never the YAML, so a run is always
-against a validated snapshot -- and an edit under `vocab/` simply does not take
-effect until you re-validate.
+against a validated snapshot and an edit under `vocab/` takes effect only on
+re-validation.
 
 See [`vocab/README.md`](vocab/README.md) for the schema, the judgment calls
 behind the category boundaries, and measured coverage.
@@ -67,29 +68,29 @@ behind the category boundaries, and measured coverage.
 `endpoints conform` maps each free-text registry outcome onto the library, in
 two layers:
 
-* **Syntactic.** `matching.yaml`'s cascade -- `measure` → `description` →
-  `time_frame`, `exact` → `syntactic_rule` -- resolves form, measurement,
-  reference and event; the timepoint classifier runs preprocessing, guard
-  patterns and prioritised regexes to extract a structured timepoint; the
+* **Syntactic.** `matching.yaml`'s cascade, `measure` → `description` →
+  `time_frame` and `exact` → `syntactic_rule`, resolves form, measurement,
+  reference and event. The timepoint classifier runs preprocessing, guard
+  patterns and prioritised regexes to extract a structured timepoint, and the
   threshold parser pulls comparator, value and unit out of the string.
 * **Semantic.** Where the cascade leaves measurement unresolved, a
   token-overlap fallback proposes the closest term. Measurement is the one
   dimension allowed no default: a row whose measurement resolves nowhere goes
   to `conformed.review_queue` rather than being conformed at low confidence.
 
-Direction is *derived*, never matched, from the resolved form's
-`direction_rule` and the measurement's polarity -- so "overall survival" and
-"mortality rate" get opposite directions without either string saying so.
+Direction is derived, never matched, from the resolved form's `direction_rule`
+and the measurement's polarity, so "overall survival" and "mortality rate" get
+opposite directions without either string saying so.
 
 Every dimension records how it was decided (`exact`, `syntactic_rule`,
 `semantic`), from which source field, and at what confidence. A wrong answer is
-therefore auditable, and a low-confidence one is filterable.
+auditable and a low-confidence one is filterable.
 
 ### 3. An in-process database
 
-The warehouse is one DuckDB file, `warehouse.duckdb` -- no server, no client to
-install. `conformed.endpoints` is a flat star-schema row per endpoint with typed
-foreign keys into the vocabulary, so exploration is plain SQL:
+The warehouse is one DuckDB file, `warehouse.duckdb`, with no server and no
+client to install. `conformed.endpoints` is a flat star-schema row per endpoint
+with typed foreign keys into the vocabulary, so exploration is plain SQL:
 
 ```sql
 -- which measurements were expressed as more than one kind of number?
@@ -108,11 +109,11 @@ themselves.
 
 Once endpoints can be grouped, the results the trials reported can be attached
 to the group. `pull` lands the results section both ingestion backends were
-already fetching and discarding; `endpoints results conform` runs the *same*
+already fetching and discarding. `endpoints results conform` runs the same
 conformance engine over the reported outcome titles and normalises what each
-trial called "dispersion" -- standard deviations, standard errors, confidence
-intervals, inter-quartile ranges -- into one estimated standard deviation, with
-the conversion recorded on every row.
+trial called dispersion, whether a standard deviation, standard error,
+confidence interval or inter-quartile range, into one estimated standard
+deviation, with the conversion recorded on every row.
 
 ```
 $ endpoints stats --measurement fev1
@@ -127,17 +128,12 @@ measurement=fev1, source=outcome
     coverage    2 of 2 conformed studies reported a usable dispersion (100.0%)
 ```
 
-Nobody publishes an empirical prior for the variability of a given endpoint at
-a given timepoint; every statistician assembling a sample-size calculation
-reconstructs it by hand from two or three papers they happen to know.
-
 The output is grouped by form and unit because the SD of a change from baseline
-is not the SD of a raw value and the SD in litres is not the SD in millilitres,
-and the coverage line is not decoration -- without it the command is a machine
-for producing confident numbers off eight arms. `--source baseline` gives the
-baseline SD as its own quantity rather than as a fallback, and `--analyses`
-gives the effect-size, p-value and non-inferiority-margin distributions
-instead.
+is not the SD of a raw value, and the SD in litres is not the SD in
+millilitres. The coverage line reports how many arms the distribution stands
+on. `--source baseline` gives the baseline SD as its own quantity rather than
+as a fallback, and `--analyses` gives the effect-size, p-value and
+non-inferiority-margin distributions instead.
 
 See [`docs/ENDPOINT_RESULTS_SPEC.md`](docs/ENDPOINT_RESULTS_SPEC.md) for what
 is converted, what is refused, and the four measurements this still owes a live
@@ -145,8 +141,8 @@ pull.
 
 ### 5. A drug-class axis
 
-`conformed.endpoints` groups endpoints by *what was measured*. This groups them
-by *what was being tested*. `pull` lands the interventions both backends were
+`conformed.endpoints` groups endpoints by what was measured. This groups them
+by what was being tested. `pull` lands the interventions both backends were
 already returning and discarding, and resolves them through a second layered
 vocabulary into `conformed.study_drug_class`:
 
@@ -162,24 +158,23 @@ measurement=hba1c, drug_class=glp1_receptor_agonist, source=outcome
 ...
 ```
 
-Every class declares a `kind` -- `mechanism` (GLP-1 receptor agonist),
+Every class declares a `kind`: `mechanism` (GLP-1 receptor agonist),
 `pharmacologic` (antineoplastic agent), `modality` (monoclonal antibody) or
-`control` (placebo) -- and the split is mandatory, because a `GROUP BY` that
-mixes them compares "PD-1 inhibitor" against "monoclonal antibody" as though
-they were alternatives. Classification is layered the same way therapeutic area
-is: hand-settled overrides, a curated agent dictionary, **WHO INN stems** (which
-is what classes a drug approved after the vocabulary was written), NLM's own
-MeSH ancestry, and the registry's coarse browse branches -- with an intervention
-that matches nothing going to `conformed.drug_class_review_queue` rather than
-being guessed at.
+`control` (placebo). The split is mandatory, because a `GROUP BY` that mixes
+them compares "PD-1 inhibitor" against "monoclonal antibody" as though they
+were alternatives. Classification is layered the same way therapeutic area is:
+hand-settled overrides, a curated agent dictionary, WHO INN stems, which is
+what classes a drug approved after the vocabulary was written, NLM's own MeSH
+ancestry, and the registry's coarse browse branches. An intervention that
+matches nothing goes to `conformed.drug_class_review_queue` rather than being
+guessed at.
 
-`--drug-class` filters and `--by drug-class` stratifies, and the difference
-matters: on the SD side the stratifier is a homogeneity check, but on
-`--analyses` it is the point, because a median treatment effect pooled across
-mechanisms has no referent.
+`--drug-class` filters and `--by drug-class` stratifies. On the SD side the
+stratifier is a homogeneity check; on `--analyses` it is the point, because a
+median treatment effect pooled across mechanisms has no referent.
 
 Chemical structure is deliberately not modelled, and ATC codes are not
-available: ClinicalTrials.gov carries none, on either backend. See
+available: ClinicalTrials.gov carries none on either backend. See
 [`docs/DRUG_CLASS_SPEC.md`](docs/DRUG_CLASS_SPEC.md) for what each layer claims
 and the four counts a first live pull still owes the axis.
 
@@ -189,32 +184,32 @@ and the four counts a first live pull still owes the axis.
 4.0, and `endpoints serve` exposes the same projection over HTTP at
 `GET /v4/studies/{nctId}/endpoints`.
 
-Each endpoint's `text` is a *syntax template* --
+Each endpoint's `text` is a syntax template,
 `<p>Change from <usdm:tag name="reference"/> in <usdm:tag name="measurement"/>
-…</p>` -- whose tags resolve, through that endpoint's own
-`SyntaxTemplateDictionary`, back into the controlled vocabularies. The registry
+…</p>`, whose tags resolve through that endpoint's own
+`SyntaxTemplateDictionary` back into the controlled vocabularies. The registry
 string is kept verbatim in `description`, so the projection is auditable rather
-than a rewrite, and every synthesized or defaulted attribute is flagged as such.
+than a rewrite, and every synthesized or defaulted attribute is flagged as
+such.
 
 Every raw outcome row becomes exactly one USDM `Endpoint`, at one of three
-fidelity tiers -- `templated`, `partial`, or `verbatim` -- so a study whose
-endpoints did not conform renders less richly, never appears to have fewer
-endpoints.
+fidelity tiers: `templated`, `partial`, or `verbatim`. A study whose endpoints
+did not conform renders less richly, never with fewer endpoints.
 
 ### Ingestion
 
-Study registrations -- and, for studies that posted them, results -- come from
-ClinicalTrials.gov, via either of two interchangeable backends that land the
+Study registrations, and for studies that posted them results, come from
+ClinicalTrials.gov via either of two interchangeable backends that land the
 same `raw.*` shape: the public
 [CT.gov API v2](https://clinicaltrials.gov/data-api/api) (default, no auth) or
 [AACT](https://aact.ctti-clinicaltrials.org) (`--source aact`, needs free
-credentials). It is a thin fetch-and-upsert, deliberately -- everything
-downstream is source-agnostic. `pull` filters by phase, date, therapeutic area
-(`--ta`), drug class (`--drug-class`) and lead-sponsor organisation (`--org`),
-all applied before `--limit`; `--replace` opts out of the upsert to replace raw.* with
-just that one pull instead, and `--no-results` skips the results section (which
-saves warehouse size, never network -- the API returns it in the payload the
-pull already fetches). See
+credentials). It is a thin fetch-and-upsert, so everything downstream is
+source-agnostic. `pull` filters by phase, date, therapeutic area (`--ta`), drug
+class (`--drug-class`) and lead-sponsor organisation (`--org`), all applied
+before `--limit`. `--replace` opts out of the upsert and replaces `raw.*` with
+just that one pull, and `--no-results` skips the results section, which saves
+warehouse size but never network, since the API returns it in the payload the
+pull already fetches. See
 [`docs/USAGE.md`](docs/USAGE.md#ingesting-studies) for the backends and their
 trade-offs.
 
@@ -246,18 +241,18 @@ timepoint_pattern=11)
 Wrote 5298 rows across 52 vocab.* tables -> warehouse.duckdb
 ```
 
-You can skip straight to step 2 if you like: a `pull` into a warehouse that
-holds no vocabulary loads one itself, so a first run is never split into a
-landing wave and a classifying wave. Run this yourself when you want to see the
-validation output, or after editing anything under `vocab/` -- an edit takes
-effect only on re-validation, and `pull` never rewrites a vocabulary the
-warehouse already holds.
+You can skip straight to step 2: a `pull` into a warehouse that holds no
+vocabulary loads one itself, so a first run is never split into a landing wave
+and a classifying wave. Run this yourself to see the validation output, or
+after editing anything under `vocab/`, since an edit takes effect only on
+re-validation and `pull` never rewrites a vocabulary the warehouse already
+holds.
 
 **2. Ingest studies.** Filtered by phase, date, therapeutic area, drug class or
 lead sponsor. This creates `warehouse.duckdb` if it does not exist and writes
 `raw.studies`, `raw.design_outcomes`, the condition and intervention tables,
-and the results section -- then resolves the therapeutic-area and drug-class
-axes over what it landed. One pull, one wave; there is no separate pull per
+and the results section, then resolves the therapeutic-area and drug-class axes
+over what it landed. One pull does all of it; there is no separate pull per
 axis.
 
 ```bash
@@ -267,10 +262,10 @@ uv run endpoints pull --phase 3 --limit 500 --org "Pfizer"  # ...only Pfizer-led
 uv run endpoints pull --phase 3 --limit 500 --drug-class sglt2_inhibitor   # ...only SGLT2 trials
 ```
 
-Re-running `pull` upserts: studies matched by *this* pull are refreshed in
-place, studies landed by earlier pulls with other filters are left alone. Add
-`--replace` to opt out of that and land only this pull's studies instead --
-see [`docs/USAGE.md`](docs/USAGE.md#what-a-pull-does-to-what-is-already-there).
+Re-running `pull` upserts: studies matched by this pull are refreshed in place,
+and studies landed by earlier pulls with other filters are left alone. Add
+`--replace` to land only this pull's studies instead. See
+[`docs/USAGE.md`](docs/USAGE.md#what-a-pull-does-to-what-is-already-there).
 
 **3. Conform the endpoints.** Reads `raw.design_outcomes` and `vocab.*`, writes
 `conformed.endpoints` and `conformed.review_queue`.
@@ -285,8 +280,8 @@ Conformed 3812 of 4196 row(s) -> conformed.endpoints; 384 -> conformed.review_qu
 
 (Row counts depend on what you pulled.)
 
-**4. Look at what did not conform** -- the review queue is the honest part of
-the coverage number, and the input to the next vocabulary round.
+**4. Look at what did not conform.** The review queue is what the coverage
+number leaves out, and the input to the next vocabulary round.
 
 ```bash
 uv run endpoints review list --reason measurement_unmatched
@@ -336,31 +331,31 @@ curl localhost:8000/v4/studies/NCT04162249/endpoints
 ```
 
 Every command that touches the warehouse takes `--warehouse <path>`, so several
-can sit side by side -- one per therapeutic area, one per vocabulary revision.
+can sit side by side: one per therapeutic area, one per vocabulary revision.
 
 ## Usage examples
 
-* [`docs/USAGE.md`](docs/USAGE.md) -- every command, its options and what it
+* [`docs/USAGE.md`](docs/USAGE.md) — every command, its options and what it
   writes: ingestion backends and AACT setup, vocabulary validation and
   sampling, conforming and the review queue, therapeutic-area resolution, the
   USDM projection and the HTTP API.
-* [`docs/QUERY_CHEATSHEET.md`](docs/QUERY_CHEATSHEET.md) -- SQL for the
+* [`docs/QUERY_CHEATSHEET.md`](docs/QUERY_CHEATSHEET.md) — SQL for the
   warehouse: coverage, cross-study comparability, one study end to end.
-* [`docs/CONFORMED_ERD.md`](docs/CONFORMED_ERD.md) -- the entity-relationship
+* [`docs/CONFORMED_ERD.md`](docs/CONFORMED_ERD.md) — the entity-relationship
   diagram of the `conformed` schema: every table's grain and key, what joins to
   what, and the five edges that are not what they look like.
-* [`docs/QUESTIONS_THIS_ANSWERS.md`](docs/QUESTIONS_THIS_ANSWERS.md) -- the
-  other direction: six clinical / study-design questions, and what running the
-  pipeline gives back for each.
-* [`vocab/README.md`](vocab/README.md) -- how to read and extend the
+* [`docs/QUESTIONS_THIS_ANSWERS.md`](docs/QUESTIONS_THIS_ANSWERS.md) — six
+  clinical and study-design questions, and what running the pipeline gives back
+  for each.
+* [`vocab/README.md`](vocab/README.md) — how to read and extend the
   vocabularies.
-* [`docs/README.md`](docs/README.md) -- the design specs, each flagged
+* [`docs/README.md`](docs/README.md) — the design specs, each flagged
   implemented or not.
 
 ## Repo layout
 
 ```
-vocab/                     the endpoint library (YAML) -- see vocab/README.md
+vocab/                     the endpoint library (YAML), see vocab/README.md
 src/clinical_endpoints/
   db.py                    DuckDB connection + AACT attach
   ingest/                  CT.gov API and AACT backends, shared filters, pull log, upsert
@@ -384,7 +379,7 @@ warehouse.duckdb           gitignored, created on first `pull` or `vocab validat
 uv run pytest
 ```
 
-The suite runs without network access -- the ingestion backends are covered
+The suite runs without network access: the ingestion backends are covered
 against recorded payloads and everything downstream against fixture warehouses.
 One AACT attach test skips itself when DuckDB's `postgres` extension cannot be
 downloaded.

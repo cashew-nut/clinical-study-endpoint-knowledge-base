@@ -1,11 +1,5 @@
-"""The threshold comparator/value/unit parser.
-
-Per vocab/README.md's "Known gaps": thresholds are parsed, not vocabularised --
-forms.yaml only flags which forms `expects_threshold`, via the `expects_threshold`
-column on vocab.forms. The comparator/value/unit regexes below are step-3
-implementation, same as the plan intends; nothing here reads from a `threshold`
-vocab file because there isn't one.
-"""
+"""Threshold comparator/value/unit parser. Thresholds are parsed, not
+vocabularised; forms.yaml only flags which forms `expects_threshold`."""
 
 from __future__ import annotations
 
@@ -26,10 +20,8 @@ _EXPLICIT_RE = re.compile(
     rf"(?P<cmp>{_COMPARATOR_ALT})\s*(?P<val>\d+(?:\.\d+)?)\s*(?P<unit>%|percent|points?|mmhg|mg/dl|mmol/l)?",
     re.IGNORECASE,
 )
-# "PASI75", "ACR20", "PASI 75": an ALL-CAPS instrument acronym directly followed
-# by a 2-3 digit response threshold is, by registry convention, a ">=N%" response
-# criterion (PASI75 = >=75% improvement in PASI). Restricted to all-caps acronyms
-# so it does not fire on ordinary "Week 12" / "Day 90" style timepoints.
+# "PASI75", "ACR20": an all-caps instrument acronym followed by a 2-3 digit
+# number is a ">=N%" response criterion. All-caps only, so "Week 12" does not fire.
 _ACRONYM_THRESHOLD_RE = re.compile(r"\b[A-Z]{2,6}\s?-?(\d{2,3})\b")
 
 

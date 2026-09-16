@@ -1,8 +1,8 @@
 # Entity-relationship diagram: the `conformed` layer
 
 > **Status: reference.** Drawn from the DDL in `conform/pipeline.py`,
-> `results/pipeline.py`, `ta/resolver.py` and `drug_class/resolver.py` — those
-> modules are the source of truth, this document is a picture of them. Where a
+> `results/pipeline.py`, `ta/resolver.py` and `drug_class/resolver.py`. Those
+> modules are the source of truth and this document is a picture of them. Where a
 > column here disagrees with a `CREATE OR REPLACE TABLE` there, the DDL wins and
 > this file is stale. The attribute blocks below carry each table's keys, its
 > grain columns and every column that participates in a relationship; the full
@@ -22,17 +22,17 @@ Read alongside:
 
 **There is not one foreign key in this warehouse.** DuckDB is given
 `PRIMARY KEY` on five of the nine tables and nothing else. Every edge drawn
-below is a *convention the pipeline maintains*, not a constraint the database
-enforces — so a dangling reference is possible in principle, and one case
-(see [Five edges that are not what they look like](#five-edges-that-are-not-what-they-look-like))
-is deliberate.
+below is a convention the pipeline maintains rather than a constraint the
+database enforces, so a dangling reference is possible in principle. One case
+is deliberate; see
+[Five edges that are not what they look like](#five-edges-that-are-not-what-they-look-like).
 
 **Every `conformed.*` table is replaced wholesale, never appended to.** Each
 writer opens with `CREATE OR REPLACE TABLE`. These tables are derived from
 `raw.*` and `vocab.*` and hold no state worth preserving independently of their
-sources — which is also why the review queues carry a `status` column that no
-command can currently write back (`endpoints review resolve` is declared and
-unimplemented; see [`README.md`](README.md)).
+sources. That is also why the review queues carry a `status` column no command
+can write back: `endpoints review resolve` is declared and unimplemented, as
+[`README.md`](README.md) records.
 
 **Ids are content hashes, not surrogates.** `endpoint_id`, `review_id`,
 `result_id` and `dispersion_id` are each `md5` over the row's own identifying
@@ -46,7 +46,8 @@ built from the same registry snapshot.
 ## The layer at a glance
 
 Nine tables, written by three commands. Boundary entities from `raw.*` are drawn
-without attributes — they are where the layer's rows come from, not part of it.
+without attributes, since they are where the layer's rows come from rather
+than part of it.
 
 ```mermaid
 erDiagram
@@ -75,15 +76,15 @@ erDiagram
 ## The planned side
 
 One `raw.design_outcomes` row conforms into `endpoints` **or** is queued in
-`review_queue` — never both, never neither. The two tables share an id space:
+`review_queue`, never both and never neither. The two tables share an id space:
 a queued row's `review_id` is the `endpoint_id` it would have had.
 
 `event_id` is nullable by design, and its NULL carries meaning. Only
 event-family forms (`vocab.forms.event_family`) get an event at all, so a
-change-from-baseline endpoint has `event_id IS NULL` because it *has no event*,
-not because one went unresolved. That is the opposite of the axes whose
-matching cascade ends in a `not_stated` fallback term (`vocab/matching.yaml`) —
-there, a miss is a value you can group by, not a NULL.
+change-from-baseline endpoint has `event_id IS NULL` because it has no event,
+not because one went unresolved. The axes whose matching cascade ends in a
+`not_stated` fallback term (`vocab/matching.yaml`) work the other way: there a
+miss is a value you can group by rather than a NULL.
 
 ```mermaid
 erDiagram
@@ -95,7 +96,7 @@ erDiagram
     endpoints {
         VARCHAR   endpoint_id        PK "md5(nct_id|outcome_type|measure|time_frame|description)"
         VARCHAR   nct_id             FK "raw.studies"
-        VARCHAR   outcome_type          "primary/secondary/other, verbatim -- case varies by backend"
+        VARCHAR   outcome_type          "primary/secondary/other, verbatim; case varies by backend"
         VARCHAR   measure_raw           "registry text, verbatim"
         VARCHAR   description_raw
         VARCHAR   time_frame_raw
@@ -140,8 +141,8 @@ erDiagram
 
 ## The reported side
 
-`endpoint_results` carries the same dimension columns as `endpoints`, under the
-same names — `tests/test_results_conform.py` asserts it — so a query written
+`endpoint_results` carries the same dimension columns as `endpoints` under the
+same names, asserted by `tests/test_results_conform.py`, so a query written
 against the planned half runs unchanged against the reported half.
 
 ```mermaid
@@ -218,8 +219,8 @@ erDiagram
 ## The study axes
 
 Both axes are resolved by `pull` itself, from what that one pull already
-fetched — there is no second network wave for either, and no separate resolve
-command: `endpoints ta` and `endpoints drug-class` only *report* on what `pull`
+fetched. There is no second network wave for either and no separate resolve
+command: `endpoints ta` and `endpoints drug-class` only report on what `pull`
 wrote. None of these four tables declares a key.
 
 ```mermaid
@@ -282,19 +283,19 @@ erDiagram
 | `drug_class_review_queue` | intervention that matched no class | `(nct_id, ordinal)`, undeclared | `pull` |
 
 `arm_drug_class` is the one table without a key even by convention. An arm
-holding two interventions that resolve to the *same* class contributes two
-rows, differing only in `rule_layer`/`matched_on`. Count arms with
+holding two interventions that resolve to the same class contributes two rows,
+differing only in `rule_layer` and `matched_on`. Count arms with
 `count(DISTINCT (nct_id, group_title))`, never `count(*)`.
 
-Note also that `endpoint_results` is at the *characteristic* grain for
-baselines, not the arm grain: one FEV1 baseline characteristic conforms once
-however many arms reported it, and the per-arm detail is `endpoint_dispersion`.
+`endpoint_results` is at the characteristic grain for baselines rather than the
+arm grain: one FEV1 baseline characteristic conforms once however many arms
+reported it, and the per-arm detail is `endpoint_dispersion`.
 
 ## The vocabulary joins
 
 Every vocabulary dimension keys on `id`, and every `*_id` column below points at
 it. Because the two fact tables share their dimension block, **each edge drawn
-into `endpoints` exists identically into `endpoint_results`** — drawn once here
+into `endpoints` exists identically into `endpoint_results`**, drawn once here
 rather than sixteen times.
 
 ```mermaid
@@ -322,7 +323,7 @@ erDiagram
 
 ## Inside the vocabulary
 
-Two structures in `vocab.*` are worth drawing, because a query that walks the
+Two structures in `vocab.*` are drawn here, because a query that walks the
 conformed layer will eventually walk them too.
 
 ```mermaid
@@ -340,20 +341,20 @@ erDiagram
 `vocab.named_endpoints` is the only vocabulary table that reaches several
 dimensions at once: recognising "PFS" can settle measurement, reference, form
 and event together, rather than donating the name to one dimension as a
-synonym. It is a *fallback*, not an override — each of those dimensions runs
-its own ordinary cascade first, and the named-endpoint value fills only where
-that cascade came back silent (the reference also requires a randomised
-allocation). So `named_endpoint_id` and the dimension ids beside it are not a
-parent and its expansion: they agree on rows the cascade could not resolve
-alone, and the `*_match_method` column reading `named_endpoint` is what says
-which axis was filled that way.
+synonym. It is a fallback rather than an override. Each of those dimensions
+runs its own cascade first, and the named-endpoint value fills only where that
+cascade came back silent, with the reference also requiring a randomised
+allocation. So `named_endpoint_id` and the dimension ids beside it are not a
+parent and its expansion. They agree on rows the cascade could not resolve
+alone, and a `*_match_method` column reading `named_endpoint` says which axis
+was filled that way.
 
 `vocab.drug_classes.parent` is the only self-reference anywhere in the
-warehouse — one shallow level of rollup, validated at load time as acyclic and
-as never changing `kind` halfway up (a mechanism term must not roll up into a
-modality one). The resolver does **not** walk it: primary class is chosen by
-the flat `precedence` column, tie-broken by how many interventions back each
-class. So `parent` is available to a query that wants to roll up, and is not
+warehouse: one shallow level of rollup, validated at load time as acyclic and
+as never changing `kind` halfway up, so a mechanism term cannot roll up into a
+modality one. The resolver does **not** walk it. Primary class is chosen by the
+flat `precedence` column, tie-broken by how many interventions back each class.
+`parent` is therefore available to a query that wants to roll up, and is not
 already applied to what the conformed tables hold.
 
 ## Five edges that are not what they look like
@@ -361,12 +362,12 @@ already applied to what the conformed tables hold.
 **`endpoint_results.link_method` can be non-NULL while `planned_endpoint_id`
 is NULL.** That is intentional, not a dangling reference. It means the reported
 title matched a planned outcome verbatim, but that planned outcome went to
-`review_queue` rather than `endpoints` — the link is real, the target is not
-there to point at. A query counting linked results has to test the column it
+`review_queue` rather than `endpoints`, so the link is real and the target is
+not there to point at. A query counting linked results has to test the column it
 actually means.
 
 **`results_review_queue` overlaps `endpoint_results`; it does not partition
-it.** The planned side is a clean split — a `raw.design_outcomes` row lands in
+it.** The planned side is a clean split: a `raw.design_outcomes` row lands in
 `endpoints` or in `review_queue`, never both. The reported side is not. A row
 queued `measurement_unmatched` never reached `endpoint_results`; a row queued
 `unlinked_to_planned` is *also* in `endpoint_results`, fully conformed, with
@@ -382,16 +383,15 @@ unmeasured join.
 
 **`outcome_type` is not case-normalised anywhere.** It is stored as the backend
 wrote it, on `endpoints`, `review_queue`, `endpoint_results` and
-`results_review_queue` alike — the CT.gov API path writes `primary`, AACT
+`results_review_queue` alike. The CT.gov API path writes `primary` and AACT
 writes `Primary`. `WHERE outcome_type = 'PRIMARY'` silently returns nothing on
 either. Compare case-insensitively. (`raw.outcome_measures`'s `outcome_id` hash
 *does* case-fold it, so re-pulling a study through the other backend does not
-renumber its results rows — but the stored column is still verbatim.)
+renumber its results rows, but the stored column is still verbatim.)
 
 **`endpoint_results.measure_raw` holds the reported title, not the planned
-`measure`.** The name is shared with `conformed.endpoints` deliberately: a query
-that has to be rewritten to move between the planned and reported halves is a
-query that will silently be wrong on one of them.
+`measure`.** The name is shared with `conformed.endpoints` so that a query
+moving between the planned and reported halves needs no rewrite.
 
 ## Reaching back into `raw`
 

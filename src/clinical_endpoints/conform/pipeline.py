@@ -1,14 +1,9 @@
-"""Orchestrates the conforming pipeline: normalize -> syntactic match ->
-semantic fallback -> review queue, over every raw.design_outcomes row, writing
-conformed.endpoints (only rows with a resolved measurement) and
-conformed.review_queue (everything else -- never auto-conformed at any
-confidence, per measurements.yaml's `on_unmatched: review_queue`).
+"""The conforming pipeline over every raw.design_outcomes row: writes
+conformed.endpoints (rows with a resolved measurement) and
+conformed.review_queue (everything else).
 
-conformed.endpoints.usdm_text is populated by rendering each resolved row
-through usdm/project.py's syntax-template renderer -- the same rendering
-`usdm show` does live from these columns -- so the parameterized text (the
-HTML fragment with unresolved `<usdm:tag>` markup) is queryable by SQL
-without projecting a whole trial.
+conformed.endpoints.usdm_text is rendered through usdm/project.py, the same
+rendering `usdm show` does live, so the parameterised text is queryable by SQL.
 """
 
 from __future__ import annotations
@@ -41,10 +36,7 @@ def _table_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str) -> bo
 
 
 def _row_id(nct_id, outcome_type, measure, time_frame, description) -> str:
-    """Stable content hash, not a random uuid -- re-running `conform` on an
-    unchanged raw row must produce the same endpoint_id/review_id, the same way
-    re-running `pull`/`vocab validate` is a refresh rather than a fresh
-    identity each time."""
+    """Content hash, so re-running `conform` on an unchanged row keeps its id."""
     key = "|".join(x or "" for x in (nct_id, outcome_type, measure, time_frame, description))
     return hashlib.md5(key.encode("utf-8")).hexdigest()
 
@@ -66,9 +58,6 @@ def _allocation_by_nct(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
 
 
 def _is_randomised(allocation: str | None) -> bool:
-    """Mirrors usdm/envelope.py's own randomisation check on this same
-    `raw.studies.allocation` column, so "is this study randomised" is
-    answered identically wherever it is asked."""
     return (allocation or "").strip().lower().startswith("random")
 
 
@@ -130,13 +119,9 @@ class ReviewQueueEntry:
 def conform_row(
     rules: ConformRules, row: dict, *, ta_id: str | None, allocation: str | None = None
 ) -> ConformedEndpoint | ReviewQueueEntry:
-    """docs/EVENT_SEMANTICS_SPEC.md's six conform_row steps: 0) named-endpoint
-    match, 1) measurement, 2) reference, 3) form, 4) event, 5) direction.
-    Steps 1-3 and threshold parsing are otherwise unchanged from before this
-    spec -- a named-endpoint definition only ever FILLS a silent cascade
-    (measurement, reference) or WINS outright (form; forms.yaml's own
-    resolution still runs, so a disagreement is visible in what
-    `resolve_form` would have said, but the definition's form is what ships)."""
+    """Named-endpoint match, then measurement, reference, form, event,
+    direction. A named-endpoint definition only fills a dimension whose own
+    cascade was silent."""
     nct_id, outcome_type = row["nct_id"], row["outcome_type"]
     measure_raw, description_raw, time_frame_raw, population = (
         row.get("measure"), row.get("description"), row.get("time_frame"), row.get("population"),
@@ -149,16 +134,12 @@ def conform_row(
         "time_frame": text.normalise(time_frame_raw, rules.normalisation_steps),
     }
 
-    # step 0: named-endpoint match. A miss is not a review-queue trigger --
-    # every dimension below still runs its own ordinary cascade regardless.
     named_endpoint_hit = resolve.resolve_named_endpoint(rules, fields)
     named_endpoint = (
         rules.named_endpoint_definitions.get(named_endpoint_hit.term_id) if named_endpoint_hit else None
     )
     named_endpoint_id = named_endpoint.id if named_endpoint else None
 
-    # step 1: measurement. The definition's default_measurement fills ONLY
-    # when the ordinary cascade (including its semantic fallback) is silent.
     measurement = resolve.resolve_measurement(rules, fields)
     if measurement is None and named_endpoint and named_endpoint.default_measurement_id:
         measurement = resolve.FieldMatch(
@@ -183,11 +164,8 @@ def conform_row(
             best_semantic_score=candidate.score if candidate else None,
         )
 
-    # step 2: reference. The definition's reference applies only when the
-    # ordinary cascade is silent AND the study is randomised -- asserting
-    # "from randomisation" on a single-arm trial would be exactly the
-    # unannounced-default disease docs/USDM_PROJECTION_INTEGRITY_SPEC.md
-    # exists to cure.
+    # The definition's reference applies only on a randomised study; asserting
+    # "from randomisation" on a single-arm trial would be an unannounced default.
     reference = resolve.resolve_reference(rules, fields)
     if (
         reference.match_method is None
@@ -199,17 +177,9 @@ def conform_row(
             named_endpoint.reference_id, "named_endpoint", rules.confidence_floor["named_endpoint"], None
         )
 
-    # step 3: form. The definition's form fills only when the ordinary form
-    # cascade is silent -- same rule as measurement, and deliberately NOT the
-    # unconditional "definition wins" the spec's prose describes: forms.yaml
-    # was not asked to migrate any of its own synonyms/patterns (only
-    # measurements.yaml's endpoint-name synonyms moved), so its cascade
-    # already resolves every named endpoint's typical form correctly on its
-    # own -- including "2-Year Overall Survival", which forms.yaml's
-    # match_precedence must keep routing to event_free_rate_at_timepoint
-    # (a landmark rate), not to `os`'s time_to_event. An unconditional
-    # override would silently invert that, which is exactly the kind of
-    # regression the zero-churn invariant exists to catch.
+    # The definition's form fills only when the form cascade is silent: forms.yaml's
+    # own precedence already routes "2-Year Overall Survival" to a landmark rate,
+    # and an unconditional override would invert that.
     form = resolve.resolve_form(rules, fields, measurement)
     if form.match_method is None and named_endpoint and named_endpoint.form_id:
         form = resolve.FieldMatch(
@@ -219,16 +189,11 @@ def conform_row(
     timepoint_result = timepoint.classify(time_frame_raw, rules.timepoint_rules)
     timepoint_result = timepoint.apply_disambiguation(timepoint_result, form.term_id, rules.timepoint_rules)
 
-    # step 4: event. Only for event-family forms (forms.yaml event_family:
-    # true) -- everything else carries event_id = NULL, not 'not_stated': a
-    # change-from-baseline endpoint does not have an unresolved event, it has
-    # no event.
+    # Event only for event-family forms; other forms carry NULL, not 'not_stated'.
     event_result = None
     if rules.form_event_family.get(form.term_id):
         event_result = resolve.resolve_event(rules, fields, named_endpoint, measurement.term_id)
 
-    # step 5: direction. Event polarity (from a resolved event) first, then
-    # the free-text cues, then the measurement's own event_polarity.
     cue_text = fields["measure"] or fields["description"]
     direction_result = direction_mod.derive_direction(
         form.term_id, measurement.term_id, cue_text, rules.direction_rules, ta_id=ta_id,
@@ -304,24 +269,12 @@ CREATE OR REPLACE TABLE conformed.review_queue (
 """
 
 
-# conform_row is a pure function of (rules, one row) -- rules is read-only and
-# every field on it (compiled regexes, dicts, tuples of frozen dataclasses) is
-# picklable, so splitting the row list across worker processes changes
-# nothing about the result, only how long it takes to get there. Below this
-# row count, ProcessPoolExecutor's own start-up cost (spawning interpreters,
-# pickling `rules` once per worker) isn't worth paying.
+# Below this row count the process pool's start-up cost outweighs the gain.
 _MIN_ROWS_FOR_PARALLEL = 200
 
-# Spawn rather than fork: the caller already holds an open DuckDB connection,
-# which may have its own background threads, and forking a multi-threaded
-# process is a classic way to hand a child a half-locked mutex. Workers here
-# never touch `con` -- they only run pure-Python regex/matching code -- but
-# spawn sidesteps the question entirely by starting each worker from a clean
-# interpreter instead of copying the parent's memory.
+# Spawn, not fork: the caller holds an open DuckDB connection with its own threads.
 _MP_CONTEXT = multiprocessing.get_context("spawn")
 
-# Set once per worker process by _init_worker, so `pool.map` only has to
-# pickle one row per task instead of the whole rule set on every call.
 _worker_rules: Optional[ConformRules] = None
 _worker_ta_by_nct: dict = {}
 _worker_allocation_by_nct: dict = {}
@@ -344,9 +297,8 @@ def _conform_row_worker(row: dict) -> "ConformedEndpoint | ReviewQueueEntry":
 
 
 def _resolve_worker_count(jobs: int, row_count: int) -> int:
-    """0 (the default) = auto: parallelize across CPUs once there's enough
-    work to amortize process start-up, otherwise run serially. A positive
-    --jobs always wins, including forcing serial with --jobs 1."""
+    """0 = auto: parallel once there is enough work, else serial. A positive
+    `jobs` always wins."""
     if row_count == 0:
         return 1
     if jobs > 0:
@@ -362,14 +314,11 @@ def run_conform(
     jobs: int = 0,
     on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> dict:
-    """Conform every raw.design_outcomes row, wholesale-replacing
-    conformed.endpoints and conformed.review_queue (a refresh, like `pull` and
-    `vocab validate`, not an append).
+    """Conform every raw.design_outcomes row, replacing conformed.endpoints and
+    conformed.review_queue wholesale.
 
-    `jobs` controls how many worker processes conform rows in parallel (see
-    _resolve_worker_count for the default policy). `on_progress`, if given, is
-    called as `on_progress(done, total)` -- once with done=0 before work
-    starts (so callers learn `total` even when it's 0), then once per row."""
+    `on_progress(done, total)` is called once with done=0 before work starts,
+    then once per row."""
     if not _table_exists(con, "raw", "design_outcomes"):
         raise ValueError("raw.design_outcomes is empty -- run `endpoints pull` first")
     if not _table_exists(con, "vocab", "matching_cascade"):
@@ -404,8 +353,6 @@ def run_conform(
             )
             _collect(i, result)
     else:
-        # A handful of chunks per worker keeps IPC round-trips cheap without
-        # making progress updates too bursty.
         chunksize = max(1, len(row_dicts) // (worker_count * 4))
         with ProcessPoolExecutor(
             max_workers=worker_count,
@@ -449,11 +396,6 @@ def _astuple(obj) -> tuple:
 
 
 def _source_row(e: ConformedEndpoint) -> SourceRow:
-    """Just enough of usdm/project.py's SourceRow to render `Endpoint.text` --
-    the same shape `usdm show` builds from `conformed.endpoints` at request
-    time, built here directly from the row this conform pass just produced so
-    `usdm_text` never has to be re-read back out of the table it is written
-    to."""
     return SourceRow(
         endpoint_id=e.endpoint_id, outcome_type=e.outcome_type,
         measure_raw=e.measure_raw, description_raw=e.description_raw, time_frame_raw=e.time_frame_raw,

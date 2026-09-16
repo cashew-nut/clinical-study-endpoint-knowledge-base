@@ -1,9 +1,4 @@
-"""raw._pull_log: one row per `pull` invocation, shared by every ingestion backend.
-
-Every pull is filtered and logged (source, filters, row counts), so re-running
-`pull` with the same filters is a refresh, not a one-off script, and the pull
-history stays auditable across backends.
-"""
+"""raw._pull_log: one row per `pull` invocation (source, filters, row counts)."""
 
 from __future__ import annotations
 
@@ -15,10 +10,6 @@ import duckdb
 
 from clinical_endpoints.ingest.upsert import ensure_table
 
-# Kept for reference/backwards compatibility -- callers now pass the tables
-# they actually landed via `source_tables`, since that differs by backend
-# (e.g. AACT lands mesh_terms, the CT.gov API backend lands
-# browse_condition_branches instead; see ingest/aact.py and ingest/ctgov_api.py).
 SOURCE_TABLES = ("studies", "design_outcomes")
 
 
@@ -33,9 +24,6 @@ PULL_LOG_DDL = """
 
 
 def ensure_pull_log(con: duckdb.DuckDBPyConnection) -> None:
-    """Via `ensure_table` so the log survives a change to its own columns the
-    same way raw.* does -- a pull that can't record itself is worse than one
-    that has to migrate a table first."""
     ensure_table(con, "_pull_log", PULL_LOG_DDL)
 
 

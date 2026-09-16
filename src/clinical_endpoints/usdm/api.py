@@ -1,17 +1,8 @@
-"""The read-only USDM 4.0 endpoints API.
+"""The read-only USDM 4.0 endpoints API: GET /v4/studies/{nctId}/endpoints.
 
-One call is the point of this module:
-
-    GET /v4/studies/{nctId}/endpoints
-
-Read-only by design. USDM's own API defines `POST`/`PUT /v4/studyDefinitions`,
-and implementing those would make this a study definitions repository of
-record. It is a projection of public registry data, and should never pretend
-otherwise.
-
-FastAPI and uvicorn are an optional extra (`uv sync --extra serve`); nothing
-else in the package imports this module, so the pipeline installs without a web
-stack.
+Read-only by design: this is a projection of public registry data, not a
+study definitions repository. FastAPI and uvicorn are an optional extra;
+nothing else in the package imports this module.
 """
 
 from __future__ import annotations
@@ -45,11 +36,7 @@ VOCAB_DIMENSIONS = {
 
 
 def _etag(body: dict) -> str:
-    """The projection is deterministic, so a content hash is a valid ETag.
-
-    `provenance.projectedAt` is excluded: it is when this response was built,
-    not what it says, and including it would make every response a cache miss.
-    """
+    """Content hash, excluding `provenance.projectedAt`."""
     content = dict(body)
     if isinstance(content.get("provenance"), dict):
         content["provenance"] = {
@@ -78,18 +65,12 @@ def create_app(warehouse: str = "warehouse.duckdb") -> FastAPI:
             "keyed on NCT id. Each endpoint's text is a syntax template whose tags "
             "resolve, through its SyntaxTemplateDictionary, into controlled "
             "vocabularies.\n\n"
-            "Note the deviation from the USDM API's own routes: USDM keys study "
-            "resources on a repository UUID (`/v4/studyDefinitions/{studyId}`). "
-            "This service has no such repository -- it has a registry mirror, and "
-            "the identifier its users hold is an NCT id -- so the route keys on "
-            "that. A client holding a USDM study UUID from elsewhere will not "
-            "find it here.\n\n"
+            "Routes key on NCT id rather than USDM's repository UUID "
+            "(`/v4/studyDefinitions/{studyId}`): this service has a registry mirror, "
+            "not a repository.\n\n"
             "Two response envelopes: `envelope=module` (default) is USDM class "
-            "instances (objectives[], dictionaries[], bcSurrogates[], "
-            "analysisPopulations[]) inside a knowledge-base envelope (profile, "
-            "study, provenance), its `profile` field naming that boundary; "
-            "`envelope=wrapper` is canonical USDM -- a full Wrapper, with no "
-            "`profile` key, for consumers whose tooling only eats one."
+            "instances inside a knowledge-base envelope whose `profile` field names "
+            "that boundary; `envelope=wrapper` is a full USDM Wrapper."
         ),
         version=codes.USDM_VERSION,
     )
@@ -168,14 +149,7 @@ def create_app(warehouse: str = "warehouse.duckdb") -> FastAPI:
 
     @app.get("/v4/vocab/concept/{concept}", tags=["Vocabulary"])
     def read_concept(concept: str) -> Response:
-        """The measurements sharing one concept.
-
-        `concept` is a column on `vocab.measurements`, not a table of its own --
-        measurements.yaml keeps the underlying construct alongside the
-        instrument so "same concept, different instrument" (PASI vs sPGA vs BSA)
-        is one query. A `{concept}` tag's surrogate references this route, so it
-        has to resolve like any other.
-        """
+        """The measurements sharing one concept."""
         con = connect(warehouse)
         try:
             rows = con.execute(
@@ -199,12 +173,7 @@ def create_app(warehouse: str = "warehouse.duckdb") -> FastAPI:
 
     @app.get("/v4/vocab/{dimension}/{term_id}", tags=["Vocabulary"])
     def read_vocab_term(dimension: str, term_id: str) -> Response:
-        """Resolve a `BiomedicalConceptSurrogate.reference` back to its term.
-
-        This is what makes the dictionary what CT says a SyntaxTemplateDictionary
-        should be: "a reference source that provides a listing of valid parameter
-        names and values" (C207597).
-        """
+        """Resolve a `BiomedicalConceptSurrogate.reference` back to its term."""
         table = VOCAB_DIMENSIONS.get(dimension)
         if table is None:
             raise HTTPException(

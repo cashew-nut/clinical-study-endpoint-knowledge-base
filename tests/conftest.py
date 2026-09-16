@@ -1,6 +1,6 @@
-"""Shared fixtures. `fake_aact_con` stands in for a real AACT ATTACH: it wires up
-a `aact.ctgov.*` schema with the same shape as the tables `run_pull` queries,
-so the ingestion SQL can be exercised without live AACT credentials.
+"""Shared fixtures. `fake_aact_con` wires up an `aact.ctgov.*` schema shaped
+like the tables `run_pull` queries, so the ingestion SQL can be exercised
+without live AACT credentials.
 """
 
 from __future__ import annotations
@@ -41,9 +41,7 @@ def fake_aact_con() -> duckdb.DuckDBPyConnection:
         """
     )
 
-    # ctgov.designs / ctgov.eligibilities / ctgov.design_groups -- the study-level
-    # design and eligibility facts the USDM projection needs (see
-    # ingest/design.py). NCT003 leaves them absent, to exercise the LEFT JOIN.
+    # NCT003 leaves designs/eligibilities absent, to exercise the LEFT JOIN.
     con.execute(
         """
         CREATE TABLE aact.ctgov.designs (
@@ -74,8 +72,8 @@ def fake_aact_con() -> duckdb.DuckDBPyConnection:
             ('NCT002', 'Female', '18 Years', NULL, 'Accepts Healthy Volunteers', 'Adults with breast cancer')
         """
     )
-    # One lead sponsor per study, plus one collaborator on NCT001 -- so tests
-    # can confirm --org/`organization` only ever look at the lead row.
+    # One lead sponsor per study, plus a collaborator on NCT001, so tests can
+    # confirm --org reads the lead row only.
     con.execute(
         """
         CREATE TABLE aact.ctgov.sponsors (
@@ -157,9 +155,7 @@ def fake_aact_con() -> duckdb.DuckDBPyConnection:
         """
     )
 
-    # AACT's mesh_terms table (present in the schema, but -- per the AACT data
-    # dictionary checked for this project -- empty in the live database). The
-    # fake here has zero rows too, to match `_pull_mesh_terms`'s degrade path.
+    # Empty, like the live AACT table, to exercise `_pull_mesh_terms`'s degrade path.
     con.execute("CREATE TABLE aact.ctgov.mesh_terms (mesh_term VARCHAR, tree_number VARCHAR)")
 
     _add_fake_aact_interventions(con)
@@ -168,14 +164,9 @@ def fake_aact_con() -> duckdb.DuckDBPyConnection:
 
 
 def _add_fake_aact_interventions(con: duckdb.DuckDBPyConnection) -> None:
-    """The intervention half of the fake AACT database (docs/DRUG_CLASS_SPEC.md).
-
-    Includes `design_group_interventions`, the join table that is the whole
-    reason the arm tier is stronger on this backend than on the API one, and an
-    `intervention_other_names` row so the alias path is exercised. Column lists
-    are AACT's documented ones; `ingest/aact_interventions.py` introspects
-    rather than assuming them.
-    """
+    """The intervention tables, including `design_group_interventions` (the
+    join table the arm tier uses) and one alias row. Column lists are AACT's
+    documented ones; the backend introspects rather than assuming them."""
     con.execute(
         """
         CREATE TABLE aact.ctgov.interventions (
@@ -205,9 +196,8 @@ def _add_fake_aact_interventions(con: duckdb.DuckDBPyConnection) -> None:
         "INSERT INTO aact.ctgov.intervention_other_names VALUES (1, 'NCT001', 1, 'MK-3475')"
     )
 
-    # AACT gives design_groups a surrogate id; the join table keys on it, and
-    # `_pull_arm_links` resolves it back to the arm title so both backends key
-    # raw.arm_interventions the same way.
+    # The join table keys on AACT's surrogate design_groups.id; `_pull_arm_links`
+    # resolves it back to the arm title.
     con.execute("ALTER TABLE aact.ctgov.design_groups ADD COLUMN id INTEGER")
     con.execute("UPDATE aact.ctgov.design_groups SET id = 10 WHERE title = 'Pembrolizumab'")
     con.execute("UPDATE aact.ctgov.design_groups SET id = 11 WHERE title = 'Chemotherapy'")
@@ -232,14 +222,8 @@ def _add_fake_aact_interventions(con: duckdb.DuckDBPyConnection) -> None:
 
 
 def _add_fake_aact_results(con: duckdb.DuckDBPyConnection) -> None:
-    """The results-section half of the fake AACT database (D4). Only NCT001
-    posted results, so the fixture exercises both branches: a study whose
-    results land, and two whose absence is not an error.
-
-    The column lists here are AACT's documented ones. `ingest/aact_results.py`
-    introspects rather than assuming them, and `test_aact_results.py` drops
-    columns from these tables to exercise that.
-    """
+    """The results tables. Only NCT001 posted results, so both branches are
+    exercised: results that land, and absence that is not an error."""
     con.execute(
         """
         CREATE TABLE aact.ctgov.outcomes (
@@ -393,8 +377,7 @@ USDM_STUDIES = [
         False, "All", "18 Years", "75 Years", "Adults with moderate to severe plaque psoriasis",
         "Acme Pharmaceuticals", False,
     ),
-    # Every design/eligibility column absent, to exercise the announced-placeholder
-    # path in the wrapper envelope.
+    # No design/eligibility columns, to exercise the wrapper's placeholder path.
     (
         "NCT00000002", "PHASE3", "RECRUITING", "INTERVENTIONAL", "2023-06-01", "2025-01-01",
         "An oncology trial", "An oncology trial, officially",
@@ -426,8 +409,8 @@ USDM_OUTCOMES = [
 
 @pytest.fixture(scope="session")
 def usdm_warehouse_path(tmp_path_factory) -> str:
-    """A warehouse with the vocabularies loaded, two trials pulled, and `conform`
-    run -- the state every USDM projection assumes."""
+    """Vocabularies loaded, trials pulled, `conform` run: the state the USDM
+    projection assumes."""
     from clinical_endpoints.conform.pipeline import run_conform
     from clinical_endpoints.ingest.design import DESIGN_GROUPS_DDL, STUDIES_DDL
     from clinical_endpoints.ingest.pull_log import write_pull_log
@@ -463,10 +446,8 @@ def usdm_warehouse_path(tmp_path_factory) -> str:
         """
     )
     con.executemany("INSERT INTO raw.design_outcomes VALUES (?, ?, ?, ?, ?, ?)", USDM_OUTCOMES)
-    # A warehouse only ever gets raw.* through a pull, so it always has the pull
-    # log too. Without it the provenance path that reads raw._pull_log.pulled_at
-    # -- a TIMESTAMPTZ, which duckdb can only hand back as a datetime if pytz is
-    # importable -- never ran under test.
+    # raw.* only ever arrives through a pull, so the log is always there too;
+    # without it the provenance path that reads pulled_at never runs under test.
     write_pull_log(
         con,
         source="ctgov_api",
@@ -486,15 +467,12 @@ def usdm_con(usdm_warehouse_path):
     con.close()
 
 
-# ------------------------------------------------------- results fixtures (D4-D9)
+# ----------------------------------------------------------- results fixtures
 
-#: Two studies with posted results, built to exercise every branch of the
-#: dispersion normaliser at once: a reported SD, a standard error, a confidence
-#: interval around a mean and another around a median (which must be refused),
-#: an inter-quartile range, a dispersion type the vocabulary does not
-#: recognise, and a count-typed outcome that has no business in an SD library.
-#: FEV1 is reported in L by one study and mL by the other, which is the case
-#: `factor_to_si` exists for.
+# Two studies with posted results, covering every branch of the dispersion
+# normaliser: a reported SD, a standard error, a CI around a mean and another
+# around a median (refused), an IQR, an unrecognised dispersion type, and a
+# count-typed outcome. FEV1 is reported in L by one study and mL by the other.
 RESULTS_STUDIES = [
     ("NCT10000001", "PHASE3", "COMPLETED", "INTERVENTIONAL", "2021-01-01", "2023-01-01",
      "A respiratory trial", "A respiratory trial, officially",
@@ -504,8 +482,7 @@ RESULTS_STUDIES = [
      "Another respiratory trial", "Another respiratory trial, officially",
      "Parallel Assignment", "Treatment", "Randomized", "Double", 300, "Actual",
      False, "All", "18 Years", None, "Adults with COPD", "Beta Therapeutics", True),
-    # Pulled, conformed, and posted nothing: the denominator `results coverage`
-    # has to keep in view.
+    # Pulled and conformed, but posted nothing: part of the denominator.
     ("NCT10000003", "PHASE3", "RECRUITING", "INTERVENTIONAL", "2023-01-01", None,
      "A trial with no results", "No results", None, None, None, None, None, None,
      None, None, None, None, None, None, False),
@@ -528,7 +505,7 @@ RESULTS_OUTCOME_MEASURES = [
     ("OM2", "NCT10000001", 1, "SECONDARY", "Time from randomisation to death from any cause",
      None, "Up to 60 months", "ITT", "Median", "95% Confidence Interval", "months",
      "Participants", "POSTED"),
-    # a count-typed outcome: has a dispersion column and no business in an SD library
+    # a count-typed outcome: has a dispersion column, but no meaningful SD
     ("OM3", "NCT10000001", 2, "SECONDARY", "Number of participants with adverse events", None,
      "Up to Week 52", "Safety", "Count of Participants", "Not Applicable", "Participants",
      "Participants", "POSTED"),
@@ -542,10 +519,10 @@ RESULTS_OUTCOME_MEASURES = [
     # mL rather than L, so the SI column has something to do
     ("OM6", "NCT10000002", 0, "PRIMARY", "Change from Baseline in FEV1", None, "Week 12", "ITT",
      "Mean", "Standard Deviation", "mL", "Participants", "POSTED"),
-    # an IQR around a median -- Wan et al. territory
+    # an IQR around a median: the Wan et al. path
     ("OM7", "NCT10000002", 1, "SECONDARY", "Change from Baseline in FEV1", None, "Week 24", "ITT",
      "Median", "Inter-Quartile Range", "mL", "Participants", "POSTED"),
-    # a dispersion type nothing in the vocabulary recognises
+    # a dispersion type the vocabulary does not recognise
     ("OM8", "NCT10000002", 2, "SECONDARY", "Change from Baseline in FEV1", None, "Week 52", "ITT",
      "Mean", "Bootstrap Spread", "mL", "Participants", "POSTED"),
 ]
@@ -618,9 +595,8 @@ RESULTS_ARM_INTERVENTIONS = [
 
 @pytest.fixture(scope="session")
 def results_warehouse_path(tmp_path_factory) -> str:
-    """A warehouse with vocabularies loaded, three studies pulled with their
-    results section, `conform` run and `results conform` run -- the state every
-    D5-D9 test assumes."""
+    """Vocabularies loaded, three studies pulled with their results section,
+    `conform` and `results conform` run."""
     from clinical_endpoints.conform.pipeline import run_conform
     from clinical_endpoints.drug_class.resolver import run_drug_class_resolution
     from clinical_endpoints.ingest.design import STUDIES_DDL
@@ -666,11 +642,9 @@ def results_warehouse_path(tmp_path_factory) -> str:
             f"INSERT INTO raw.{table} VALUES (" + ", ".join(["?"] * len(columns)) + ")", rows
         )
 
-    # The interventions and the drug-class axis (docs/DRUG_CLASS_SPEC.md), so
-    # `stats --drug-class` / `--by drug-class` have something to select on. Two
-    # respiratory trials of different mechanisms plus one with a control arm is
-    # the smallest fixture that makes a stratification meaningful rather than
-    # a single block.
+    # Interventions, so `stats --drug-class` and `--by drug-class` have
+    # something to select on: two trials of different mechanisms, one with a
+    # control arm, which is the smallest fixture that stratifies meaningfully.
     for table, ddl, _columns in INTERVENTION_TABLES:
         con.execute(f"CREATE TABLE raw.{table} ({ddl})")
     con.executemany(

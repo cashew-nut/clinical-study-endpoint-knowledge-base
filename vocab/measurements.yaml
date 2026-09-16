@@ -1,10 +1,10 @@
-# Dimension: MEASUREMENT -- what quantity or event the endpoint is about.
+# Dimension: MEASUREMENT, what quantity or event the endpoint is about.
 #
 # The dimension that answers "which studies measured the same thing with a
 # different form", so it is the one worth getting right.
 #
 # GRAIN. Entries are at INSTRUMENT/ANALYTE level (PASI, EASI, HbA1c, FEV1), and
-# each also carries a `concept` -- the underlying construct (psoriasis_severity,
+# each also carries a `concept`, the underlying construct (psoriasis_severity,
 # glycaemic_control, airflow_obstruction). Two levels because the interesting
 # question is asked at both:
 #   same measurement, different form  -> PASI change-from-baseline vs PASI75
@@ -12,17 +12,17 @@
 #   same concept, different instrument -> PASI vs sPGA vs BSA  (concept match)
 # The graph layer can build SAME_MEASUREMENT edges from `id` and SAME_CONCEPT edges
 # from `concept` with no extra vocabulary. If concept later needs synonyms and
-# definitions of its own, promote it to concepts.yaml -- the field name is already
+# definitions of its own, promote it to concepts.yaml; the field name is already
 # the join key, so that is additive.
 #
 # DIRECTION. `default_direction` is the polarity of the UNDERLYING QUANTITY, not of
-# the endpoint. PASI is decrease_is_better because lower PASI is less psoriasis --
-# a PASI75 responder endpoint is still increase_is_better, because forms.yaml's
+# the endpoint. PASI is decrease_is_better because lower PASI is less psoriasis.
+# A PASI75 responder endpoint is still increase_is_better, because forms.yaml's
 # `higher_count_better` rule overrides. Never bake the endpoint's direction in here.
 # `event_polarity` (harm | benefit) does the same job for measurements that are
 # events rather than quantities, and drives longer_is_better vs shorter_is_better
 # on time-to-event forms. A measurement can carry both: tumour burden is a
-# continuous quantity (lower better) whose event -- progression -- is a harm.
+# continuous quantity (lower better) whose event, progression, is a harm.
 # `direction_by_ta` overrides `default_direction` where polarity genuinely depends
 # on the indication (weight falls in obesity, rises in cachexia).
 #
@@ -67,11 +67,11 @@ terms:
       The plan's reference table names this as the measurement shared by PFS and
       ORR; that shared id is what makes them a SAME_MEASUREMENT_DIFFERENT_FORM pair.
       The >=30% decrease in the sum of diameters that defines a RECIST partial
-      response is a Threshold on this measurement, parsed separately -- it is a
-      convention of the criteria, not part of the term. PFS/rPFS/TTP/DOR/TTR --
-      the endpoint NAMES built on this measurement -- moved to
+      response is a Threshold on this measurement, parsed separately, and is a
+      convention of the criteria, not part of the term. PFS, rPFS, TTP, DOR and
+      TTR, the endpoint NAMES built on this measurement, moved to
       named_endpoints.yaml with docs/EVENT_SEMANTICS_SPEC.md; this measurement
-      id is unaffected (still the PFS<->ORR join key) -- only the synonyms that
+      id is unaffected (still the PFS<->ORR join key); only the synonyms that
       named the endpoint, rather than the assessment, moved with them.
 
   - id: vital_status
@@ -90,9 +90,9 @@ terms:
       Under time_to_event this yields longer_is_better (OS); under
       incidence_proportion, decrease_is_better (30-day mortality); under
       event_free_rate_at_timepoint, increase_is_better (2-year OS rate). One
-      measurement, three directions, all derived -- which is the point of keeping
-      direction out of this file. "Overall survival"/"OS"/"time to death" and the
-      bare "survival" synonym moved out with docs/EVENT_SEMANTICS_SPEC.md -- the
+      measurement, three directions, all derived, which is why direction is
+      kept out of this file. "Overall survival"/"OS"/"time to death" and the
+      bare "survival" synonym moved out with docs/EVENT_SEMANTICS_SPEC.md; the
       first two into named_endpoints.yaml's `os` definition, "time to death" into
       events.yaml's `death_any_cause`, and bare "survival" dropped rather than
       migrated: it named no specific endpoint, and once the sharper PFS/DFS-name
@@ -113,12 +113,12 @@ terms:
       - '\brelapse\b'
     notes: >-
       "Disease-free survival"/DFS/RFS/EFS/LFS and their disease-specific
-      spellings (iBCFS, GFFS) -- the endpoint NAMES built on this measurement
-      -- moved to named_endpoints.yaml's `dfs`/`efs` definitions with
+      spellings (iBCFS, GFFS), the endpoint NAMES built on this measurement,
+      moved to named_endpoints.yaml's `dfs`/`efs` definitions with
       docs/EVENT_SEMANTICS_SPEC.md, along with the `[- ]free survival` pattern
       that used to match them (which, as a pre-existing latent defect this
-      migration surfaced, also matched "progression-free survival" -- PFS's
-      territory, a different measurement -- whenever nothing more specific
+      migration surfaced, also matched "progression-free survival", which is
+      PFS's territory and a different measurement, whenever nothing more specific
       claimed the string first). This id is unaffected: rows still resolve
       here, now via `named_endpoint` provenance instead of a direct
       synonym/pattern match.
@@ -134,8 +134,8 @@ terms:
     typical_ta: [oncology]
     synonyms: ["treatment failure"]
     notes: >-
-      "Failure-free survival"/FFS/TFST/TSST/"time to next treatment" -- the
-      endpoint NAMES built on this measurement -- moved to
+      "Failure-free survival", FFS, TFST, TSST and "time to next treatment", the
+      endpoint NAMES built on this measurement, moved to
       named_endpoints.yaml's `ffs`/`tfst` definitions with
       docs/EVENT_SEMANTICS_SPEC.md. This id is unaffected: rows still resolve
       here, now via `named_endpoint` provenance instead of a direct
@@ -190,7 +190,7 @@ terms:
     notes: >-
       The plan's reference-table fixture for change-from-baseline. Percent-predicted
       variants share this measurement and differ only in Reference
-      (predicted_normal) and Scale -- do not create a second term for them.
+      (predicted_normal) and Scale, so do not create a second term for them.
 
   - id: fvc
     label: "Forced vital capacity (FVC)"
@@ -329,7 +329,7 @@ terms:
   # --- Round three: respiratory ---------------------------------------------
   # Every term below is a repeated miss in the review queue of a 38,857-row pull
   # whose two largest areas are cardiovascular (9,160 rows) and respiratory
-  # (7,322) -- the pull vocab/README.md's "rheumatology and respiratory are still
+  # (7,322). The pull vocab/README.md's "rheumatology and respiratory are still
   # thin" gap asked for. The count in each `notes` is unmatched `measure` rows in
   # that pull, which is why the term is here rather than a guess at what a
   # respiratory trial might measure.
@@ -365,7 +365,7 @@ terms:
       Direction is `neutral` and not increase_is_better because the constituents
       disagree: a falling RV/TLC is deflation and good, a falling inspiratory
       capacity is bad. The endpoint's own form and the reported constituent
-      decide, not this term. No bare "RV" or "IC" synonym -- "RV" is the right
+      decide, not this term. No bare "RV" or "IC" synonym: "RV" is the right
       ventricle throughout the cardiovascular corpus and "IC" appears as
       "95%IC" (confidence interval) and as intermittent claudication. 59 rows.
 
@@ -384,7 +384,7 @@ terms:
       Small-airway function, reported by oscillometry (R5, R5-R19) and by
       plethysmographic sRaw. Four bare tokens are deliberately omitted: "R5",
       "X5" and "AX" are letter-digit fragments that collide with dose-level and
-      region labels, and "Raw" -- the plethysmographic symbol -- matched "raw
+      region labels, and "Raw", the plethysmographic symbol, matched "raw
       score" in eight PROMIS and rating-scale descriptions on its first run,
       which is matching.yaml's whole-token rule doing its job and still not
       being enough. 31 rows.
@@ -444,7 +444,7 @@ terms:
     notes: >-
       Separate from `sputum_inflammatory_cells` because the compartment is the
       whole point: a biologic can clear blood eosinophils without touching
-      airway ones. Same concept, different instrument -- the join decision #2
+      airway ones. Same concept, different instrument, the join decision #2
       exists for. 57 rows across the two.
 
   - id: sputum_inflammatory_cells
@@ -524,7 +524,7 @@ terms:
     notes: >-
       Shares `asthma_control` with the ACQ, and scores the opposite way round:
       ACT rises with better control, ACQ falls. Three vetoes because "ACT" is
-      the corpus's worst-behaved capitalised acronym -- activated clotting time,
+      the corpus's worst-behaved capitalised acronym: activated clotting time,
       acceptance and commitment therapy, and TIL adoptive cell therapy all
       appear in it.
 
@@ -572,7 +572,7 @@ terms:
     notes: >-
       increase_is_better, unlike every other dyspnoea instrument here: the TDI
       is scored as a change from the BDI, so positive is improvement. Bare
-      "BDI" is deliberately NOT a synonym -- it is the Beck Depression
+      "BDI" is NOT a synonym here: it is the Beck Depression
       Inventory in 54 of the 56 places it appears in this corpus, and claiming
       it here would route depression endpoints into a respiratory term.
 
@@ -660,7 +660,7 @@ terms:
     synonyms: ["K-BILD", "KBILD", "King's Brief Interstitial Lung Disease"]
     notes: >-
       Joins SGRQ, AQLQ and L-PF on `respiratory_quality_of_life`. Scored the
-      opposite way to SGRQ -- higher K-BILD is better health status.
+      opposite way to SGRQ: higher K-BILD is better health status.
 
   - id: systemic_corticosteroid_dose
     label: "Systemic corticosteroid dose"
@@ -722,7 +722,7 @@ terms:
                "end-tidal carbon dioxide", "end-tidal CO2", "EtCO2", "transcutaneous CO2", "PtcCO2",
                "arterial oxygen tension", "arterial carbon dioxide tension"]
     notes: >-
-      `neutral`, because the constituents run opposite ways -- a rising PaO2 is
+      `neutral`, because the constituents run opposite ways: a rising PaO2 is
       good and a rising PaCO2 is not. Shares nothing with `oxygen_saturation`,
       which is the non-invasive pulse-oximetry measure of the same physiology;
       they are kept apart because a trial that reports both reports them as
@@ -813,7 +813,7 @@ terms:
       Reference-table fixture. Reported as NGSP % or IFCC mmol/mol; scales.yaml
       links the two so both report into one comparison. "Achieved HbA1c < 7%" is
       this measurement under responder_proportion with an absolute_threshold
-      reference -- not a separate measurement.
+      reference, not a separate measurement.
 
   - id: fasting_plasma_glucose
     label: "Fasting plasma glucose"
@@ -1005,7 +1005,7 @@ terms:
     notes: >-
       `implies_event` added in round three. Without it, "Major adverse
       cardiovascular events within 30 days (MACE30)" resolved its event to
-      `death_any_cause` -- the composite has a death component, so the cascade
+      `death_any_cause`: the composite has a death component, so the cascade
       found a plausible event and stopped, and the projection then rendered a
       MACE endpoint as time to death from any cause. Kept a MEASUREMENT rather
       than moved to named_endpoints.yaml: MACE is the thing counted, and the
@@ -1047,7 +1047,7 @@ terms:
     synonyms: ["heart rate", "pulse rate"]
     notes: >-
       "HR" is omitted deliberately (hazard ratio), and bradycardia/tachycardia live
-      on vital_signs_abnormality -- they are the safety events, not the measured
+      on vital_signs_abnormality: they are the safety events, not the measured
       rate.
 
   - id: coronary_ffr_ct
@@ -1079,8 +1079,8 @@ terms:
   #
   # THE EVENT TERMS COME FIRST, and they are measurements rather than
   # named_endpoints.yaml entries on purpose. A cardiovascular outcome trial
-  # counts adjudicated occurrences -- infarction, stroke, revascularisation,
-  # bleeding -- the way an oncology trial counts progressions, so each is an
+  # counts adjudicated occurrences (infarction, stroke, revascularisation,
+  # bleeding) the way an oncology trial counts progressions, so each is an
   # event-shaped measurement carrying `implies_event`, exactly as `vital_status`
   # and `disease_exacerbation` already do. events.yaml gains the matching event
   # ids; per that file's cross-file synonym discipline, the wording lives here
@@ -1124,7 +1124,7 @@ terms:
                "transient ischaemic attack", "TIA", "systemic embolism", "stroke or systemic embolism"]
     notes: >-
       113 rows. Distinct from `nihss` and `modified_rankin_scale`, which grade
-      how bad a stroke was -- this term is the occurrence. "Stroke volume" is
+      how bad a stroke was; this term is the occurrence. "Stroke volume" is
       not caught here: it is longer, and longest-match hands it to
       `cardiac_output`.
 
@@ -1142,7 +1142,7 @@ terms:
                "TIMI minor bleeding", "major hemorrhage", "major haemorrhage",
                "bleeding complications", "haemorrhagic complications", "hemorrhagic complications"]
     notes: >-
-      269 rows, the single largest cardiovascular gap in the pull -- every
+      269 rows, the largest cardiovascular gap in the pull, where every
       anticoagulant and antiplatelet trial carries a bleeding endpoint opposite
       its thrombotic one. One term across all severity grades and all three
       adjudication scales (ISTH, BARC, TIMI): the grade is a Threshold on this
@@ -1216,7 +1216,7 @@ terms:
     notes: >-
       81 rows. Carries both a `default_direction` and an `event_polarity`
       because both readings occur: "AF burden" is a continuous proportion of
-      monitored time, "time to AF recurrence" is an event -- the same
+      monitored time, "time to AF recurrence" is an event, the same
       dual-natured term shape `tumour_burden_recist` has.
 
   - id: cardiac_arrhythmia_event
@@ -1294,7 +1294,7 @@ terms:
                "orthotopic heart transplant", "heart transplant", "heart transplantation",
                "mechanical circulatory support", "durable mechanical circulatory support"]
     notes: >-
-      38 rows, all of them in the same trials -- these are the two terminal
+      38 rows, all of them in the same trials. These are the two terminal
       states a heart-failure endpoint censors at, and they are reported as one
       composite ("LVAD/OHT") rather than separately.
 
@@ -1314,7 +1314,7 @@ terms:
       - '\btime to (first |worsening )?heart failure\b'
     notes: >-
       Separate from `heart_failure_hospitalisation`, which is the same
-      deterioration only when it reaches an admission -- modern heart-failure
+      deterioration only when it reaches an admission. Modern heart-failure
       trials count the urgent outpatient visit too, and the two are reported
       side by side as distinct endpoints. No bare "heart failure" synonym: it
       is the enrolled population's disease name on most of the rows it appears
@@ -1336,9 +1336,9 @@ terms:
                "ABPM", "ambulatory blood pressure monitoring", "office blood pressure",
                "home blood pressure", "blood pressure target", "24-hour blood pressure"]
     notes: >-
-      121 rows said "blood pressure" and named neither systole nor diastole --
+      121 rows said "blood pressure" and named neither systole nor diastole:
       "proportion of subjects achieving blood pressure control", "blood pressure
-      response rate" -- and every one of them went to the review queue, because
+      response rate", and every one of them went to the review queue, because
       the vocabulary had only the two specific terms. Longest-match keeps this
       term below them: "systolic blood pressure" is the longer span, so the
       specific reading still wins wherever the text offers one.
@@ -1359,7 +1359,7 @@ terms:
     notes: >-
       `target_range`, not decrease_is_better: MAP is a perfusion target in the
       critical-care and shock trials that report it, where too low is the
-      failure. The vetoes are the three non-haemodynamic MAPs in this corpus --
+      failure. The vetoes are the three non-haemodynamic MAPs in this corpus:
       the cisplatin/doxorubicin/methotrexate regimen, MAP-DB and MAP-HSS.
 
   - id: pulse_pressure
@@ -1387,7 +1387,7 @@ terms:
                "left ventricular mass index", "LVMI", "left ventricular remodeling",
                "left ventricular remodelling", "end-diastolic volume", "end-systolic volume"]
     notes: >-
-      48 rows. Reverse remodelling -- a shrinking ventricle -- is the benefit,
+      48 rows. Reverse remodelling, a shrinking ventricle, is the benefit,
       hence decrease_is_better, which is the opposite of its companion LVEF and
       the reason the two are separate terms rather than one `cardiac_function`
       catch-all.
@@ -1449,7 +1449,7 @@ terms:
     synonyms: ["infarct size", "myocardial infarct size", "myocardial salvage index",
                "area at risk", "microvascular obstruction", "myocardial blush grade"]
     notes: >-
-      22 rows. The imaging quantity, not the event -- a reperfusion trial's
+      22 rows. The imaging quantity rather than the event: a reperfusion trial's
       infarct size is a continuous outcome measured after the infarction that
       enrolled the participant, so it must not resolve to
       `myocardial_infarction`; longest-match gives it to this term.
@@ -1511,9 +1511,9 @@ terms:
     typical_ta: [metabolic_endocrine, cardiovascular]
     synonyms: ["lipoprotein(a)", "Lp(a)", "lipoprotein a"]
     notes: >-
-      Kept apart from `ldl_cholesterol` because the whole point of the
-      Lp(a)-lowering trials now in the corpus is that it is a separate,
-      independently inherited risk particle.
+      Kept apart from `ldl_cholesterol` because the Lp(a)-lowering trials now
+      in the corpus are premised on it being a separate, independently
+      inherited risk particle.
 
   - id: kansas_city_cardiomyopathy_questionnaire
     label: "Kansas City Cardiomyopathy Questionnaire (KCCQ)"
@@ -1529,7 +1529,7 @@ terms:
     synonyms: ["KCCQ", "Kansas City Cardiomyopathy Questionnaire", "KCCQ-CSS", "KCCQ-OSS",
                "KCCQ clinical summary score", "KCCQ overall summary score", "KCCQ-TSS"]
     notes: >-
-      30 rows, and the primary endpoint of several of them -- heart-failure
+      30 rows, and the primary endpoint of several of them. Heart-failure
       trials increasingly report health status alongside events. Higher is
       better, the opposite of the NYHA class it often accompanies.
 
@@ -1549,7 +1549,7 @@ terms:
       The older heart-failure PRO, scored the opposite way to the KCCQ. Thin in
       this pull (3 rows) but it shares `heart_failure_health_status` with it,
       and a same-concept-different-instrument pair is worth having even when
-      one arm of it is rare -- that comparison is the reason the concept field
+      one arm of it is rare, and that comparison is the reason the concept field
       exists.
 
   - id: seattle_angina_questionnaire
@@ -1657,14 +1657,14 @@ terms:
       - '\b(u?ACR|eGFR|CKD-EPI|MDRD)\b'
     notes: >-
       80 rows, the largest single chemistry gap. Shares `kidney_function` with
-      `egfr`, which is computed from it -- the same-concept join that makes a
+      `egfr`, which is computed from it: the same-concept join that makes a
       creatinine safety endpoint comparable with an eGFR efficacy one. The two
       vetoes are that same closeness read backwards: where the text says
       "urine albumin-to-creatinine ratio" or "eGFR (CKD-EPI creatinine
       equation)", creatinine is an INPUT to the reported quantity and not the
       endpoint, and this term is longer than `albuminuria`'s "UACR" and
       `egfr`'s "eGFR", so without the vetoes it wins both. "Creatinine
-      clearance" is likewise not listed here -- it is a GFR estimate, and lives
+      clearance" is likewise not listed here: it is a GFR estimate, and lives
       on `egfr`.
 
   - id: serum_potassium
@@ -1736,7 +1736,7 @@ terms:
     notes: >-
       A win-ratio-era composite that folds mortality and length of stay into one
       count, so a death scores zero rather than dropping out of the analysis.
-      Shares `organ_support_free_days`' concept -- and 17 of its 24 rows are
+      Shares `organ_support_free_days`' concept, and 17 of its 24 rows are
       cardiovascular, which is why it sits here rather than in that term. The
       literature NAME ("days alive and out of hospital", "DAOH") is not a synonym
       here: it is a named_endpoints.yaml definition, which resolves the form as
@@ -2034,7 +2034,7 @@ terms:
       The plan's reference-table fixture ("Joint count + composite"). ACR20 is a
       >=20% improvement across a defined core set; the 20 is a Threshold on this
       measurement, parsed separately, so ACR20/50/70 share one id and differ only in
-      threshold value. That is deliberate -- it makes "same measurement, different
+      threshold value. That is by design: it makes "same measurement, different
       threshold" a queryable relationship.
 
   - id: das28
@@ -2206,7 +2206,7 @@ terms:
     default_scale: seconds
     typical_ta: [neurology]
     synonyms: ["T25-FW", "Timed 25-Foot Walk", "timed walk"]
-    notes: "Faster is better, so the raw quantity is decrease_is_better -- the opposite polarity to 6MWD, which measures distance not time."
+    notes: "Faster is better, so the raw quantity is decrease_is_better, the opposite polarity to 6MWD, which measures distance not time."
 
   - id: cognitive_composite
     label: "Cognitive test composite"
@@ -2222,7 +2222,7 @@ terms:
     notes: >-
       "Digit Symbol Coding" was listed here in round one and again on
       `digit_symbol_coding` when that term was added; `vocab validate` caught the
-      collision. It belongs to the specific subtest -- a composite is scored across
+      collision. It belongs to the specific subtest: a composite is scored across
       a battery, and an endpoint naming one subtest is measuring that subtest.
 
   - id: migraine_days
@@ -2280,7 +2280,7 @@ terms:
     typical_ta: [psychiatry]
     synonyms: ["PHQ-8", "PHQ8", "Patient Health Questionnaire-8", "Patient Health Questionnaire 8"]
     notes: >-
-      Self-administered, unlike HAM-D/MADRS -- shares `depression_severity` with
+      Self-administered, unlike HAM-D and MADRS. Shares `depression_severity` with
       both, since it is the same construct read by a different rater. PHQ-9 (the
       9-item version with the suicidal-ideation item) is a distinct, more common
       instrument not covered here; add it separately if the corpus shows it.
@@ -2308,7 +2308,7 @@ terms:
     synonyms: ["GAD-7", "GAD7", "Generalized Anxiety Disorder 7-item scale",
                "Generalised Anxiety Disorder scale", "Generalized Anxiety Disorder scale"]
     notes: >-
-      Self-administered, unlike HAM-A -- shares `anxiety_severity` with it, since
+      Self-administered, unlike HAM-A. Shares `anxiety_severity` with it, since
       it is the same construct read by a different rater.
 
   - id: panss
@@ -2730,7 +2730,7 @@ terms:
                "malnutrition", "nutritional assessment"]
     notes: >-
       Assessed by anthropometric, biochemical, or dietary measures that the registry
-      text rarely distinguishes. Deliberately one term at concept grain -- splitting
+      text rarely distinguishes. One term at concept grain, because splitting
       it would create instrument entries no trial actually names.
 
   - id: who_functional_class
@@ -2762,10 +2762,10 @@ terms:
     patterns: ['\b(TE)?AEs?\b', '\badverse (event|reaction|experience)s?\b', '\bAESIs?\b', '\bsafety and tolerability\b',
                '\btoxicit(y|ies)\b']
     notes: >-
-      The single most common measurement in a registry-wide sample. Under
-      incidence_proportion it is "number of participants with a TEAE"; under
-      event_count, "number of TEAEs"; under time_to_event, "time to first AESI" --
-      three forms of one measurement, and a clean demonstration of the
+      The most common measurement in a registry-wide sample. Under
+      incidence_proportion it is "number of participants with a TEAE", under
+      event_count "number of TEAEs", and under time_to_event "time to first
+      AESI": three forms of one measurement, and a demonstration of the
       SAME_MEASUREMENT_DIFFERENT_FORM edge outside efficacy.
 
       "toxicity" is a bare word rather than a phrase, but whole-token matching
@@ -2923,7 +2923,7 @@ terms:
       Use for a plain concentration measurement where no named PK parameter is
       given. The named parameters above are kept as separate measurements rather
       than as forms of this one, because Cmax and AUC are distinct quantities a
-      pharmacologist would never merge -- and because `concept: drug_exposure` still
+      pharmacologist would never merge, and because `concept: drug_exposure` still
       groups them for any query that wants them together.
 
   # =========================================================================
@@ -3015,7 +3015,7 @@ terms:
       FACT-G plus an 18-item endocrine-symptom subscale, used in breast cancer
       trials of endocrine therapy. Kept apart from `fact_g` (a different
       instrument, not just a longer version of it) even though it shares the
-      same `concept` -- the same "instrument-level id, concept for the family"
+      same `concept`: the same "instrument-level id, concept for the family"
       split this file already uses for PASI/sPGA. "FACT-ES" out-spans fact_g's
       bare "FACT" synonym (7 chars vs. 4) so longest-match resolves it correctly
       with no veto needed.
@@ -3040,7 +3040,7 @@ terms:
     typical_ta: [oncology]
     synonyms: ["CANKADO", "CANKADO active", "CANKADO PRO-React", "CANKADO PRO-React eHealth"]
     notes: >-
-      CANKADO is not itself a validated psychometric instrument -- it is an
+      CANKADO is not itself a validated psychometric instrument: it is an
       ePRO/eHealth platform (self-detecting symptom questionnaires, an EQ-VAS-style
       daily slider) used to capture HRQoL in a recurring family of breast-cancer
       trials (e.g. the AGO-B WSG PreCycle trial, NCT03220178), whose registered
@@ -3065,7 +3065,7 @@ terms:
     notes: >-
       A distinct construct from `health_related_quality_of_life` (fear/worry
       about relapse, not overall QoL), so it gets its own `concept` rather than
-      sharing that one -- despite being reported alongside EORTC/FACT in the
+      sharing that one, despite being reported alongside EORTC and FACT in the
       same oncology survivorship trials.
 
   - id: patient_global_impression
@@ -3098,7 +3098,7 @@ terms:
       - '\bFCRI\b'
     notes: >-
       A deliberate catch-all for the very common bare "Quality of life assessment".
-      Conforming to it is honest -- the concept is known, the instrument is not --
+      Conforming to it is correct: the concept is known and the instrument is not,
       and it keeps those rows out of the review queue while remaining easy to filter
       out of any analysis that needs a named instrument.
 
@@ -3107,12 +3107,12 @@ terms:
       e.g. "... Health-Related Quality of Life (HRQoL) as Assessed by the EORTC
       QLQ-C30", where "health-related quality of life" (30 chars) is a longer
       matched span than "EORTC QLQ-C30" (13 chars) even though the instrument is
-      explicit and strictly more specific -- and the literature does write FACT-ES
+      explicit and strictly more specific, and the literature does write FACT-ES
       the same way ("... quality of life ... in the ... FACT-ES score ..."), so
       this is not an EORTC-only failure mode. Longest-match assumes span tracks
       specificity; here two different terms match two different true substrings
       of the same string, so the assumption breaks and has to be vetoed rather
-      than out-spanned. `iwqol_lite` needs no veto -- its own long-form synonym
+      than out-spanned. `iwqol_lite` needs no veto: its own long-form synonym
       ("Impact of Weight on Quality of Life", 36 chars) already out-spans this
       catch-all's longest synonym (30) on its own, which is why it alone was
       spared in round two's version of the same fix (see matching.yaml).
@@ -3139,7 +3139,7 @@ terms:
       is inverse-scored, and this file keeps oppositely-scored siblings as
       separate terms rather than one catch-all (see `left_ventricular_volume`'s
       notes on why reverse remodelling stays apart from LVEF) rather than risk a
-      silent direction flip -- add Karnofsky as its own term if the corpus needs
+      silent direction flip. Add Karnofsky as its own term if the corpus needs
       it. Most of this measurement's occurrences will be in eligibility/
       inclusion-criteria text rather than a reported outcome, but where it IS
       the outcome ("Change from Baseline in ECOG Performance Status", "Time to
@@ -3160,8 +3160,8 @@ terms:
                "all-cause hospitalization", "unplanned hospitalization"]
     notes: >-
       `implies_event` wired in round three. events.yaml has had
-      `hospitalisation_event` since it was written, and this measurement --
-      which is what ascertains it -- was never pointed at it, so 279
+      `hospitalisation_event` since it was written, and this measurement,
+      which is what ascertains it, was never pointed at it, so 279
       event-family rows carried `event: not_stated` for want of one line (324
       resolve through it now, the difference being rows the new cardiovascular
       and respiratory measurements took over). Found while measuring the
@@ -3169,7 +3169,7 @@ terms:
       hospitalisation endpoints made it the third most common cause of an
       unresolved event. `hospital_discharge` is the benefit counterpart, added
       immediately afterwards when this wiring flipped "Time to discharge" to
-      longer_is_better -- see that event's notes.
+      longer_is_better; see that event's notes.
 
   - id: length_of_stay
     label: "Length of stay"
@@ -3254,7 +3254,7 @@ terms:
     default_scale: seconds
     synonyms: ["Trail Making Test", "TMT", "Trail Making Test A", "Trail Making Test B", "TMT-A", "TMT-B"]
     notes: >-
-      Scored in seconds to completion, so decrease_is_better -- the opposite of
+      Scored in seconds to completion, so decrease_is_better, the opposite of
       every other instrument in this battery. Worth its own entry rather than
       folding into cognitive_composite for exactly that reason.
 
@@ -3337,7 +3337,7 @@ terms:
       The standard efficacy endpoint shape in inherited metabolic disease, where
       the analyte differs per disorder (plasma acylcarnitine, urine acylglycine,
       GAG excretion) but the endpoint is always "did the marker reach the normal
-      range". Kept at construct level for that reason -- enumerating every analyte
+      range". Kept at construct level for that reason: enumerating every analyte
       would be a vocabulary of one entry per trial.
 
   - id: treatment_adherence
@@ -3540,7 +3540,7 @@ concepts:
   - volume_status
 
 # Unlike the other dimensions, MEASUREMENT has no automatic fallback. A measure
-# string that matches nothing here must go to conformed.review_queue unmatched --
+# string that matches nothing here must go to conformed.review_queue unmatched,
 # never to `not_stated`, which would hide an unconformed row behind a
 # conformed-looking one. `not_stated` is reachable only by an explicit reviewer
 # decision via `review resolve`.

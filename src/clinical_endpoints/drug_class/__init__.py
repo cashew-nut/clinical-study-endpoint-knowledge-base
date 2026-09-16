@@ -1,1 +1,1 @@
-"""Intervention -> drug-class resolution (docs/DRUG_CLASS_SPEC.md)."""
+"""Intervention -> drug-class resolution."""

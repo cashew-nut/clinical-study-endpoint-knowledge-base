@@ -1,19 +1,10 @@
-"""Text normalisation per matching.yaml's `normalisation` list.
+"""Text normalisation steps named by matching.yaml's `normalisation` list. The
+step order is read from `vocab.matching_normalisation`.
 
-matching.yaml states the steps and their order; this module supplies the one
-thing a vocab file cannot -- the code that performs each named step. Which
-steps run, and in what order, is read from `vocab.matching_normalisation`
-(written by `vocab validate` from matching.yaml), not hardcoded here.
-
-`casefold_unless_case_sensitive` is deliberately a no-op in this module: rather
-than casefold the text and lose the ability to apply matching.yaml's
-case-sensitive short-acronym rule, this pipeline keeps the text case-preserved
-throughout and lets each compiled regex carry its own case sensitivity
-(`re.IGNORECASE` for ordinary synonyms/patterns, no flag for a short all-caps
-acronym) -- see `conform/matching.py`. That is equivalent in effect (a
-case-preserved string matched with IGNORECASE reads the same as a casefolded
-string matched without it) and is the only way both matching.yaml rules can be
-satisfied by one prepared string.
+`casefold_unless_case_sensitive` is a no-op here: text stays case-preserved and
+each compiled regex carries its own case sensitivity (see conform/matcher.py),
+which is the only way the short-acronym rule can be honoured on one prepared
+string.
 """
 
 from __future__ import annotations
@@ -56,7 +47,7 @@ def _unescape_markdown(text: str) -> str:
 
 
 def _casefold_unless_case_sensitive(text: str) -> str:
-    return text  # see module docstring: handled via regex flags instead
+    return text
 
 
 _STEPS = {
@@ -89,11 +80,8 @@ def apply_named_step(step: str, text: str) -> str:
 
 
 def normalise(text: str | None, steps: list[str]) -> str:
-    """Apply matching.yaml's normalisation steps, in the order given, to `text`.
-    Every step in `steps` must be one this module implements -- an unrecognised
-    step name fails loudly rather than being silently skipped, so a new
-    normalisation step added to matching.yaml is a build failure here, not a
-    silent no-op in the pipeline."""
+    """Apply `steps` in order. An unknown step name raises rather than being
+    skipped."""
     if not text:
         return ""
     result = text

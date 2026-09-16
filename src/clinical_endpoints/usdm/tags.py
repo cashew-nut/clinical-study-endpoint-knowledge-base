@@ -1,17 +1,11 @@
 """Tag values: what a `{tag}` renders to, and where its reference points.
 
-Seven tags, three kinds of USDM home (see docs/USDM_ENDPOINTS_API_SPEC.md,
-"Tag catalogue"):
-
-* `measurement` / `concept` -> a `BiomedicalConceptSurrogate` on the study
-  version, shared by every endpoint in the trial that resolved that term. This
-  is the one that matters: it is the cross-study join key.
+* `measurement` / `concept` / `event` -> a `BiomedicalConceptSurrogate` on the
+  study version, shared by every endpoint in the trial that resolved that term.
 * `reference` / `timepoint` / `threshold` / `scale` -> an `ExtensionAttribute`
-  on the endpoint itself, because USDM has no class for "the baseline this is
-  measured against" or "Week 16" as a bare horizon.
+  on the endpoint, since USDM has no class for these.
 
-Nothing here re-parses registry text. Every value comes from a column `conform`
-already wrote.
+Every value comes from a column `conform` already wrote.
 """
 
 from __future__ import annotations
@@ -20,25 +14,22 @@ import json
 import re
 from dataclasses import dataclass
 
-#: Comparators as `conform` records them, rendered for a human sentence.
 _COMPARATOR_SYMBOLS = {">=": "≥", "<=": "≤", ">": ">", "<": "<", "=": ""}
 
-#: Units whose symbol attaches to the number without a space.
+# Units whose symbol attaches to the number without a space.
 _TIGHT_UNITS = frozenset({"%"})
 
 _PLURAL_UNITS = re.compile(r"s$", re.IGNORECASE)
 
 
-#: `time_frame` strings that already open with a preposition need no help; the
-#: rest are durations ("12 months") that read as a dangling noun without one.
+# A `time_frame` opening with one of these needs no preposition.
 _LEADING_PREPOSITIONS = frozenset(
     {"up", "from", "through", "during", "at", "over", "within", "until", "after",
      "before", "post", "pre", "throughout", "every", "each"}
 )
 
-#: A `time_frame` opening with a unit label ("Week 12, Week 24", "Baseline and
-#: Day 28") names points in time, so it takes "at"; anything else is read as a
-#: duration and takes "over".
+# A `time_frame` opening with a unit label names points in time and takes "at";
+# anything else reads as a duration and takes "over".
 _LEADING_UNITS = frozenset(
     {"baseline", "week", "weeks", "day", "days", "month", "months", "year", "years",
      "hour", "hours", "visit", "visits", "cycle", "cycles", "screening", "randomisation",
@@ -59,7 +50,7 @@ def _fallback(raw_text: str | None) -> str | None:
 
 
 def _titled_unit(unit: str | None) -> str | None:
-    """`week` / `weeks` -> `Week`. The registry writes "Week 16", not "week 16"."""
+    """`week` / `weeks` -> `Week`."""
     if not unit:
         return None
     token = str(unit).strip()
@@ -75,7 +66,7 @@ def _plural_unit(unit: str | None) -> str | None:
 
 
 def _number(value) -> str:
-    """Render 16.0 as "16" -- a visit number is not a float to a reader."""
+    """Render 16.0 as "16"."""
     try:
         as_float = float(value)
     except (TypeError, ValueError):
@@ -96,22 +87,13 @@ def render_threshold(comparator: str | None, value, unit: str | None) -> str | N
 
 
 def render_timepoint(pattern: str | None, extracted: dict | str | None, raw: str | None) -> str | None:
-    """Render `timepoint_pattern` + `timepoint_extracted` into a phrase.
+    """Render `timepoint_pattern` + `timepoint_extracted` into a phrase, falling
+    back to the raw `time_frame` where the extracted fields are too thin.
 
-    `timepoint_patterns.yaml` already declares, per pattern, the named capture
-    groups a parser should populate -- it calls itself the parser spec rather
-    than a classifier -- so this is a lookup, not an inference. Where the
-    extracted fields are too thin to render, the raw `time_frame` string is used
-    verbatim: less pretty, still true.
-
-    **The rendered phrase carries its own preposition** ("at Week 16", "over 6
-    weeks", "until the required number of events"), and templates therefore
-    write a bare `[ {timepoint}]` with no preposition of their own. The
-    alternative -- a preposition in the template -- produced "during through
-    Week 52" and "up to until the required number of events", because a third
-    of the patterns render a self-contained phrase rather than a point in time.
-    Which preposition a category takes is a property of the category, so it
-    belongs with the category.
+    The rendered phrase carries its own preposition ("at Week 16", "over 6
+    weeks", "until the required number of events"); templates write a bare
+    `[ {timepoint}]`. A preposition in the template produced "during through
+    Week 52".
     """
     if pattern is None or pattern == "unspecified":
         return None
@@ -172,8 +154,7 @@ def render_timepoint(pattern: str | None, extracted: dict | str | None, raw: str
         return f"through {end}" if end else _fallback(raw_text)
 
     if pattern == "event_driven":
-        # The cap is a duration ("up to 36 months"), not a landmark visit
-        # ("Month 36") -- an event-driven endpoint has no scheduled horizon.
+        # The cap is a duration ("up to 36 months"), not a landmark visit.
         value = fields.get("estimated_max_value")
         unit = _plural_unit(fields.get("estimated_max_unit"))
         base = "until the required number of events"
@@ -190,13 +171,8 @@ def render_timepoint(pattern: str | None, extracted: dict | str | None, raw: str
 
 @dataclass(frozen=True)
 class TagValue:
-    """One resolved tag: what it reads as, and what its ParameterMap points at.
-
-    `host` is one of `surrogate` (a shared BiomedicalConceptSurrogate),
-    `analysis_population` (a shared AnalysisPopulation) or `extension` (an
-    ExtensionAttribute minted on the endpoint). `key` identifies the shared
-    instance for the first two.
-    """
+    """One resolved tag. `host` is `surrogate` or `extension`; `key`
+    identifies the shared instance for the former."""
 
     name: str
     value: str
@@ -204,12 +180,8 @@ class TagValue:
     key: str | None = None
 
 
-#: Which host each tag uses. Adding a tag means giving its value a USDM home,
-#: which is why vocab/schema.py keeps USDM_TAGS closed. `event` follows
-#: `measurement`'s lead (docs/EVENT_SEMANTICS_SPEC.md): a
-#: BiomedicalConceptSurrogate per distinct resolved event, so a consumer can
-#: join "every trial whose PFS event is disease_progression_or_death" the same
-#: way it already joins on measurement.
+# Adding a tag means giving its value a USDM home, which is why
+# vocab/schema.py keeps USDM_TAGS closed.
 TAG_HOSTS: dict[str, str] = {
     "measurement": "surrogate",
     "concept": "surrogate",

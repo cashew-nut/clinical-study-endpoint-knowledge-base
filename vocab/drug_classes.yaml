@@ -1,48 +1,48 @@
 # Dimension: DRUG CLASS.
 #
-# Not a native field on either ingestion backend -- like therapeutic area, it is
+# Not a native field on either ingestion backend. Like therapeutic area, it is
 # derived from what the study registered as its interventions (see
-# drug_class_mesh_mapping.yaml). This file is only the closed list of classes
-# plus the rules for resolving a study that maps to several.
+# drug_class_mesh_mapping.yaml). This file is the closed list of classes plus
+# the rules for resolving a study that maps to several.
 #
-# WHAT A "CLASS" MEANS HERE, and it is the decision the whole axis rests on:
-# MeSH classifies a substance twice, structurally (metformin is a *biguanide*)
-# and functionally (metformin is a *hypoglycemic agent*). For grouping
-# ENDPOINTS, mechanism is the axis that carries signal -- two drugs that lower
-# HbA1c through the same receptor should behave alike on an HbA1c endpoint; two
-# drugs that share a ring system should not. So every term declares a `kind`:
+# WHAT A "CLASS" MEANS HERE. MeSH classifies a substance twice: structurally
+# (metformin is a biguanide) and functionally (metformin is a hypoglycemic
+# agent). For grouping ENDPOINTS, mechanism is the axis that carries signal:
+# two drugs that lower HbA1c through the same receptor should behave alike on
+# an HbA1c endpoint, and two drugs that share a ring system should not. So
+# every term declares a `kind`:
 #
-#   mechanism     the target or pathway acted on -- GLP-1 receptor agonist,
+#   mechanism     the target or pathway acted on: GLP-1 receptor agonist,
 #                 PD-1 inhibitor, SGLT2 inhibitor. The useful axis.
 #   pharmacologic the coarse action level, which is what CT.gov's intervention
-#                 browse branches give directly -- antineoplastic agent,
+#                 browse branches give directly: antineoplastic agent,
 #                 cardiovascular agent. A weaker claim, never a mechanism one.
-#   modality      what kind of thing it is -- small molecule, monoclonal
+#   modality      what kind of thing it is: small molecule, monoclonal
 #                 antibody, cell therapy, device, behavioural intervention.
 #                 Orthogonal to the other two; a study is normally both.
 #   control       placebo, sham, standard of care, no intervention.
 #
 # `kind` is MANDATORY so that a query has to say which axis it means, the same
 # way docs/COMPOSITE_ENDPOINTS_SPEC.md makes composite `kind` mandatory. A
-# GROUP BY that mixes them silently compares "PD-1 inhibitor" against
-# "monoclonal antibody" as if they were alternatives.
+# GROUP BY that mixes them compares "PD-1 inhibitor" against "monoclonal
+# antibody" as if they were alternatives.
 #
-# STRUCTURAL CLASS IS NOT MODELLED. Not modelled badly -- absent. If a use for
-# it appears it is a fourth `kind`, not a redefinition of these.
+# STRUCTURAL CLASS IS NOT MODELLED; it is absent rather than approximated. If a
+# use for it appears it is a fourth `kind`, not a redefinition of these.
 #
-# `control` is a first-class kind rather than bookkeeping: half the arms in a
-# placebo-controlled corpus are placebo arms, and an axis that cannot name them
-# cannot exclude them, which makes the first honest question anyone asks --
-# what does this class do relative to placebo? -- unanswerable.
+# `control` is a first-class kind because half the arms in a placebo-controlled
+# corpus are placebo arms. An axis that cannot name them cannot exclude them,
+# and what a class does relative to placebo is the first question asked of this
+# axis.
 #
 # PRECEDENCE BANDS. Lower wins the primary class. The bands encode "the most
 # specific claim about what is being tested wins":
 #
 #     10-199   mechanism    a named target beats everything, and within a
-#                           family a CHILD outranks its PARENT -- `pd1_inhibitor`
-#                           beats `checkpoint_inhibitor`, because the specific
-#                           claim is the one worth grouping by. The loader
-#                           enforces this (`_validate_drug_classes`).
+#                           family a CHILD outranks its PARENT, so
+#                           `pd1_inhibitor` beats `checkpoint_inhibitor` and
+#                           the specific claim is the one grouped by. The
+#                           loader enforces this (`_validate_drug_classes`).
 #    200-299   pharmacologic
 #    300-399   modality     how it is made is the weakest useful claim
 #    400-499   control      a placebo-controlled trial of drug X is a trial
@@ -53,7 +53,7 @@
 # validated acyclic. It is NOT the recursive structure
 # docs/COMPOSITE_ENDPOINTS_SPEC.md argues for, and should not grow into one.
 #
-# COVERAGE IS DELIBERATELY PARTIAL. This is the first round, scoped to the
+# COVERAGE IS PARTIAL BY DESIGN. This is the first round, scoped to the
 # classes a Phase 3 corpus is mostly made of across the therapeutic areas
 # therapeutic_areas.yaml already covers. It is not a pharmacopoeia and must not
 # become one by coverage pressure: an intervention that matches nothing goes to
@@ -66,7 +66,7 @@ terms:
 
   # --- mechanism: oncology ------------------------------------------------
   # The densest block, because oncology dominates Phase 3 registration volume
-  # and because combination therapy is the norm there -- which is exactly why
+  # and because combination therapy is the norm there, which is why
   # `resolution.keep_all_matches` matters more here than anywhere else.
 
   - id: checkpoint_inhibitor
@@ -171,9 +171,9 @@ terms:
     definition: "Inhibits vascular endothelial growth factor or its receptor; antiangiogenic."
     synonyms: ["vegf inhibitor", "anti-vegf", "vegfr inhibitor", "antiangiogenic"]
     notes: >-
-      Spans oncology and ophthalmology -- the same mechanism treats metastatic
-      colorectal cancer and neovascular AMD. That is a feature of the axis, not
-      a collision: the therapeutic area separates them, the mechanism does not.
+      Spans oncology and ophthalmology: the same mechanism treats metastatic
+      colorectal cancer and neovascular AMD. The therapeutic area separates
+      them where the mechanism does not.
 
   - id: parp_inhibitor
     label: "PARP inhibitor"
@@ -307,9 +307,9 @@ terms:
     synonyms: ["sglt2 inhibitor", "sglt-2 inhibitor", "gliflozin"]
     notes: >-
       Registered in diabetes, heart failure and chronic kidney disease alike.
-      Like vegf_inhibitor, one mechanism across three therapeutic areas -- and
-      one of the clearest cases for why endpoint choice is worth cross-tabbing
-      against class rather than against area alone.
+      Like vegf_inhibitor, one mechanism across three therapeutic areas, and a
+      clear case for cross-tabbing endpoint choice against class rather than
+      against area alone.
 
   - id: dpp4_inhibitor
     label: "DPP-4 inhibitor"
@@ -451,7 +451,7 @@ terms:
     inline_label: "an anticoagulant"
     kind: mechanism
     precedence: 89
-    definition: "Inhibits a coagulation factor -- vitamin K antagonist, direct oral anticoagulant or heparin."
+    definition: "Inhibits a coagulation factor: vitamin K antagonist, direct oral anticoagulant or heparin."
     synonyms: ["anticoagulant", "doac", "noac", "factor xa inhibitor", "direct thrombin inhibitor", "heparin"]
 
   - id: antiplatelet
@@ -802,9 +802,9 @@ terms:
 
   # --- pharmacologic: the coarse action level -----------------------------
   # What CT.gov's intervention browse branches give directly. A weaker claim
-  # than any mechanism term, and never a substitute for one: these exist so a
-  # study whose interventions resolve to no mechanism still lands somewhere
-  # honest rather than in `unclassified_agent`.
+  # than any mechanism term, and never a substitute for one. They exist so a
+  # study whose interventions resolve to no mechanism still lands on a real
+  # term rather than in `unclassified_agent`.
 
   - id: antineoplastic_agent
     label: "Antineoplastic agent"
@@ -1052,8 +1052,8 @@ terms:
     notes: >-
       A finding, not a bucket. Every intervention that reaches this term is also
       written to conformed.drug_class_review_queue, so the coverage number and
-      the work queue are the same list -- the property conformed.review_queue
-      already has on the endpoint side. Never pool this into a named class to
+      the work queue are the same list, as conformed.review_queue already is
+      on the endpoint side. Never pool this into a named class to
       make one look better populated.
 
   - id: no_interventions_stated
@@ -1075,10 +1075,10 @@ resolution:
   primary_by: precedence              # lowest `precedence` wins the primary class
   tie_break: intervention_frequency   # then the class backed by most interventions
   notes: >-
-    Combination therapy is the norm, not an edge case -- a trial of
-    pembrolizumab plus chemotherapy is a checkpoint-inhibitor trial AND a
-    platinum-chemotherapy trial, and collapsing it to one would be the same
-    mistake therapeutic_areas.yaml refuses for a lung-cancer trial. Every
+    Combination therapy is the norm: a trial of pembrolizumab plus
+    chemotherapy is a checkpoint-inhibitor trial AND a platinum-chemotherapy
+    trial, and collapsing it to one would be the mistake
+    therapeutic_areas.yaml refuses for a lung-cancer trial. Every
     matched class is kept; precedence only picks which one a single-column
     `GROUP BY` gets. A query that wants the combination has the full set
     alongside it.

@@ -1,22 +1,11 @@
 """Export a human-reviewable sample of raw.design_outcomes vocabulary.
 
-Two export shapes:
-
-* `frequency` (default): a long-format CSV (field, value, frequency) -- one
-  block per field, most-frequent-first. Every value occurring `--min-frequency`
-  or more times is kept uncapped; the long tail below that threshold is
-  represented by a seeded random `--singleton-sample`, not an alphabetical
-  head, so the sample isn't silently biased toward "starts with A". A
-  `<out>_coverage.csv` sidecar records, per field, what fraction of rows the
-  kept values actually account for.
-* `rows`: one row per `raw.design_outcomes` record (nct_id, outcome_type,
-  measure, time_frame, description), seeded and optionally capped by
-  `--limit`. This is what makes measure/time_frame/description co-occurrence
-  reviewable -- the frequency blocks are independent per-field tables and
-  can't answer "what measure had this time_frame".
-
-This feeds the vocab review conversation that builds vocab/*.yaml (build
-order step 2).
+* `frequency` (default): a long-format CSV (field, value, frequency). Values
+  occurring `--min-frequency` or more times are kept uncapped; the tail is a
+  seeded random `--singleton-sample`. A `<out>_coverage.csv` sidecar records
+  what fraction of rows the kept values account for.
+* `rows`: one row per `raw.design_outcomes` record, seeded and optionally
+  capped, for reviewing measure/time_frame/description co-occurrence.
 """
 
 from __future__ import annotations
@@ -47,12 +36,6 @@ def run_vocab_sample(
     fmt: str = "frequency",
     outcome_types: tuple[str, ...] | None = None,
 ) -> dict:
-    """Write the vocab review export to `out_path`; return summary counts.
-
-    `fmt="frequency"` (default) writes the per-field distinct-value/frequency
-    CSV plus a coverage sidecar. `fmt="rows"` writes a joinable row-level
-    sample instead. See module docstring for the shape of each.
-    """
     if fmt == "rows":
         return _run_row_sample(con, seed=seed, limit=limit, out_path=out_path, outcome_types=outcome_types)
     if fmt != "frequency":
@@ -193,7 +176,7 @@ def _run_row_sample(
 ) -> dict:
     out_path = Path(out_path)
     oc_clause, oc_params = _outcome_type_clause(outcome_types)
-    where_clause = f"WHERE {oc_clause[4:]}" if oc_clause else ""  # drop the leading "AND "
+    where_clause = f"WHERE {oc_clause[4:]}" if oc_clause else ""
 
     limit_clause = "LIMIT ?" if limit and limit > 0 else ""
     params = [*oc_params, seed] + ([limit] if limit and limit > 0 else [])

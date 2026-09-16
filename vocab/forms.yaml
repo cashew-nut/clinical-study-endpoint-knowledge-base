@@ -1,4 +1,4 @@
-# Dimension: FORM -- the shape of the statistic, independent of what is measured.
+# Dimension: FORM, the shape of the statistic, independent of what is measured.
 #
 # Form answers "what kind of number is this endpoint?", never "what was measured?".
 # `Change from baseline in FEV1` and `Change from baseline in HbA1c` share a form
@@ -8,33 +8,33 @@
 #
 # `direction_rule` tells the conforming pipeline how to derive the endpoint's
 # Direction from the measurement's polarity (see directions.yaml, measurements.yaml):
-#   inherit_measurement    -- endpoint direction = measurement.default_direction
+#   inherit_measurement      endpoint direction = measurement.default_direction
 #                             (a fall in HbA1c is good, so "change from baseline in
 #                             HbA1c" is decrease_is_better)
-#   higher_count_better    -- always increase_is_better: the statistic counts people
+#   higher_count_better      always increase_is_better: the statistic counts people
 #                             who achieved something good, whatever the underlying
 #                             scale's polarity (PASI is decrease_is_better, but more
 #                             PASI75 responders is better)
-#   inherit_event_polarity -- measurement.event_polarity: harm -> decrease_is_better,
+#   inherit_event_polarity   measurement.event_polarity: harm -> decrease_is_better,
 #                             benefit -> increase_is_better
-#   time_polarity          -- measurement.event_polarity: harm -> longer_is_better
+#   time_polarity            measurement.event_polarity: harm -> longer_is_better
 #                             (later death is better), benefit -> shorter_is_better
 #                             (earlier response is better)
-#   neutral                -- no preferred direction (PK exposure, descriptive text)
+#   neutral                  no preferred direction (PK exposure, descriptive text)
 #
 # `analysable: false` marks rows that are registry boilerplate rather than an
 # endpoint with a computable value; the conforming pipeline should keep them out of
 # comparative analysis rather than force a match.
 #
-# `reference_entailed: true` (docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1) marks
-# a form whose own MEANING supplies a reference value, independent of corpus
-# convention -- "change from baseline" still means change from the participant's own
-# prior value even when the registry string omits the word "baseline". This is what
-# usdm_templates.yaml's `reference_fallback` is legal on: `endpoints vocab validate`
-# rejects a fallback on any form that is not flagged here (or whose template does not
-# render `{reference}`), the "definitional or dead" test made mechanical. It killed
-# the old form-keyed time_to_event fallback, which entailed *some* origin but not any
-# particular one -- see docs/EVENT_SEMANTICS_SPEC.md.
+# `reference_entailed: true` marks a form whose own MEANING supplies a reference
+# value, independent of corpus convention: "change from baseline" still means
+# change from the participant's own prior value even when the registry string
+# omits the word "baseline". That is what usdm_templates.yaml's
+# `reference_fallback` is legal on. `endpoints vocab validate` rejects a fallback
+# on any form not flagged here, or whose template does not render `{reference}`,
+# which makes the "definitional or dead" test mechanical. It ruled out the old
+# form-keyed time_to_event fallback, which entailed some origin but not any
+# particular one; see docs/EVENT_SEMANTICS_SPEC.md.
 
 version: 1
 dimension: form
@@ -87,7 +87,7 @@ terms:
     label: "Event-free rate at a landmark timepoint"
     definition: >-
       The proportion of participants still FREE of the event at a single named
-      horizon -- a landmark estimate, either a Kaplan-Meier point estimate or a
+      horizon: a landmark estimate, either a Kaplan-Meier point estimate or a
       crude proportion. "2-year overall survival", "3-year relapse-free survival".
     direction_rule: higher_count_better
     event_family: true
@@ -105,10 +105,11 @@ terms:
       - '^\d+[- ]?(year|month|week|day)s?\b[^.;]{0,40}\b(overall )?survival\b'
       - '\b(overall |disease-free |relapse-free |event-free |progression-free )survival (rate|at \d+)\b'
     notes: >-
-      Two deliberate boundaries. Against time_to_event: that form is the whole
-      distribution, this one a single landmark proportion -- routinely conflated in
-      registry text, different estimands, and "same measurement, different form"
-      between them is exactly what this warehouse exists to surface. Against
+      Two boundaries. Against time_to_event: that form is the whole
+      distribution and this one a single landmark proportion. They are routinely
+      conflated in registry text, they are different estimands, and "same
+      measurement, different form" between them is what this warehouse exists to
+      surface. Against
       incidence_proportion: this form counts participants who did NOT have the
       event, so more is always better; a landmark statistic that counts participants
       who DID ("30-day mortality", "5-year recurrence rate") is an
@@ -119,9 +120,9 @@ terms:
   - id: responder_proportion
     label: "Responder proportion"
     definition: >-
-      The proportion of participants meeting a pre-specified response criterion --
+      The proportion of participants meeting a pre-specified response criterion,
       almost always a threshold on an underlying continuous or categorical
-      measurement -- at or by a timepoint.
+      measurement, at or by a timepoint.
     direction_rule: higher_count_better
     typical_reference: [patient_baseline, baseline_sum_of_diameters, absolute_threshold]
     typical_scale: [percentage_of_participants, proportion]
@@ -156,7 +157,7 @@ terms:
       # none of them. `not_if_matches` keeps physiological rates and harm rates out.
       - '\b(response|remission|resection|conversion|negativity|eradication|cure|success|benefit|completion|attainment|normali[sz]ation|seroconversion|seroprotection|seroresponse|engraftment|closure|healing|continuation|adherence|compliance|retention|abstinence|reversal|survival)\s+rates?\b'
       - '\brates? of\s+(?:complete|partial|overall|objective|major|pathologic\w*|clinical|successful|technical|sustained|durable)\b'
-      # "Number of participants who achieve/attain ..." -- `number` was missing from
+      # "Number of participants who achieve/attain ...": `number` was missing from
       # the "who/that" pattern above, so only the participle form was caught.
       - '\b(proportion|percentage|percent|number) of (participants|patients|subjects) (who|that) (achiev|attain|reach|gain|respond|maintain|convert|experienc\w+ improvement)'
     not_if_matches:
@@ -195,7 +196,7 @@ terms:
     patterns:
       - '\bincidence (of|and)\b'
       - '\boccurrence of\b'
-      # Round two: "who" + any verb, not a closed verb list -- the sample has
+      # Round two: "who" plus any verb rather than a closed verb list. The sample has
       # "Number of Participants Who Discontinue Study Intervention Due to an AE",
       # "...Who Died", "...Who Required Rescue Medication". responder_proportion
       # sits ahead of this term in match_precedence and claims the achievement
@@ -214,7 +215,7 @@ terms:
   - id: proportion_of_time_in_state
     label: "Proportion of time in a state"
     definition: >-
-      The fraction of an observation window spent in a defined state -- time in
+      The fraction of an observation window spent in a defined state: time in
       range, percentage of days with a symptom, time at target.
     direction_rule: inherit_measurement
     typical_reference: [absolute_threshold]
@@ -258,7 +259,7 @@ terms:
       - '\bchanges? in\b'
     notes: >-
       Do not match this form when the string says "percent change" / "percentage
-      change" / "relative change" -- percent_change_from_baseline takes precedence
+      change" or "relative change": percent_change_from_baseline takes precedence
       (see match_precedence at the foot of this file).
 
   - id: percent_change_from_baseline
@@ -313,7 +314,7 @@ terms:
   - id: shift_from_baseline
     label: "Shift from baseline (category transition)"
     definition: >-
-      Movement between ordered categories relative to baseline -- normal to
+      Movement between ordered categories relative to baseline: normal to
       abnormal, CTCAE grade shifts, severity-band transitions. The classic safety
       "shift table" endpoint.
     direction_rule: inherit_event_polarity
@@ -358,8 +359,8 @@ terms:
     notes: >-
       Where a measure names a quantity and a timepoint but no comparison
       ("HbA1c at Week 40"), this is the correct form. Where it names only the
-      quantity ("HbA1c"), use not_stated instead -- the difference matters because
-      the second case is unresolved, not resolved-as-a-level.
+      quantity ("HbA1c"), use not_stated instead, because the second case is
+      unresolved rather than resolved as a level.
 
   - id: auc_over_time
     label: "Area under the curve"
@@ -387,7 +388,7 @@ terms:
     label: "Event count"
     definition: >-
       The number of events per participant over a window, with no person-time
-      denominator -- number of seizures, number of injections, number of
+      denominator: number of seizures, number of injections, number of
       exacerbations.
     direction_rule: inherit_event_polarity
     event_family: true
@@ -410,7 +411,7 @@ terms:
   - id: event_rate
     label: "Event rate (per person-time)"
     definition: >-
-      Events per unit of person-time -- annualised rates, exacerbations per
+      Events per unit of person-time: annualised rates, exacerbations per
       patient-year, bleeds per year.
     direction_rule: inherit_event_polarity
     event_family: true
@@ -433,7 +434,7 @@ terms:
   - id: annualized_rate_of_change
     label: "Annualised rate of change (slope)"
     definition: >-
-      The slope of a measurement over time, expressed per year -- rate of decline in
+      The slope of a measurement over time, expressed per year: rate of decline in
       FVC or eGFR, annualised change in an imaging parameter.
     direction_rule: inherit_measurement
     typical_reference: [patient_baseline]
@@ -457,7 +458,7 @@ terms:
     label: "Event-free days"
     definition: >-
       A count of days spent free of a defined harm, or alive and free of it, over a
-      fixed window -- "ventilator-free days to day 28", "days alive and out of
+      fixed window: "ventilator-free days to day 28", "days alive and out of
       hospital", "seizure-free days". A count, not a proportion and not a duration
       to a single event: participants who die are conventionally assigned zero.
     direction_rule: higher_count_better
@@ -487,7 +488,7 @@ terms:
     label: "Correlation / agreement"
     definition: >-
       The statistical association between two quantities rather than the value of
-      either -- "correlation between FTT-PET imaging and variant allele frequency",
+      either: "correlation between FTT-PET imaging and variant allele frequency",
       "agreement between central and local read", "concordance of X with Y".
     direction_rule: neutral
     typical_scale: [correlation_coefficient, proportion]
@@ -503,7 +504,7 @@ terms:
       - '\b(sensitivity and specificity|positive predictive value|negative predictive value|AUROC|C-statistic)\b'
     notes: >-
       Small (well under 1% of rows) but worth its own term rather than `not_stated`,
-      because these strings otherwise match a substantive form on their operands --
+      because these strings otherwise match a substantive form on their operands:
       "Correlation between X and change from baseline in Y" reads as
       `change_from_baseline` and would be pooled with real change endpoints. Placed
       immediately after `descriptive` in match_precedence so it claims the string
@@ -513,7 +514,7 @@ terms:
   - id: not_stated
     label: "Form not stated"
     definition: >-
-      A specific measurement is named but the registry text gives no form -- a bare
+      A specific measurement is named but the registry text gives no form: a bare
       instrument or analyte name such as "HbA1c", "PASI", "6 Minute Walk Test".
     direction_rule: inherit_measurement
     synonyms: []
@@ -522,15 +523,15 @@ terms:
       Roughly a third of sampled `measure` strings are bare instrument names. This
       is a legitimate conformed state, not a failure: the measurement, therapeutic
       area, and (usually) the timepoint still conform. The conforming pipeline
-      SHOULD attempt to upgrade this from `time_frame` -- a baseline_to_timepoint
-      pattern implies change_from_baseline, a cumulative_window implies a level or
-      an incidence -- and MUST record that inference in match_method rather than
-      passing it off as an exact match.
+      SHOULD attempt to upgrade this from `time_frame`, where a
+      baseline_to_timepoint pattern implies change_from_baseline and a
+      cumulative_window implies a level or an incidence, and MUST record that
+      inference in match_method rather than passing it off as an exact match.
 
   - id: descriptive
     label: "Descriptive / non-specific"
     definition: >-
-      Registry boilerplate that names no computable quantity -- "Safety and
+      Registry boilerplate that names no computable quantity: "Safety and
       Tolerability", "Exploratory Assessment", "Immunogenicity", "Quality of life
       assessment".
     direction_rule: neutral
@@ -591,7 +592,7 @@ disambiguation:
     why: >-
       Both count participants meeting a condition and both are written as
       "N of participants with X", so no wording rule separates them cleanly. What
-      separates them is whether X is a harm -- which the measurement knows and the
+      separates them is whether X is a harm, which the measurement knows and the
       form cannot. Getting this wrong inverts Direction on every safety endpoint in
       the corpus, which is the largest single group.
     lexical_hint: >-
@@ -621,8 +622,8 @@ coverage_on_sample:
   # cascade. Measured on endpoint_rows.csv, 1,000 joined outcome rows.
   matched_from_measure_or_description_pct: 76.0
   # The residual is `not_stated`, which is a legitimate conformed state, not a
-  # miss: a bare instrument name ("PASI", "HbA1c", "6MWT") genuinely states no
-  # form, and the measurement, therapeutic area and timepoint still conform.
+  # miss: a bare instrument name ("PASI", "HbA1c", "6MWT") states no form, and
+  # the measurement, therapeutic area and timepoint still conform.
   distribution_pct:
     change_from_baseline: 18.2
     time_to_event: 10.4

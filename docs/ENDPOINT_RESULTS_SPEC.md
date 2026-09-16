@@ -22,16 +22,16 @@ Read alongside:
 
 ---
 
-## What this adds, in one paragraph
+## What this adds
 
 `conformed.endpoints` made registry endpoints groupable. This attaches what the
-trials in each group actually found. Five `raw.outcome_*` tables land the
-results section both backends were already fetching; `conformed.endpoint_results`
-conforms the reported titles through the *existing* engine and links them back
-to the planned endpoints; `conformed.endpoint_dispersion` turns the several
-things registries call "dispersion" into one estimated standard deviation and
-records how; and `endpoints stats` reports the resulting distribution with the
-denominator that makes it honest.
+trials in each group found. Five `raw.outcome_*` tables land the results
+section both backends were already fetching. `conformed.endpoint_results`
+conforms the reported titles through the existing engine and links them back to
+the planned endpoints. `conformed.endpoint_dispersion` turns the several things
+registries call dispersion into one estimated standard deviation and records
+how. `endpoints stats` reports the resulting distribution with its
+denominator.
 
 ## The five raw tables
 
@@ -43,8 +43,8 @@ denominator that makes it honest.
 | `raw.outcome_analyses` | one statistical comparison | `analysis_id` |
 | `raw.baseline_measurements` | one baseline characteristic × arm | `(baseline_id, group_key)` |
 
-Three decisions carry from the existing ingest layer and were not relitigated:
-both backends land the same shape, `ensure_table` reconciles the schema rather
+Three decisions carry over from the existing ingest layer: both backends land
+the same shape, `ensure_table` reconciles the schema rather
 than dropping and refetching, and a re-pull replaces a study's child rows
 rather than appending to them.
 
@@ -195,21 +195,19 @@ measurement=fev1, source=outcome
 No SD from: dispersion_type_unrecognised 1
 ```
 
-The shape of that output is the argument.
+Three properties of that output:
 
-**One block per (form, unit) group, always.** The SD of FEV1 *change from
-baseline* is not the SD of FEV1, and the SD in litres is not the SD in
+**One block per (form, unit) group, always.** The SD of FEV1 change from
+baseline is not the SD of FEV1, and the SD in litres is not the SD in
 millilitres. Rather than refuse to answer without three flags, `stats` groups
-and reports each group separately; `--form` and `--scale` narrow, they do not
+and reports each group separately, so `--form` and `--scale` narrow rather than
 enable. The grouping unit is the converted one where `scales.yaml` declares a
-conversion and the reported one where it does not — and because `si_scale_id`
-is a function of `scale_id`, a group never mixes converted and unconverted
-values.
+conversion and the reported one where it does not. Because `si_scale_id` is a
+function of `scale_id`, a group never mixes converted and unconverted values.
 
-**The coverage line is not decoration.** It is the share of *conformed studies
-for that endpoint* that reported a usable dispersion. Excluding derived
-estimates with `--only-reported` shrinks the numerator and leaves the
-denominator alone, which is the whole point.
+**The coverage line is the share of conformed studies for that endpoint** that
+reported a usable dispersion. Excluding derived estimates with
+`--only-reported` shrinks the numerator and leaves the denominator alone.
 
 **The method mix is never collapsed.** A library built mostly out of
 range-derived estimates is a different object from one built out of reported
@@ -224,9 +222,9 @@ registries do not report. Nothing substitutes one for the other silently.
 `--analyses` (D9) reports effect sizes, p-values and non-inferiority margins
 instead of the SD distribution. Ratio-scale effects (hazard, odds, risk ratios)
 pool on the effect alone because they are dimensionless whatever the endpoint
-was measured in; difference-scale effects are converted to the group's unit
+was measured in. Difference-scale effects are converted to the group's unit
 before pooling, because a mean difference of 120 mL and one of 0.23 L are the
-same size and their unconverted median is a number about nothing. A censored
+same size and their unconverted median means nothing. A censored
 p-value (`<0.001`) contributes its bound and is counted separately from an
 observed one. An NI margin is read out of the free-text description only where
 the word "margin" introduces exactly one candidate number; where it does not,
@@ -306,17 +304,15 @@ carried through as raw text on both the planned and the reported side and is
 not a structured axis, so `stats` cannot narrow to a per-protocol or
 enrichment population. An SD pooled across a severe-disease enrichment
 population and a broad one is pooled across a real difference. That is a
-limitation of the vocabulary, not of this tier, and it is stated rather than
-papered over.
+limitation of the vocabulary rather than of this tier.
 
-The honest reading of a `stats` block: *across N trials that reported a usable
-dispersion for this endpoint in this unit, arm-level SD had median X and
-interquartile range Y–Z; here is the coverage, and here is how each estimate
-was derived.* Every clause is load-bearing.
+A `stats` block reads as: across N trials that reported a usable dispersion for
+this endpoint in this unit, arm-level SD had median X and interquartile range
+Y–Z, with this coverage and these derivation methods.
 
 ## Standing constraints
 
-Decisions a future change should not quietly undo.
+Decisions a future change should not undo without replacing them.
 
 * **Results ingestion stays a thin fetch-and-land**, source-agnostic across
   both backends. No conforming in the ingest layer.
@@ -326,10 +322,10 @@ Decisions a future change should not quietly undo.
 * **Registry enumerations are landed verbatim and folded downstream.** The
   ingest layer never decides which values are allowed.
 * **Every derived statistic records how it was derived.** `sd_method`,
-  `sd_is_derived`, `sd_is_approximate` and the inputs are as non-negotiable as
+  `sd_is_derived`, `sd_is_approximate` and the inputs are recorded, as
   `match_method` and `confidence` are on the conformance side.
 * **Every aggregate ships its denominator.** A `stats` output without a
-  coverage line is a defect, not a terse convenience.
+  coverage line is a defect.
 * **Never pool across dispersion types, units, timepoints, or change-vs-raw
   scores** without an explicit, recorded conversion. A `sd_estimate` and a
   `sd_estimate_si` are separate columns so that pooling is a decision.

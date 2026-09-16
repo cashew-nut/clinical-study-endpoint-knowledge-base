@@ -3,20 +3,19 @@
 > **Status: implemented.** Lives in
 > `src/clinical_endpoints/vocab/sample.py`, `src/clinical_endpoints/ta/`, both
 > ingestion backends, and `endpoints vocab sample` / `pull --ta` /
-> `ta diff-tree`. One measurement is still owed -- see
+> `ta diff-tree`. One measurement is still owed; see
 > [Still owed](#still-owed).
 
 Written after the first vocabulary round, when two defects blocked conforming:
 the review artifact the vocabulary was built from was biased and unjoinable,
-and the therapeutic-area mapping had nothing to map. Both are fixed; this file
-records what the fix is and why it is shaped that way, because both decisions
-are easy to undo by accident.
+and the therapeutic-area mapping had nothing to map. Both are fixed. This file
+records what each fix is and why it is shaped that way.
 
 Read alongside:
 
-* [`../vocab/README.md`](../vocab/README.md) -- the vocabulary schema and its
+* [`../vocab/README.md`](../vocab/README.md) — the vocabulary schema and its
   known gaps
-* [`USAGE.md`](USAGE.md) -- how to run `vocab sample`, `pull --ta` and
+* [`USAGE.md`](USAGE.md) — how to run `vocab sample`, `pull --ta` and
   `ta diff-tree`
 
 ---
@@ -25,24 +24,24 @@ Read alongside:
 
 `endpoints vocab sample` originally kept the **500 most frequent distinct
 values per field**, ordered `frequency DESC, value ASC`. Three consequences,
-all of which bit during the first vocabulary round:
+all of which appeared during the first vocabulary round:
 
 1. **The singleton tail was alphabetically truncated.** In a 500-study sample
    the `measure` block held every value occurring twice or more (347 of them)
-   plus only 153 of the frequency-1 values -- and those 153 stopped at "Ac…".
-   The long tail of one-off endpoint wordings, which is where most rows
-   actually live, was unrepresented and unrepresentable.
+   plus only 153 of the frequency-1 values, and those 153 stopped at "Ac…".
+   The long tail of one-off endpoint wordings, where most rows live, was
+   unrepresented and unrepresentable.
 2. **Coverage was invisible.** The 500 kept `measure` values covered 1,175
    occurrences, while the `time_frame` block alone showed ≥4,014 outcome rows.
    Roughly three quarters of endpoint rows had no representation in the review
    artifact, and nothing in the CSV or the CLI output said so.
 3. **The three field blocks could not be joined.** `measure`, `time_frame` and
    `description` were independent frequency tables, so "what measure had the
-   time_frame 'Baseline through Week 52'?" was unanswerable -- which is exactly
-   the question that settles whether a baseline-anchored window is a
-   change-from-baseline assessment or a safety collection period. That
-   ambiguity was resolved by linguistic convention rather than by evidence,
-   because the evidence was not in the artifact.
+   time_frame 'Baseline through Week 52'?" was unanswerable. That is the
+   question which settles whether a baseline-anchored window is a
+   change-from-baseline assessment or a safety collection period, and it was
+   resolved by linguistic convention rather than by evidence, because the
+   evidence was not in the artifact.
 
 ### What was built
 
@@ -55,8 +54,8 @@ all of which bit during the first vocabulary round:
 | `--seed N` | 42 | seed for that sample, so re-running is reproducible |
 | `--limit N` | 0 | hard cap per field; 0 = unlimited, kept for backwards compatibility |
 
-The seeded random singleton sample is the point: an alphabetical head is biased
-in a way that silently shapes the vocabulary, a seeded random sample is not.
+The singleton sample is seeded and random because an alphabetical head is
+biased in a way that shapes the vocabulary.
 
 **Coverage reporting**, in the CLI output and as a machine-readable
 `<out>_coverage.csv` sidecar, so the next vocabulary round can diff it against
@@ -67,16 +66,16 @@ field         distinct_total  distinct_kept  rows_total  rows_covered  pct_rows_
 measure                4812            647        4211          1583             37.6
 ```
 
-**Row-level export** -- `--format rows`, one row per `raw.design_outcomes`
+**Row-level export**, `--format rows`, one row per `raw.design_outcomes`
 record (`nct_id, outcome_type, measure, time_frame, description`), sampled with
-the same `--seed` and capped by `--limit`. This is what makes
-measure↔time_frame↔description co-occurrence reviewable, and it is what the
-second vocabulary round leaned on most.
+the same `--seed` and capped by `--limit`. It makes the co-occurrence of
+measure, time_frame and description reviewable, and the second vocabulary round
+leaned on it most.
 
-**`--outcome-type primary,secondary,other`** (default: all), because primary
-outcomes are where efficacy endpoints concentrate.
+**`--outcome-type primary,secondary,other`**, defaulting to all, because
+primary outcomes are where efficacy endpoints concentrate.
 
-Round two was rebuilt against this sampler, over 13,542 outcome rows; the
+Round two was rebuilt against this sampler over 13,542 outcome rows. The
 resulting coverage figures are in [`../vocab/README.md`](../vocab/README.md).
 
 ## 2. Therapeutic areas: the mapping had nothing to map
@@ -93,7 +92,7 @@ assigned a therapeutic area.
 ```
 raw.browse_conditions      nct_id, mesh_term, mesh_term_normalised, mesh_type
 raw.browse_interventions   nct_id, mesh_term, mesh_term_normalised, mesh_type
-raw.conditions             nct_id, name          -- sponsor free text, not MeSH
+raw.conditions             nct_id, name          # sponsor free text, not MeSH
 ```
 
 AACT joins `ctgov.browse_conditions` / `browse_interventions` / `conditions` to
@@ -101,7 +100,7 @@ AACT joins `ctgov.browse_conditions` / `browse_interventions` / `conditions` to
 backend reads them out of the study payload it already fetches
 (`derivedSection.conditionBrowseModule.meshes[]`,
 `interventionBrowseModule.meshes[]`,
-`protocolSection.conditionsModule.conditions[]`) -- no extra requests.
+`protocolSection.conditionsModule.conditions[]`), with no extra requests.
 
 **Tree numbers, which are backend-specific.** AACT publishes the MeSH thesaurus
 with tree numbers, pulled into `raw.mesh_terms`. The CT.gov API exposes only
@@ -111,71 +110,70 @@ e.g. `BC04` = Neoplasms), landed in
 a one-character-deep tree prefix, so they feed the same `tree_prefixes` layer
 at reduced precision.
 
-**`raw._pull_log.source_tables`** reflects what was actually pulled, which now
-differs by backend -- the API backend has no `mesh_terms`.
+**`raw._pull_log.source_tables`** reflects what was pulled, which differs by
+backend: the API backend has no `mesh_terms`.
 
 **The resolver** (`src/clinical_endpoints/ta/resolver.py`) reads the
 `vocab.ta_mesh_*` tables that `vocab validate` writes, and applies the layers in
-the order `ta_mesh_mapping.yaml` documents, first hit winning *per condition or
-intervention*:
+the order `ta_mesh_mapping.yaml` documents, first hit winning per condition or
+intervention:
 
-1. `intervention_rules` against `raw.browse_interventions` -- this is what makes
-   a vaccine trial a vaccine trial, since vaccine trials code their *condition*
-   as the infection they prevent, never as "Vaccines"
-2. `term_overrides` -- exact descriptor match on `mesh_term_normalised`
-3. `tree_prefixes` -- longest prefix wins
-4. `term_patterns` -- regex on the descriptor, in file order
+1. `intervention_rules` against `raw.browse_interventions`, which is what makes
+   a vaccine trial a vaccine trial, since vaccine trials code their condition
+   as the infection they prevent rather than as "Vaccines"
+2. `term_overrides`, an exact descriptor match on `mesh_term_normalised`
+3. `tree_prefixes`, longest prefix wins
+4. `term_patterns`, a regex on the descriptor, in file order
 5. `defaults`
 
 It writes `conformed.study_therapeutic_area (nct_id, ta_id, rule_layer,
-matched_on, is_primary)`, keeping **all** matched areas -- a lung-cancer trial
-is oncology *and* respiratory -- with `is_primary` set by
+matched_on, is_primary)`, keeping **all** matched areas, so a lung-cancer trial
+is both oncology and respiratory. `is_primary` is set by
 `therapeutic_areas.yaml` precedence, lowest wins, tie-broken by number of
 matching conditions per `resolution.tie_break`.
 
-**`pull --ta`** filters at pull time on both backends -- *before* `--limit`
-truncates, not after, since truncating first would starve a smaller area of
-matches it actually has (registrations skew toward whichever conditions
-dominate trial activity generally). Both backends resolve each candidate
-study with `resolve_study_ta_matches` (the same per-study match `ta/resolver.py`
-uses to write `conformed.study_therapeutic_area`) while scanning, up to a cap
-(`MAX_PAGES_TA_FILTERED` / `TA_MAX_SCANNED`) -- see `docs/USAGE.md`'s
-"Therapeutic areas" section. `pull` resolves therapeutic areas for every
-pulled study whether or not `--ta` is given.
+**`pull --ta`** filters at pull time on both backends, before `--limit`
+truncates rather than after, since truncating first would starve a smaller area
+of matches it actually has, because registrations skew toward whichever
+conditions dominate trial activity generally. Both backends resolve each
+candidate study while scanning with `resolve_study_ta_matches`, the same
+per-study match `ta/resolver.py` uses to write
+`conformed.study_therapeutic_area`, up to a cap (`MAX_PAGES_TA_FILTERED` or
+`TA_MAX_SCANNED`). See the "Therapeutic areas" section of
+[`USAGE.md`](USAGE.md). `pull` resolves therapeutic areas for every pulled
+study whether or not `--ta` is given.
 
 ## 3. Validating the tree prefixes against real data
 
-The reason §2 matters beyond plumbing. `endpoints ta diff-tree` runs **the
-tree-prefix layer alone** and **the regex layer alone** over every pulled
-study's conditions and reports every disagreement, most frequent first:
+`endpoints ta diff-tree` runs **the tree-prefix layer alone** and **the regex
+layer alone** over every pulled study's conditions and reports every
+disagreement, most frequent first:
 
 ```
 mesh_term, tree_number, ta_from_tree, ta_from_pattern
 ```
 
 Each disagreement is either a wrong tree prefix in `ta_mesh_mapping.yaml` or a
-wrong regex -- both worth fixing, and this diff is the only way to find them
-without a MeSH expert. The tool reports; it does not "fix" the YAML to make the
-diff empty.
+wrong regex. The tool reports rather than editing the YAML to empty the diff.
 
-Worth particular attention when the diff is first run for real: the MeSH 2021
-urogenital restructure noted in the file, where the old `C12` (male) / `C13`
-(female + pregnancy) split was merged into `C12`. Both legacy and current
-prefixes are listed, and which one the live thesaurus uses is still unconfirmed.
+One case to watch when the diff is first run for real is the MeSH 2021
+urogenital restructure noted in the file, where the old `C12` (male) and `C13`
+(female plus pregnancy) split was merged into `C12`. Both legacy and current
+prefixes are listed, and which one the live thesaurus uses is unconfirmed.
 
 ## Still owed
 
-All of the above runs; two things can only be answered against a live pull, and
-**neither ingestion backend has been reachable from the build sandbox** (AACT
-port 5432 closed, `clinicaltrials.gov` unreachable) -- the same constraint
-`vocab/README.md`'s "Known gaps" records:
+All of the above runs. Two things can only be answered against a live pull, and
+**neither ingestion backend has been reachable from the build sandbox**, with
+AACT port 5432 closed and `clinicaltrials.gov` unreachable. This is the same
+constraint `vocab/README.md` records under "Known gaps":
 
 1. **The tree-vs-pattern disagreement list**, and the specific
    `ta_mesh_mapping.yaml` edits it implies.
 2. **Whether `mesh_terms.tree_number` actually exists in AACT**, and what the
    `browse_conditions` schema really is. `ta_mesh_mapping.yaml`'s `caveats`
    block should be updated either way. If `mesh_terms` has no tree number, the
-   honest fallback is the descriptor and regex layers -- not an invented tree
+   fallback is the descriptor and regex layers rather than an invented tree
    source.
 
 A third check is cheap and worth doing on the first real pull: the
@@ -187,9 +185,9 @@ plausible Phase 3 mix, the mapping is wrong somewhere.
 These held while this spec was being built and still hold:
 
 * **Vocabulary terms do not come from coverage pressure.** An unmatched or
-  low-confidence endpoint goes to the review queue; it never silently becomes a
-  new vocab term. New terms come from a human review round against a fresh
-  sample.
+  low-confidence endpoint goes to the review queue and never becomes a new
+  vocab term on its own. New terms come from a human review round against a
+  fresh sample.
 * **The sampler is not a place to fix the vocabulary.** If coverage is bad, the
   answer is a review round, not a narrower sample.
 * **The tree diff reports, it does not reconcile.** Editing the YAML to empty

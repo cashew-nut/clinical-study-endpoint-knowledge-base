@@ -1,7 +1,5 @@
-"""D4: the results section lands in the same raw.outcome_* shape from both
-backends. The tests that matter most here are the ones that pin the two
-backends to each other -- the whole point of the shape is that nothing
-downstream can tell which one a row came from."""
+"""The results section lands in the same `raw.outcome_*` shape from both
+backends, so nothing downstream can tell which one a row came from."""
 
 from __future__ import annotations
 
@@ -28,9 +26,9 @@ from clinical_endpoints.ingest.results import (
 def _study_with_results(nct_id: str = "NCT9001") -> dict:
     """A study record shaped like CT.gov API v2's, with a results section.
 
-    Deliberately mixed: one continuous outcome reporting mean +/- SD, one
-    time-to-event outcome reporting a median with a 95% CI, an analysis of
-    each, and one baseline characteristic.
+    One continuous outcome reporting mean +/- SD, one time-to-event outcome
+    reporting a median with a 95% CI, an analysis of each, and one baseline
+    characteristic.
     """
     return {
         "hasResults": True,
@@ -221,9 +219,8 @@ def test_extract_ctgov_results_lands_every_grain():
 
 
 def test_extract_ctgov_results_keeps_enumerations_verbatim():
-    """The whole reason `param_type`/`dispersion_type` are VARCHAR and not an
-    enum: this environment cannot confirm the registry's value sets, so the
-    ingest layer must not be the thing that decides what is allowed."""
+    """`param_type` and `dispersion_type` are VARCHAR rather than enums: the
+    ingest layer does not decide which registry values are allowed."""
     rows = extract_ctgov_results(_study_with_results())
     measures = {row[4]: row for row in rows["outcome_measures"]}
     pfs = measures["Progression-Free Survival"]
@@ -324,8 +321,8 @@ def test_repulling_a_study_replaces_its_results_rather_than_duplicating_them(
 
 
 def test_a_study_that_loses_its_results_loses_its_rows(tmp_path, monkeypatch):
-    """A scoped delete-then-insert, like every other child table: a re-pull of
-    a study whose results were withdrawn must not leave the old ones behind."""
+    """A scoped delete-then-insert, like every other child table, so a re-pull
+    of a study whose results were withdrawn leaves none behind."""
     from clinical_endpoints.db import connect
 
     con = connect(tmp_path / "warehouse.duckdb")
@@ -351,8 +348,7 @@ def test_aact_pull_lands_the_same_shape(fake_aact_con):
 
 
 def test_both_backends_agree_on_the_columns_they_land(fake_aact_con, tmp_path, monkeypatch):
-    """The source-agnostic promise, checked rather than asserted in a comment:
-    for each of the five tables, both backends produce the identical column
+    """For each of the five tables, both backends produce the identical column
     list in the identical order."""
     aact_backend.run_pull(fake_aact_con, PullFilters(phases=("3",), limit=10))
     api_con = _ctgov_warehouse(tmp_path, monkeypatch, [_study_with_results()])
@@ -368,8 +364,8 @@ def test_both_backends_agree_on_the_columns_they_land(fake_aact_con, tmp_path, m
 
 def test_the_sql_and_python_outcome_keys_agree(fake_aact_con):
     """`outcome_id_sql` and `outcome_id` are two spellings of one key. If they
-    drift, the same study pulled through the two backends gets two different
-    ids and every link table downstream silently doubles."""
+    drift, the same study pulled through the two backends gets two ids and
+    every link table downstream doubles."""
     aact_backend.run_pull(fake_aact_con, PullFilters(phases=("3",), limit=10))
     rows = fake_aact_con.execute(
         "SELECT outcome_id, nct_id, outcome_type, title, time_frame FROM raw.outcome_measures"
@@ -380,7 +376,7 @@ def test_the_sql_and_python_outcome_keys_agree(fake_aact_con):
 
 
 def test_the_sql_and_python_keys_agree_on_whitespace_and_case(fake_aact_con):
-    """The two spellings have to agree on the *edges*: a title with a trailing
+    """The two spellings have to agree on the edges: a title with a trailing
     newline, and the two backends' different casing of `outcome_type`."""
     fake_aact_con.execute(
         """
@@ -397,9 +393,7 @@ def test_the_sql_and_python_keys_agree_on_whitespace_and_case(fake_aact_con):
 
 
 def test_aact_degrades_when_the_results_tables_are_missing(fake_aact_con):
-    """AACT is an upstream this project cannot reach from its build
-    environment. A missing results table has to cost the results section, not
-    the pull."""
+    """A missing results table costs the results section, not the pull."""
     fake_aact_con.execute("DROP TABLE aact.ctgov.outcomes")
     result = aact_backend.run_pull(fake_aact_con, PullFilters(phases=("3",), limit=10))
     assert "ctgov.outcomes" in result["results_warning"]
@@ -439,8 +433,8 @@ def test_aact_reads_non_inferiority_from_the_type_string(fake_aact_con):
 
 
 def test_results_tables_survive_a_schema_migration(tmp_path):
-    """`ensure_table` reconciles rather than drops -- the same guarantee the
-    protocol tables already have, now that five more tables depend on it."""
+    """`ensure_table` reconciles rather than drops, as it does for the
+    protocol tables."""
     from clinical_endpoints.ingest.upsert import ensure_table
 
     con = duckdb.connect(str(tmp_path / "warehouse.duckdb"))

@@ -15,11 +15,11 @@
 # So the mapping is written in three layers, applied in this order, first hit wins
 # per condition:
 #
-#   1. term_overrides  -- exact descriptor match. Highest priority. This is where
+#   1. term_overrides    exact descriptor match. Highest priority. This is where
 #                         multi-tree ambiguity gets settled by hand.
-#   2. tree_prefixes   -- MeSH tree-number prefix. Used when tree numbers are
+#   2. tree_prefixes     MeSH tree-number prefix. Used when tree numbers are
 #                         joinable (AACT) or when a branch abbreviation is enough.
-#   3. term_patterns   -- regex on the descriptor string. The fallback that keeps
+#   3. term_patterns     regex on the descriptor string. The fallback that keeps
 #                         the mapping working on the CT.gov backend and on
 #                         descriptors the tree table does not cover.
 #
@@ -27,7 +27,7 @@
 # all; therapeutic_areas.yaml `precedence` picks the primary. Do not collapse to
 # one area here.
 #
-# IMPORTANT -- vaccines are not derivable from conditions. A meningococcal vaccine
+# IMPORTANT: vaccines are not derivable from conditions. A meningococcal vaccine
 # trial codes its condition as "Meningococcal Infections" (an infection), never as
 # "Vaccines". The vaccines area must come from the INTERVENTION MeSH codes, so it
 # has its own block below and is applied before the condition layers.
@@ -84,7 +84,7 @@ term_overrides:
   "Myelodysplastic Syndromes": oncology
   "Myeloproliferative Disorders": oncology
 
-  # Eye complications of systemic disease -- treated by ophthalmologists.
+  # Eye complications of systemic disease, treated by ophthalmologists.
   "Diabetic Retinopathy": ophthalmology
   "Macular Edema": ophthalmology
   "Diabetic Macular Edema": ophthalmology
@@ -115,7 +115,7 @@ term_overrides:
   "Osteoarthritis, Knee": musculoskeletal_pain
   "Osteoporosis": musculoskeletal_pain
 
-  # Lung involvement of a rheumatological disease -- the trials are respiratory.
+  # Lung involvement of a rheumatological disease; the trials are respiratory.
   "Lung Diseases, Interstitial": respiratory
   "Idiopathic Pulmonary Fibrosis": respiratory
   "Scleroderma, Diffuse": rheumatology
@@ -124,7 +124,7 @@ term_overrides:
 
   # ROUND TWO. The interstitial pneumonias. `term_patterns` lists infectious_disease
   # ahead of respiratory and both claim the word "pneumonia", so every idiopathic
-  # interstitial pneumonia was routing to infectious_disease -- a non-infectious
+  # interstitial pneumonia was routing to infectious_disease, a non-infectious
   # fibrosing lung disease filed under infection. Overriding the specific headings
   # is the safe fix; reordering the two patterns, or removing "pneumonia" from the
   # infectious rule, would misroute genuine community-acquired and ventilator-
@@ -153,7 +153,7 @@ term_overrides:
 
   # ROUND TWO. Dual-coded in MeSH (C12 urogenital AND C19 endocrine) and genuinely
   # both. Resolved to nephrology because that is who runs the trials and what the
-  # endpoints measure -- eGFR slope, albuminuria, time to kidney failure.
+  # endpoints measure: eGFR slope, albuminuria, time to kidney failure.
   "Diabetic Nephropathies": nephrology_urology
   "Diabetes Insipidus": metabolic_endocrine
 
@@ -210,7 +210,7 @@ term_overrides:
   "Purpura, Thrombocytopenic, Idiopathic": haematology
   "Anemia, Aplastic": haematology
 
-  # Infection -- these code under organ systems as well.
+  # Infection; these code under organ systems as well.
   "HIV Infections": infectious_disease
   "Hepatitis B, Chronic": infectious_disease
   "Hepatitis C, Chronic": infectious_disease
@@ -270,7 +270,7 @@ term_overrides:
 # `ta` precedence in therapeutic_areas.yaml resolves what remains.
 #
 # CAVEAT WORTH KNOWING BEFORE TRUSTING THESE: MeSH restructured the urogenital
-# branches in 2021 -- the old C12 (Male Urogenital) / C13 (Female Urogenital and
+# branches in 2021: the old C12 (Male Urogenital) and C13 (Female Urogenital and
 # Pregnancy Complications) were merged into C12 (Urogenital Diseases). Both the
 # legacy and current prefixes are listed so a mapping built against either
 # thesaurus version resolves. The `mesh_terms` table's tree numbers should be spot-
@@ -385,11 +385,12 @@ caveats:
     are `term_overrides` entries plus three narrowed `term_patterns` regexes; no
     pattern was REORDERED, because reordering trades one misroute for another.
   - >-
-    TWO DELIBERATE DIVERGENCES FROM MeSH, both pre-existing and both kept after
-    review. (1) "Hypertension, Pulmonary" and pulmonary arterial hypertension are
-    C14 (cardiovascular) in MeSH but map here to `respiratory`: PAH trials sit in
-    pulmonary vascular programmes and their endpoints -- 6-minute walk distance,
-    WHO functional class, time to clinical worsening -- are the respiratory set.
+    TWO DIVERGENCES FROM MeSH, both pre-existing and both kept after review.
+    (1) "Hypertension, Pulmonary" and pulmonary arterial hypertension are C14
+    (cardiovascular) in MeSH but map here to `respiratory`: PAH trials sit in
+    pulmonary vascular programmes and their endpoints, 6-minute walk distance,
+    WHO functional class and time to clinical worsening, are the respiratory
+    set.
     (2) "Sepsis" is C01 (infections) in MeSH but maps to
     `anaesthesia_critical_care`: sepsis trials are ICU trials, and grouping them
     with antimicrobial trials would put two unrelated endpoint families in one
@@ -405,7 +406,7 @@ caveats:
   - >-
     CONFIRMED, not just suspected: per the AACT data dictionary checked for this
     project (2026-08-19), `ctgov.mesh_terms` and `ctgov.mesh_headings` both carry
-    ZERO ROWS in the live AACT database today -- this is independent of whatever
+    ZERO ROWS in the live AACT database today, independent of whatever
     columns those tables have, so no tree-number join is available from AACT right
     now regardless of column names. `ingest/aact.py`'s `_pull_mesh_terms` still
     introspects `ctgov.mesh_terms`'s real columns at pull time (via
@@ -414,27 +415,27 @@ caveats:
     automatically the day AACT populates that table, with no code change needed.
     Until then the `tree_prefixes` layer only fires from CT.gov API pulls, via the
     coarse `browseBranches` abbreviation (one top-level tree letter+digits per
-    study, not per condition) -- see `resolver.py`'s `_branch_abbrev_to_tree_prefix`.
+    study, not per condition); see `resolver.py`'s `_branch_abbrev_to_tree_prefix`.
     Layers 1 (`term_overrides`) and 3 (`term_patterns`) still stand alone, so the
     mapping degrades to descriptor matching rather than breaking.
   - >-
     `browse_conditions`'s real AACT schema (per the data dictionary provided for
-    this project): `nct_id`, `mesh_term` -- no `mesh_type` column, and no
+    this project): `nct_id` and `mesh_term`, with no `mesh_type` column and no
     `downcase_mesh_term` column was confirmed either (unverifiable from the sandbox,
     which cannot reach AACT). `ingest/aact.py` computes `mesh_term_normalised`
     itself (`lower(trim(mesh_term))`) rather than trusting a column name that
     couldn't be verified, and sets `mesh_type` to the literal `'condition'` /
     `'intervention'` per source table rather than reading it from AACT (both tables
-    -- `browse_conditions` and `browse_interventions` -- otherwise carry the same
+    `browse_conditions` and `browse_interventions` otherwise carry the same
     shape). The AACT data dictionary confirms both tables are "many" rows per
     study (633,066 / 255,332 total), i.e. NLM's per-study MeSH assignment list, one
-    row per assigned term -- matching this file's assumption throughout.
+    row per assigned term, matching this file's assumption throughout.
   - >-
     `tree_prefixes`'s longest-prefix-wins matching, and the diff tool
     (`ta/resolver.py`'s `diff_tree_vs_pattern`, `endpoints ta diff-tree`) that
     compares this layer against `term_patterns` per §3 of
     docs/SAMPLING_AND_TA_RESOLUTION_SPEC.md, are implemented and unit-tested, but have only been exercised against synthetic
-    data -- this sandbox cannot reach either ingestion backend (confirmed: both
+    data, because this sandbox cannot reach either ingestion backend (both
     return HTTP 403 on the outbound proxy), so no live pull has been run. Two
     illustrative disagreements surfaced by a synthetic run against this file's real
     tree_prefixes/term_patterns (not fabricated mappings) are worth a human look
@@ -447,17 +448,17 @@ caveats:
         `term_overrides` entries for the specific idiopathic-interstitial-pneumonia
         MeSH headings (e.g. "Idiopathic Interstitial Pneumonias", "Cryptogenic
         Organizing Pneumonia", "Usual Interstitial Pneumonia"), the same way
-        "Lung Diseases, Interstitial" is already overridden to `respiratory` --
-        not a `term_patterns` reorder, which would risk misrouting genuinely
-        infectious pneumonias.
+        "Lung Diseases, Interstitial" is already overridden to `respiratory`,
+        rather than a `term_patterns` reorder, which would risk misrouting
+        genuinely infectious pneumonias.
       * "Dementia, Vascular" is not in `term_overrides`; MeSH places it under
         Nervous System Diseases (C10 -> `neurology`), but `term_patterns`'
         cardiovascular rule (which lists `vascular`) is ordered before neurology's
         and matches first, on the same word. Proposed fix: add a `term_overrides`
-        entry `"Dementia, Vascular": neurology` -- narrower and safer than touching
+        entry `"Dementia, Vascular": neurology`, narrower and safer than touching
         the shared `vascular` token in the cardiovascular pattern, which is needed
         there for genuine vascular-disease descriptors.
-    Neither edit has been applied -- new term_overrides entries are a judgment call
+    Neither edit has been applied: new term_overrides entries are a judgment call
     for a human reviewer with the real diff output in hand, not something to apply
     from a synthetic run.
   - >-

@@ -1,5 +1,4 @@
-"""Filtered pull of AACT `studies` + `design_outcomes` into raw.* (plan §2/§10 step 1),
-plus the condition/intervention MeSH tables the TA resolver needs (step 2 gap 2)."""
+"""Pull study data from AACT into raw.*."""
 
 from __future__ import annotations
 
@@ -31,9 +30,8 @@ from clinical_endpoints.drug_class.resolver import (
 
 SOURCE = "aact"
 
-# What this backend actually lands, for raw._pull_log.source_tables (differs from
-# the CT.gov API backend: AACT can carry MeSH tree numbers via mesh_terms, the API
-# backend instead lands browse_condition_branches -- see ingest/ctgov_api.py).
+# AACT can carry MeSH tree numbers via mesh_terms; the CT.gov backend lands
+# browse_condition_branches instead.
 SOURCE_TABLES = (
     "studies",
     "design_outcomes",
@@ -44,13 +42,8 @@ SOURCE_TABLES = (
     "mesh_terms",
 ) + INTERVENTION_TABLE_NAMES
 
-# ...plus the results section, when `--no-results` was not given and AACT
-# actually exposes it (see ingest/aact_results.py). Recorded separately so
-# raw._pull_log.source_tables says which of the two shapes a pull landed.
 RESULTS_SOURCE_TABLES = RESULTS_TABLE_NAMES
 
-# Shared with the ctgov_api backend so both land the same shape -- see
-# ingest/design.py for the CDISC ct-gov_mapping.xlsx rows these columns serve.
 STUDIES_DDL = SHARED_STUDIES_DDL
 DESIGN_OUTCOMES_DDL = """
     nct_id VARCHAR, outcome_type VARCHAR, measure VARCHAR,
@@ -62,10 +55,7 @@ BROWSE_CONDITIONS_DDL = (
 )
 BROWSE_INTERVENTIONS_DDL = BROWSE_CONDITIONS_DDL
 
-# Every INSERT below names these rather than relying on `SELECT *`, which binds
-# by position: AACT is an upstream database whose tables carry columns this
-# project doesn't model (ctgov.design_outcomes leads with its own `id`), and a
-# positional insert makes the pull depend on that column list never changing.
+# Every INSERT names these rather than relying on positional `SELECT *`.
 DESIGN_OUTCOMES_COLUMNS = (
     "nct_id", "outcome_type", "measure", "time_frame", "description", "population",
 )
@@ -76,10 +66,6 @@ MESH_TERMS_DDL = (
     "PRIMARY KEY (mesh_term, tree_number)"
 )
 
-# The major landing steps `run_pull` reports progress against, in the order it
-# performs them -- everything here is a single (fast, DuckDB-side) SQL
-# statement, so this is a coarse "which table are we on" indicator rather than
-# a fine-grained percentage.
 PULL_STEPS = (
     "studies",
     "design_outcomes",
@@ -92,13 +78,8 @@ PULL_STEPS = (
     "results",
 )
 
-# AACT has no server-side notion of this project's therapeutic areas either
-# (see ingest/ctgov_api.py's MAX_PAGES_TA_FILTERED docstring for why --ta
-# can't just be another SQL predicate alongside phase/since): `--ta` is
-# resolved the same layered way `ta/resolver.py` does, batch by batch, most
-# recent first, until `filters.limit` matches are found. TA_BATCH_SIZE is the
-# candidate page size per round-trip; TA_MAX_SCANNED bounds how many
-# phase/since-matching candidates get scanned in total before giving up.
+# `--ta` / `--drug-class` cannot be SQL predicates, so candidates are scanned
+# in batches, most recent first, until `limit` matches are found.
 TA_BATCH_SIZE = 500
 TA_MAX_SCANNED = 30000
 
@@ -110,9 +91,6 @@ _PULLED_STUDIES_SELECT = """
         d.intervention_model, d.primary_purpose, d.allocation, d.masking,
         TRY_CAST(s.enrollment AS INTEGER) AS enrollment_count,
         s.enrollment_type,
-        -- AACT stores this as free text ("Accepts Healthy Volunteers" / "No");
-        -- anything else stays NULL rather than guessing, because a wrong
-        -- includesHealthySubjects is a clinical claim, not a formatting slip.
         CASE lower(trim(e.healthy_volunteers))
             WHEN 'accepts healthy volunteers' THEN TRUE
             WHEN 'yes' THEN TRUE
@@ -122,16 +100,11 @@ _PULLED_STUDIES_SELECT = """
         e.gender, e.minimum_age, e.maximum_age,
         e.population AS population_description,
         sp.organization,
-        -- AACT has no `hasResults` column; the registry's own claim is
-        -- equivalently "results have been submitted at least once".
         (s.results_first_submitted_date IS NOT NULL) AS has_results
     FROM aact.ctgov.studies s
     LEFT JOIN aact.ctgov.designs d ON d.nct_id = s.nct_id
     LEFT JOIN aact.ctgov.eligibilities e ON e.nct_id = s.nct_id
-    -- ctgov.sponsors carries one row per (nct_id, lead-or-collaborator); the
-    -- GROUP BY/MIN collapses it to the one lead sponsor this project cares
-    -- about (never a collaborator) and guards against a study somehow having
-    -- more than one 'lead' row fanning this join out into duplicate study rows.
+    -- one row per (nct_id, lead-or-collaborator); collapse to the lead sponsor
     LEFT JOIN (
         SELECT nct_id, MIN(name) AS organization
         FROM aact.ctgov.sponsors
@@ -146,27 +119,11 @@ def run_pull(
     filters: PullFilters,
     on_step: Optional[Callable[[str, int, int], None]] = None,
 ) -> dict:
-    """Pull filtered studies + their design_outcomes/conditions from AACT into raw.*, log the pull.
+    """Pull filtered studies from AACT into raw.* and log the pull.
 
-    Upserts rather than replaces: raw.studies is updated/inserted per nct_id,
-    and every child table (design_outcomes, conditions, browse_*) has its rows
-    for *this pull's* nct_ids replaced with a scoped delete-then-insert --
-    studies landed by earlier pulls with different filters are never touched.
-    `filters.replace` overrides this -- see `ingest/upsert.py`'s `ensure_table`.
-    raw._pull_log accumulates one row per invocation regardless, so the pull
-    history stays auditable.
-
-    `filters.drug_class`, if given, is scanned for exactly as `filters.ta` is,
-    in the same pass -- see `_scan_filtered_nct_ids`.
-
-    `filters.org`, if given, filters to studies whose *lead* sponsor (never a
-    collaborator) matches one of the given fragments, case-insensitively --
-    applied as a plain SQL predicate (`_org_filter_sql`) alongside phase/since,
-    in both branches below. Unlike `ta`, AACT (like the CT.gov API) can express
-    this directly in SQL, so it needs no batch-scan machinery of its own.
-
-    `on_step`, if given, is called as `on_step(step_name, index, total)` right
-    after each of PULL_STEPS lands.
+    Upserts: raw.studies per nct_id, child tables replaced for this pull's
+    nct_ids only. `filters.replace` drops the tables first.
+    `on_step(step_name, index, total)` is called after each of PULL_STEPS.
     """
 
     def _step(name: str) -> None:
@@ -308,10 +265,8 @@ def run_pull(
     has_tree_numbers, mesh_terms_count = _pull_mesh_terms(con)
     _step("mesh_terms")
 
-    # The interventions, before the results section and after everything the
-    # conformance pipeline needs: like results, this is an enrichment, and a
-    # backend that cannot supply it must cost the drug-class axis rather than
-    # the pull (docs/DRUG_CLASS_SPEC.md).
+    # Interventions and results are enrichments: a backend that cannot supply
+    # them costs that axis, not the pull.
     intervention_counts: dict[str, int] = {name: 0 for name in INTERVENTION_TABLE_NAMES}
     interventions_warning: Optional[str] = None
     try:
@@ -320,10 +275,6 @@ def run_pull(
         interventions_warning = str(exc)
     _step("interventions")
 
-    # The results section, last: everything above is the protocol half of the
-    # pull, which must stand on its own if AACT turns out not to expose the
-    # results tables in the shape ingest/aact_results.py needs (it introspects
-    # rather than assumes, and says so rather than raising).
     results_counts: dict[str, int] = {}
     results_warning: Optional[str] = None
     if filters.with_results:
@@ -379,10 +330,7 @@ _TREE_NUMBER_COLUMN_RE = re.compile(r"tree.?number", re.IGNORECASE)
 
 
 def _mesh_terms_columns(con: duckdb.DuckDBPyConnection) -> tuple[Optional[str], Optional[str]]:
-    """(tree_number_column, term_column) actually present on `ctgov.mesh_terms`,
-    introspected rather than hardcoded (see `_pull_mesh_terms`) -- or (None,
-    None) if it doesn't carry a usable pair. Shared by `_pull_mesh_terms` and
-    `_ta_matches_in_batch`, which both need the same tree-number join."""
+    """(tree_number_column, term_column) present on `ctgov.mesh_terms`, or (None, None)."""
     columns = {
         row[0]
         for row in con.execute(
@@ -398,23 +346,11 @@ def _mesh_terms_columns(con: duckdb.DuckDBPyConnection) -> tuple[Optional[str], 
 
 
 def _pull_mesh_terms(con: duckdb.DuckDBPyConnection) -> tuple[bool, int]:
-    """Upsert raw.mesh_terms (mesh_term, mesh_term_normalised, tree_number) from
-    AACT's `ctgov.mesh_terms`, if it carries a tree-number column with data.
-    Returns (has_tree_numbers, rows landed by this pull).
+    """Upsert raw.mesh_terms from `ctgov.mesh_terms` if it carries a tree-number
+    column. Column names are introspected. Returns (has_tree_numbers, rows).
 
-    `ta_mesh_mapping.yaml`'s `tree_prefixes` layer was written from the MeSH
-    C/F branch structure without ever being checked against a live join (this
-    build sandbox is egress-blocked from AACT). Rather than hardcode a column
-    name we can't verify, this introspects `ctgov.mesh_terms`'s real columns
-    at pull time and adapts -- or, if there's nothing usable, leaves the
-    (already-ensured, correctly shaped) raw.mesh_terms table untouched and
-    reports `has_tree_numbers=False`, so the TA resolver degrades to the
-    descriptor/regex layers instead of silently joining on a made-up column.
-
-    As of the AACT data dictionary checked for this project (2026-08-19),
-    `ctgov.mesh_terms` has zero rows, so this returns False against the real
-    AACT database today regardless of its column names -- see
-    vocab/ta_mesh_mapping.yaml's `caveats` block.
+    As of the AACT data dictionary checked 2026-08-19, `ctgov.mesh_terms` has
+    zero rows, so this returns False against the live database.
     """
     tree_col, term_col = _mesh_terms_columns(con)
     if not tree_col or not term_col:
@@ -444,10 +380,6 @@ def _pull_mesh_terms(con: duckdb.DuckDBPyConnection) -> tuple[bool, int]:
 def _ta_matches_in_batch(
     con: duckdb.DuckDBPyConnection, mapping: TaMapping, wanted_ta_ids: set[str], nct_ids: list[str]
 ) -> set[str]:
-    """Which of `nct_ids` match one of `wanted_ta_ids`, judged by the exact
-    layered rules `ta/resolver.py` uses to write conformed.study_therapeutic_area
-    (via `resolve_study_ta_matches`), so a pull-time match always agrees with
-    the truth `pull` resolves afterward."""
     conditions_by_nct: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for nct_id, mesh_term in con.execute(
         "SELECT nct_id, mesh_term FROM aact.ctgov.browse_conditions WHERE nct_id = ANY(?)",
@@ -483,7 +415,7 @@ def _ta_matches_in_batch(
             conditions=conditions_by_nct.get(nct_id, []),
             interventions=interventions_by_nct.get(nct_id, []),
             tree_numbers=tree_by_nct.get(nct_id, {}),
-            branch_tree_prefixes=[],  # AACT has no CT.gov-style coarse browse branches
+            branch_tree_prefixes=[],
             mapping=mapping,
         )
         if set(matches) & wanted_ta_ids:
@@ -492,17 +424,10 @@ def _ta_matches_in_batch(
 
 
 def _org_filter_sql(filters: PullFilters, *, nct_id_column: str) -> tuple[str, list]:
-    """SQL predicate (empty, with no params, if `filters.org` wasn't given) that
-    keeps only studies whose *lead* sponsor -- never a collaborator, the same
-    distinction ingest/ctgov_api.py's AREA[LeadSponsorName] draws -- matches
-    one of `filters.org` case-insensitively. `nct_id_column` lets one predicate
-    serve both call sites: `run_pull`'s aliased main query (`s.nct_id`) and the
-    unaliased candidate scan `_scan_filtered_nct_ids` runs (`nct_id`).
+    """Predicate keeping studies whose lead sponsor matches one of `filters.org`.
 
-    Built as one `LIKE ?` per fragment, OR'd together, rather than a single
-    `LIKE ANY(?)` bound to a list parameter -- DuckDB parses `ANY(?)` there as
-    the ANY(subquery) form, which doesn't support LIKE ("Unsupported
-    comparison '~~' for ANY/ALL subquery"), not the ANY(array) form this needs.
+    One `LIKE ?` per fragment rather than `LIKE ANY(?)`, which DuckDB parses
+    as the ANY(subquery) form that does not support LIKE.
     """
     if not filters.org:
         return "", []
@@ -523,17 +448,8 @@ def _drug_class_matches_in_batch(
     wanted_class_ids: set[str],
     nct_ids: list[str],
 ) -> set[str]:
-    """Which of `nct_ids` match one of `wanted_class_ids`, judged by the exact
-    layered rules `drug_class/resolver.py` uses to write
-    conformed.study_drug_class (via `resolve_study_drug_class_matches`), so a
-    pull-time match always agrees with the truth `pull` resolves afterward.
-
-    AACT publishes no intervention ancestors and no browse branches (see
-    ingest/aact_interventions.py), so those two layers are empty here and the
-    match rests on the intervention rows and the MeSH descriptors. That makes
-    `--drug-class` strictly less sensitive on this backend than on the API one
-    -- fewer studies match, none of them wrongly.
-    """
+    """AACT publishes no intervention ancestors or browse branches, so the
+    match rests on the intervention rows and MeSH descriptors."""
     if not aact_interventions.interventions_available(con):
         return set()
 
@@ -583,27 +499,10 @@ def _drug_class_matches_in_batch(
 def _scan_filtered_nct_ids(
     con: duckdb.DuckDBPyConnection, aact_phases: list[str], filters: PullFilters
 ) -> tuple[list[str], int, bool]:
-    """Which AACT studies (phase/since/org-matching, most-recent-first) also
-    match `filters.ta` and/or `filters.drug_class` -- (matched_nct_ids,
-    studies_scanned, hit_scan_cap).
-
-    One scan for both filters rather than two: they have the same shape (no
-    server-side expression, so scan-and-keep), the same cap, and a study has to
-    satisfy both to be kept, so running them separately would scan twice and
-    then intersect.
-
-    AACT has no server-side way to express this project's therapeutic areas
-    either, so this fetches phase/since/org-matching candidates in batches, most
-    recent first, and keeps only the ones `_ta_matches_in_batch` confirms,
-    continuing until `filters.limit` matches are found, the candidates run
-    out, or `TA_MAX_SCANNED` is hit -- the same reasoning as
-    ingest/ctgov_api.py's `MAX_PAGES_TA_FILTERED`: recency alone skews toward
-    whichever conditions dominate trial registrations generally, so `--ta`
-    has to keep scanning past non-matching studies rather than filtering only
-    the first `filters.limit` studies of any area. `--org`, if also given,
-    narrows the candidate pool itself (a plain SQL predicate, unlike `--ta`)
-    rather than needing its own scan/batch logic.
-    """
+    """Scan phase/since/org-matching candidates in batches, most recent first,
+    keeping those that match `filters.ta` and/or `filters.drug_class`, until
+    `filters.limit` matches are found, the candidates run out, or
+    TA_MAX_SCANNED is hit. Returns (matched_nct_ids, studies_scanned, hit_scan_cap)."""
     mapping = load_ta_mapping(con) if filters.ta else None
     wanted_ta_ids = set(filters.ta) if filters.ta else None
     class_mapping = load_drug_class_mapping(con) if filters.drug_class else None
@@ -614,7 +513,7 @@ def _scan_filtered_nct_ids(
     matched: list[str] = []
     scanned = 0
     offset = 0
-    exhausted = False  # every phase/since/org-matching candidate has been scanned
+    exhausted = False
     while len(matched) < filters.limit and scanned < TA_MAX_SCANNED:
         params: list = [aact_phases]
         if filters.since:
@@ -653,8 +552,5 @@ def _scan_filtered_nct_ids(
             exhausted = True
             break
 
-    # A cap hit only means something if candidates were actually cut off by
-    # it -- if scanning simply ran out of phase/since-matching studies to
-    # look at, that's not the scan cap's doing, however few matches it found.
     hit_scan_cap = len(matched) < filters.limit and not exhausted
     return matched[: filters.limit], scanned, hit_scan_cap

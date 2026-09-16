@@ -1,10 +1,9 @@
-"""The drug-class axis (docs/DRUG_CLASS_SPEC.md): extraction, the layered
-resolver, the vocabulary contract, and the two tiers.
+"""The drug-class axis: extraction, the layered resolver, the vocabulary
+contract, and the study and arm tiers.
 
-The properties worth pinning here are the ones a future change could break
-silently: that a control arm is never classed by the study's drug, that a
-mechanism and a modality coexist while two mechanisms from one item do not,
-that the pull-time filter and the written table agree, and that the arm tier
+The properties pinned here: a control arm is never classed by the study's
+drug, a mechanism and a modality coexist while two mechanisms from one item do
+not, the pull-time filter agrees with the written table, and the arm tier
 degrades rather than guesses.
 """
 
@@ -88,7 +87,7 @@ def test_extract_lands_interventions_aliases_and_arm_links():
 
 def test_arm_link_is_dropped_when_the_label_names_no_arm():
     """An unlinked intervention is a coverage gap; one linked to an arm that
-    does not exist is a wrong clinical claim, so the link is dropped."""
+    does not exist is wrong, so the link is dropped."""
     rows = extract_ctgov_interventions(
         _study(
             interventions=[{"type": "DRUG", "name": "X", "armGroupLabels": ["Typo arm"]}],
@@ -131,9 +130,8 @@ def test_every_drug_class_declares_a_kind_from_the_closed_set(vocab_docs):
 
 
 def test_a_child_class_outranks_its_parent(vocab_docs):
-    """Otherwise a study matching both gets the coarser class as its primary --
-    `checkpoint_inhibitor` would beat `pd1_inhibitor` even where the curated
-    layer named the specific target."""
+    """Otherwise a study matching both gets the coarser class as its primary:
+    `checkpoint_inhibitor` would beat `pd1_inhibitor`."""
     terms = {t["id"]: t for t in vocab_docs["drug_class"]["terms"]}
     for term in terms.values():
         if parent := term.get("parent"):
@@ -148,8 +146,8 @@ def test_a_parent_never_changes_axis(vocab_docs):
 
 
 def test_control_rules_only_ever_yield_control_classes(vocab_docs):
-    """The layer exists to stop a placebo arm being classed as the study's drug;
-    a control rule yielding a mechanism class would defeat it entirely."""
+    """A control rule yielding a mechanism class would let a placebo arm be
+    classed as the study's drug."""
     kinds = {t["id"]: t["kind"] for t in vocab_docs["drug_class"]["terms"]}
     for rule in vocab_docs["drug_class_mesh_mapping"]["control_rules"]:
         assert kinds[rule["drug_class"]] == "control", rule
@@ -185,8 +183,7 @@ def test_validation_rejects_an_unknown_kind(vocab_docs):
 
 @pytest.fixture(scope="module")
 def mapping(tmp_path_factory):
-    """A warehouse with only the vocabularies loaded -- everything the mapping
-    needs and nothing else."""
+    """A warehouse with only the vocabularies loaded."""
     from clinical_endpoints.vocab.loader import write_vocab_tables
 
     vocab_dir = default_vocab_dir(Path(__file__).parent)
@@ -210,8 +207,7 @@ def _intervention(name, intervention_type="DRUG", *, ordinal=0, aliases=()):
 
 
 def test_a_curated_agent_resolves_to_its_mechanism_and_its_modality(mapping):
-    """The orthogonality rule: kinds do not suppress each other, so an agent
-    carries both claims and neither is a defeat for the other."""
+    """Kinds do not suppress each other, so an agent carries both claims."""
     matches = resolve_intervention(_intervention("Pembrolizumab"), mapping)
     assert matches["pd1_inhibitor"][0] == "agent_name"
     assert matches["monoclonal_antibody"][0] == "name_pattern"
@@ -225,9 +221,8 @@ def test_modality_falls_back_to_the_registry_type_only_when_the_name_is_silent(m
 
 
 def test_a_control_short_circuits_its_intervention(mapping):
-    """A placebo carries the study's MeSH codes like every other arm. If any
-    later layer ran, a placebo tablet would pick up a modality it has no
-    business having."""
+    """A placebo carries the study's MeSH codes like every other arm, so a
+    later layer would give a placebo tablet a modality."""
     matches = resolve_intervention(_intervention("Placebo"), mapping)
     assert list(matches) == ["placebo"]
     assert matches["placebo"][0] == "control_rule"
@@ -246,8 +241,8 @@ def test_the_other_control_kinds_are_recognised(mapping, name, expected):
 
 
 def test_an_inn_stem_classes_an_agent_the_dictionary_has_never_seen(mapping):
-    """The point of the stem layer: a drug approved after the vocabulary was
-    written still lands, because WHO stems are what made its name."""
+    """A drug approved after the vocabulary was written still lands, because
+    WHO stems are what made its name."""
     matches = resolve_intervention(_intervention("Fictogliflozin"), mapping)
     assert "sglt2_inhibitor" in matches
 
@@ -259,28 +254,26 @@ def test_an_alias_classes_an_agent_registered_under_a_development_code(mapping):
 
 def test_an_uncoded_biological_gets_nothing_rather_than_a_wrong_modality(mapping):
     """BIOLOGICAL covers antibodies, vaccines, cell therapies and proteins, so
-    any single modality it mapped to would be wrong most of the time."""
+    any single modality would be wrong most of the time."""
     assert resolve_intervention(_intervention("ACME-999", "BIOLOGICAL"), mapping) == {}
 
 
 def test_one_rule_may_carry_two_classes_of_the_same_kind(mapping):
-    """Amivantamab is an EGFR inhibitor and a bispecific engager; forcing a
-    choice would make the vocabulary assert something false."""
+    """Amivantamab is an EGFR inhibitor and a bispecific engager."""
     matches = resolve_intervention(_intervention("Amivantamab"), mapping)
     assert {"egfr_inhibitor", "bispecific_engager"} <= set(matches)
 
 
 def test_intervention_type_is_matched_case_and_separator_insensitively(mapping):
-    """The two backends spell these differently -- DIETARY_SUPPLEMENT vs
-    "Dietary Supplement" -- the same way they spell PRIMARY/Primary."""
+    """The two backends spell these differently: DIETARY_SUPPLEMENT versus
+    "Dietary Supplement"."""
     for spelling in ("DIETARY_SUPPLEMENT", "Dietary Supplement", "dietary-supplement"):
         matches = resolve_intervention(_intervention("Vitamin K2", spelling), mapping)
         assert "nutritional_agent" in matches, spelling
 
 
 def test_a_study_keeps_every_matched_class(mapping):
-    """Combination therapy is the norm: a trial of pembrolizumab plus
-    carboplatin genuinely is both."""
+    """A trial of pembrolizumab plus carboplatin is both."""
     matches = resolve_study_drug_class_matches(
         interventions=[
             _intervention("Pembrolizumab", ordinal=0),
@@ -307,9 +300,8 @@ def test_mesh_ancestors_and_branches_contribute_at_study_level(mapping):
 
 
 def test_the_all_drugs_branch_is_deliberately_unmapped(mapping):
-    """It sits on essentially every drug study, so mapping it would give every
-    such study one identical class and make the axis look far better covered
-    than it is."""
+    """It sits on nearly every drug study, so mapping it would give them all
+    one identical class."""
     matches = resolve_study_drug_class_matches(
         interventions=[], mesh_terms=[], ancestors=[], branches=["All Drugs and Chemicals"],
         mapping=mapping,
@@ -330,8 +322,7 @@ def test_a_study_with_no_interventions_is_distinguished_from_one_that_matched_no
 
 
 def test_the_per_intervention_pass_is_reported_to_the_caller(mapping):
-    """One walk yields the arm tier, the tie-break tally and the review queue;
-    `resolve_drug_classes` would otherwise re-resolve the whole corpus twice."""
+    """One walk yields the arm tier, the tie-break tally and the review queue."""
     seen = []
     resolve_study_drug_class_matches(
         interventions=[
@@ -402,7 +393,7 @@ def test_the_primary_class_is_the_most_specific_mechanism(resolved_con):
 
 
 def test_the_control_arm_does_not_inherit_the_experimental_drugs_class(resolved_con):
-    """The single most damaging thing this axis could do."""
+    """A control arm must not inherit the experimental drug's class."""
     rows = resolved_con.execute(
         "SELECT drug_class_id FROM conformed.arm_drug_class "
         "WHERE group_title = 'Placebo + chemo' ORDER BY drug_class_id"
@@ -422,8 +413,8 @@ def test_the_arm_tier_records_how_the_link_was_made(resolved_con):
 
 
 def test_study_level_mesh_matches_never_reach_an_arm(resolved_con):
-    """A study's ancestors describe the study; pushing them onto an arm would
-    attribute the experimental drug's class to the placebo arm."""
+    """A study's ancestors describe the study, so pushing them onto an arm
+    would give the placebo arm the experimental drug's class."""
     layers = {
         r[0]
         for r in resolved_con.execute("SELECT DISTINCT rule_layer FROM conformed.arm_drug_class").fetchall()
@@ -455,9 +446,9 @@ def test_resolution_is_idempotent(resolved_con):
 
 
 def test_diff_ancestors_reports_a_curated_vs_nlm_disagreement(resolved_con):
-    """Seeded deliberately: the curated layer calls carboplatin platinum
-    chemotherapy, and an ancestor of "Aromatase Inhibitors" would call the same
-    study something else. The tool reports it rather than reconciling it."""
+    """The curated layer calls carboplatin platinum chemotherapy; an ancestor
+    of "Aromatase Inhibitors" calls the same study something else. The tool
+    reports the disagreement rather than reconciling it."""
     resolved_con.execute(
         "INSERT INTO raw.browse_intervention_ancestors VALUES "
         "('NCT001', 'Aromatase Inhibitors', 'aromatase inhibitors', NULL)"
@@ -468,7 +459,7 @@ def test_diff_ancestors_reports_a_curated_vs_nlm_disagreement(resolved_con):
 
 
 def test_resolution_survives_a_warehouse_with_no_intervention_tables(tmp_path):
-    """A warehouse pulled before these tables existed must degrade, not fail."""
+    """A warehouse pulled before these tables existed degrades rather than failing."""
     from clinical_endpoints.vocab.loader import write_vocab_tables
 
     vocab_dir = default_vocab_dir(Path(__file__).parent)
@@ -488,7 +479,7 @@ def test_resolution_survives_a_warehouse_with_no_intervention_tables(tmp_path):
 
 
 def _api_study(nct_id, *, interventions):
-    """The minimum CT.gov API v2 shape `run_pull` needs, plus interventions."""
+    """The minimum CT.gov API v2 shape `run_pull` needs, with interventions."""
     return {
         "protocolSection": {
             "identificationModule": {"nctId": nct_id, "briefTitle": nct_id},
@@ -506,10 +497,8 @@ def _api_study(nct_id, *, interventions):
 
 
 def test_pull_drug_class_filter_agrees_with_the_table_it_writes(tmp_path, monkeypatch):
-    """The property that makes a pull-time filter safe: a study kept by the
-    filter must be one the bulk resolver also classes that way. A filter that
-    disagreed with the table written afterwards would be worse than no filter.
-    """
+    """A study kept by the pull-time filter must be one the bulk resolver also
+    classes that way."""
     from clinical_endpoints.ingest import ctgov_api
     from clinical_endpoints.ingest.ctgov_api import run_pull
     from clinical_endpoints.ingest.filters import PullFilters
@@ -564,13 +553,9 @@ def test_coverage_survives_a_warehouse_with_nothing_pulled(tmp_path):
 
 
 def test_every_curated_agent_resolves_to_the_class_the_vocabulary_claims(mapping, vocab_docs):
-    """The whole curated dictionary, end to end through the layer order.
-
-    An earlier layer silently stealing an agent -- a control rule matching a
-    drug name, say -- would be invisible in any single-agent test and would
-    misclass that agent everywhere it appears. 400-odd assertions is the right
-    number here because the failure mode is one entry, not the mechanism.
-    """
+    """The whole curated dictionary through the layer order. An earlier layer
+    taking an agent (a control rule matching a drug name, say) is invisible in
+    a single-agent test and misclasses that agent everywhere."""
     agents = vocab_docs["drug_class_mesh_mapping"]["agent_names"]
     wrong = []
     for agent, claimed in agents.items():
@@ -594,9 +579,8 @@ def test_no_curated_agent_is_swallowed_by_a_control_rule(mapping, vocab_docs):
 
 
 def test_every_term_override_resolves_through_the_intervention_path(mapping, vocab_docs):
-    """`term_overrides` is matched against the sponsor's name as well as the NLM
-    descriptor; if that regressed, the override would settle only half the
-    corpus and do it at random."""
+    """`term_overrides` matches the sponsor's name as well as the NLM
+    descriptor; otherwise it settles only the half of the corpus NLM coded."""
     overrides = vocab_docs["drug_class_mesh_mapping"]["term_overrides"]
     wrong = []
     for term, claimed in overrides.items():

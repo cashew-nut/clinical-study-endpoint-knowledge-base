@@ -1,6 +1,6 @@
 # Dimension: THERAPEUTIC AREA.
 #
-# Not a native field on either ingestion backend -- it is derived from the study's
+# Not a native field on either ingestion backend. It is derived from the study's
 # MeSH-coded conditions (see ta_mesh_mapping.yaml). This file is only the closed
 # list of areas plus the rules for resolving a study that maps to several.
 #
@@ -13,8 +13,8 @@
 # is the common case: a lung cancer trial codes to both Neoplasms and Respiratory
 # Tract Diseases, a diabetic macular oedema trial to both Eye Diseases and
 # Endocrine. Lower number wins for `primary_ta`. ALL matched areas are still kept
-# in a separate many-to-many table so the IN_TA graph edge stays truthful --
-# precedence picks a primary, it does not discard the others.
+# in a separate many-to-many table: precedence picks a primary rather than
+# discarding the others.
 #
 # The precedence order below encodes the convention that the disease being treated
 # beats the organ it appears in: oncology first (a tumour trial is an oncology
@@ -33,7 +33,7 @@ terms:
     synonyms: ["cancer", "oncology", "tumour", "tumor", "neoplasm", "malignancy", "carcinoma"]
     notes: >-
       Haematological malignancies (leukaemia, lymphoma, myeloma) are oncology, not
-      haematology -- haematology here means non-malignant blood disease. This split
+      haematology, which here means non-malignant blood disease. This split
       matches how development groups are organised and keeps "haematology" from
       becoming a synonym for oncology.
 
@@ -171,9 +171,9 @@ terms:
     label: "Other / not classified"
     precedence: 900
     definition: >-
-      The study's conditions carry MeSH codes but none map to an area above --
+      The study's conditions carry MeSH codes but none map to an area above:
       health services research, general symptom management, healthy-volunteer
-      studies. A real classification, not a failure.
+      studies. A real classification rather than a failure.
     synonyms: []
 
   - id: not_stated
@@ -194,4 +194,4 @@ resolution:
     `conformed.endpoints.ta_id` carries the primary only, because an endpoint needs
     one TA to group by. The full set lives alongside it so the IN_TA edges and any
     "trials in both oncology and ophthalmology" query stay correct. If a query ever
-    needs to override the precedence order, it can -- the raw matches are there.
+    needs to override the precedence order, it can: the raw matches are there.

@@ -1,15 +1,10 @@
-"""Generic term matcher implementing matching.yaml's rules: whole-token synonym
-matching, case-sensitive short acronyms, `not_if_matches` vetoes, and either
-precedence-ordered first-match-wins (forms, references) or longest-match-wins
-(measurements, which declare no match_precedence).
+"""Term matcher implementing matching.yaml's rules: whole-token synonyms,
+case-sensitive short acronyms, `not_if_matches` vetoes, and either
+precedence-ordered first-match-wins or longest-match-wins for dimensions that
+declare no precedence.
 
-Every rule here is read from `vocab.matching_*` and `vocab.synonyms` /
-`vocab.patterns` / `vocab.term_precedence` -- the tables `vocab validate`
-writes from matching.yaml and the term files. No term id, synonym, or pattern
-is hardcoded; only the matching ALGORITHM (how a synonym becomes a regex, how
-a tie is broken) lives in code, exactly as matching.yaml's own comments say it
-must ("matching rules are part of the vocabulary, not an implementation detail
-of whoever writes the matcher").
+Every synonym, pattern and precedence list is read from vocab.*; only the
+matching algorithm lives here.
 """
 
 from __future__ import annotations
@@ -49,8 +44,6 @@ class _CompiledTerm:
 
 
 class TermMatcher:
-    """One dimension's compiled terms, ready to match normalised text."""
-
     def __init__(
         self,
         terms: list[_CompiledTerm],
@@ -61,9 +54,7 @@ class TermMatcher:
         self._by_id = {t.term_id: t for t in terms}
         self._precedence = precedence
         self._settings = settings
-        # matching.yaml: longest-match ties break on "the earlier term in file
-        # order" -- terms with no recorded order (shouldn't happen once
-        # vocab validate has run) sort last, deterministically.
+        # Longest-match ties break on file order; terms with no order sort last.
         self._file_order = file_order or {}
 
     @property
@@ -71,9 +62,8 @@ class TermMatcher:
         return list(self._by_id)
 
     def term_matches(self, term_id: str, text: str) -> Optional[MatchResult]:
-        """Whether `term_id` specifically matches `text`, independent of
-        precedence/longest-match order -- used to detect genuine ambiguity
-        between two named terms (forms.yaml's `disambiguation` block)."""
+        """Whether `term_id` matches `text`, ignoring precedence. Used to detect
+        ambiguity between two named terms."""
         term = self._by_id.get(term_id)
         if term is None or not text or self._vetoed(term, text):
             return None
@@ -127,10 +117,9 @@ class TermMatcher:
 
 
 def _synonym_boundary_pattern(synonym: str) -> str:
-    """matching.yaml: whole-token match, internal spaces match space OR hyphen.
-    Built by escaping each token independently and joining on `[\\s\\-]+`, rather
-    than trusting re.escape's whitespace handling, which has changed across
-    Python versions."""
+    """Whole-token match; internal spaces match space or hyphen. Tokens are
+    escaped individually because re.escape's whitespace handling has changed
+    across Python versions."""
     tokens = [t for t in _WHITESPACE_RE.split(synonym.strip()) if t]
     escaped = [re.escape(t) for t in tokens]
     return r"(?<!\w)" + r"[\s\-]+".join(escaped) + r"(?!\w)"
@@ -160,17 +149,14 @@ def load_settings(con: duckdb.DuckDBPyConnection) -> MatchSettings:
 def _compile_synonym(synonym: str, settings: MatchSettings) -> Optional[re.Pattern]:
     if _is_short_allcaps_acronym(synonym):
         if len(synonym) < settings.min_synonym_length:
-            return None  # matching.yaml: too short to trust even in capitals
-        return re.compile(_synonym_boundary_pattern(synonym))  # case-sensitive
+            return None
+        return re.compile(_synonym_boundary_pattern(synonym))
     return re.compile(_synonym_boundary_pattern(synonym), re.IGNORECASE)
 
 
 def build_matcher(
     con: duckdb.DuckDBPyConnection, dimension: str, table: str, settings: MatchSettings
 ) -> TermMatcher:
-    """Compile every term of `dimension` (whose scalar-column table is `table`,
-    e.g. 'forms' for dimension 'form') from vocab.synonyms / vocab.patterns /
-    vocab.term_precedence into a ready-to-match TermMatcher."""
     all_ids = [row[0] for row in con.execute(f"SELECT id FROM vocab.{table}").fetchall()]
 
     synonyms_by_term: dict[str, list[str]] = {tid: [] for tid in all_ids}

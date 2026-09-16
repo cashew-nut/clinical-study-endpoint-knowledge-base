@@ -1,8 +1,7 @@
-"""D6, the arithmetic on its own: folding the registry's enumerations, and the
-five conversions that turn a reported spread into an SD.
-
-This is the piece the roadmap calls the one where an error is least visible
-downstream, so the tests are about the refusals as much as the conversions.
+"""The dispersion arithmetic on its own: folding the registry's enumerations,
+and the conversions that turn a reported spread into an SD. An error here is
+hard to see downstream, so the tests cover the refusals as much as the
+conversions.
 """
 
 from __future__ import annotations
@@ -47,16 +46,15 @@ from clinical_endpoints.results.dispersion import (
 )
 def test_dispersion_types_fold_across_both_backends_spellings(raw, expected):
     """The API writes STANDARD_DEVIATION and AACT writes Standard Deviation.
-    Both are landed verbatim, so the folding has to absorb the difference --
-    and has to leave a value it does not recognise as `unknown` rather than
-    guessing at it."""
+    Both land verbatim, so the folding absorbs the difference and leaves an
+    unrecognised value as `unknown`."""
     assert classify_dispersion(raw) == expected
 
 
 def test_standard_error_is_not_read_as_a_standard_deviation():
-    """The single most consequential confusion in this module: an SE is
-    roughly sqrt(n) times smaller than the SD, so reading one as the other
-    understates variability by an order of magnitude on a large trial."""
+    """An SE is roughly sqrt(n) times smaller than the SD, so reading one as
+    the other understates variability by an order of magnitude on a large
+    trial."""
     assert classify_dispersion("Standard Error") == "standard_error"
     assert classify_dispersion("SEM") == "standard_error"
 
@@ -86,8 +84,8 @@ def test_fold_collapses_separators_and_case():
 
 
 def test_confidence_percent_is_read_not_assumed():
-    """A 90% interval is 18% narrower than a 95% one. Assuming 95 would
-    understate every SD derived from a 90% interval by that much."""
+    """A 90% interval is 18% narrower than a 95% one, so assuming 95
+    understates every SD derived from one."""
     assert confidence_percent("95% Confidence Interval") == 95.0
     assert confidence_percent("90%_CONFIDENCE_INTERVAL") == 90.0
     assert confidence_percent("97.5% Confidence Interval") == 97.5
@@ -124,8 +122,8 @@ def test_standard_error_becomes_a_standard_deviation_with_the_arm_n():
 
 
 def test_standard_error_without_an_arm_n_yields_nothing():
-    """`SE x sqrt(n)` needs a trustworthy n. Without one the row is in the
-    denominator and out of the numerator -- never imputed."""
+    """`SE x sqrt(n)` needs an n. Without one the row stays in the denominator
+    and out of the numerator."""
     result = estimate_sd(
         param_type="MEAN", dispersion_type="Standard Error", dispersion_value=0.8, n=None
     )
@@ -145,14 +143,13 @@ def test_confidence_interval_uses_the_stated_level():
         param_type="MEAN", dispersion_type="90% Confidence Interval",
         dispersion_value=None, lower_limit=0.1, upper_limit=0.5, n=100,
     )
-    # A narrower z means a *larger* implied SD for the same interval width.
+    # A smaller z means a larger implied SD for the same interval width.
     assert around_90.value > around_95.value
 
 
 def test_a_confidence_interval_around_a_median_is_refused():
-    """The width-to-SD formula inverts the standard error of a *mean*. A
-    median's CI is not that quantity, and converting it anyway is the kind of
-    error that is invisible in the output."""
+    """The width-to-SD formula inverts the standard error of a mean, and a
+    median's CI is not that quantity."""
     result = estimate_sd(
         param_type="MEDIAN", dispersion_type="95% Confidence Interval",
         dispersion_value=None, lower_limit=15.1, upper_limit=22.0, n=240,
@@ -192,8 +189,7 @@ def test_wan_divisors_match_their_published_formulae():
         assert wan_range_divisor(n) == pytest.approx(
             2 * NormalDist().inv_cdf((n - 0.375) / (n + 0.25))
         )
-    # eta(n) tends to the textbook 1.35 that this deliberately does not
-    # hardcode for small samples.
+    # eta(n) tends to the textbook 1.35, which is not hardcoded for small samples.
     assert wan_iqr_divisor(100000) == pytest.approx(1.349, abs=0.005)
     assert wan_iqr_divisor(6) < 1.30
 
@@ -213,9 +209,8 @@ def test_geometric_cv_stays_on_the_log_scale():
 
 
 def test_a_count_typed_outcome_has_no_standard_deviation():
-    """`Count of Participants` rows carry a dispersion column too. Pooling
-    their spread into an SD library would put participant counts and litres in
-    the same distribution."""
+    """`Count of Participants` rows carry a dispersion column, but pooling
+    their spread would put participant counts and litres in one distribution."""
     result = estimate_sd(
         param_type="COUNT_OF_PARTICIPANTS", dispersion_type="Standard Deviation",
         dispersion_value=12.0, n=240,
@@ -230,8 +225,8 @@ def test_an_unrecognised_dispersion_type_is_reported_not_guessed():
     )
     assert result.value is None
     assert result.skip_reason == "dispersion_type_unrecognised"
-    # The raw string is still on the row it came from, so `results coverage`
-    # can list exactly which spellings the vocabulary is missing.
+    # The raw string stays on the row, so `results coverage` can list the
+    # spellings the vocabulary is missing.
     assert result.inputs["dispersion_kind"] == "unknown"
 
 
@@ -259,9 +254,8 @@ def test_an_arm_of_one_is_not_enough_for_any_derived_estimate():
 
 
 def test_every_estimate_records_how_it_was_derived():
-    """A standing constraint: `sd_method`, `sd_is_derived` and the inputs are
-    as non-negotiable as `match_method` and `confidence` are on the
-    conformance side."""
+    """`sd_method`, `sd_is_derived` and the inputs are recorded on every
+    estimate, as `match_method` and `confidence` are on the conformance side."""
     for result in (
         estimate_sd(param_type="MEAN", dispersion_type="Standard Deviation", dispersion_value=1.0),
         estimate_sd(param_type="MEAN", dispersion_type="Standard Error", dispersion_value=1.0, n=9),

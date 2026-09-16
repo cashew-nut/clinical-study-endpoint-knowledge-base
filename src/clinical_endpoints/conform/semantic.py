@@ -1,14 +1,7 @@
-"""The semantic fallback: a deterministic, explainable approximate match tried
-only for MEASUREMENT (the one dimension whose cascade -- vocab.matching_cascade
--- ends in `fallback: review_queue` rather than a term id), after the literal
-exact/syntactic_rule cascade steps have both failed. There is no embedding
-model available in this pipeline's environment, so "semantic" here means
-token-overlap similarity against each term's own label + synonyms (read from
-vocab.*, never invented): a term's descriptive vocabulary has to cover most of
-its own words AND share at least two content words with the endpoint text
-before it is offered as a candidate. A garbled string shares no tokens with
-any term's vocabulary and correctly falls through to the review queue.
-"""
+"""Semantic fallback for measurement: token-overlap similarity against each
+term's label and synonyms, tried after the literal cascade has failed. A term
+must cover most of its own vocabulary and share at least two content words
+with the text before it is offered."""
 
 from __future__ import annotations
 

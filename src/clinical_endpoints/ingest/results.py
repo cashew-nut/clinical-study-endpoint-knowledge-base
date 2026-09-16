@@ -1,27 +1,10 @@
-"""The results section, shared by both ingestion backends (docs/ENDPOINT_RESULTS_SPEC.md, D4).
+"""The results section, shared by both backends: one row per reported
+outcome, per arm within an outcome, per arm x class x category measurement,
+per statistical analysis, and per baseline characteristic x arm.
 
-`raw.design_outcomes` carries what a study *planned* to measure. These five
-tables carry what it *reported*: one row per reported outcome, per arm within
-an outcome, per arm x class x category measurement, per statistical analysis,
-and per baseline characteristic x arm.
-
-Landing is thin, exactly as `ingest/design.py` is thin -- no conforming, no
-unit normalisation, no dispersion arithmetic. Every enumerated field
-(`param_type`, `dispersion_type`, `unit_of_measure`, the analysis
-`param_type`) is stored **verbatim, as the registry wrote it**. That is not
-laziness: this project's build environment cannot reach clinicaltrials.gov or
-AACT (see the module docstring of `ingest/ctgov_api.py`, and
-docs/ENDPOINT_RESULTS_SPEC.md's "What was not measured"), so the exact value
-sets those fields use are not known here. A closed enum in the ingest layer
-would silently drop the values it had not anticipated; a verbatim string
-cannot. Folding those strings into the small set of kinds the arithmetic
-needs happens once, downstream and auditably, in `results/dispersion.py`.
-
-Both backends land the same shape, so everything downstream is source-agnostic
--- the property the README calls load-bearing. Where the two sources disagree
-about spelling (PRIMARY vs Primary; STANDARD_DEVIATION vs Standard Deviation)
-the row keeps its own source's spelling and the folding downstream is
-case- and separator-insensitive.
+Every enumerated field (`param_type`, `dispersion_type`, `unit_of_measure`)
+is stored verbatim; the exact value sets are not known, and folding happens
+downstream in `results/dispersion.py`, case- and separator-insensitively.
 """
 
 from __future__ import annotations
@@ -30,8 +13,6 @@ import hashlib
 import json
 import re
 from typing import Any, Optional
-
-# --------------------------------------------------------------------- DDL
 
 OUTCOME_MEASURES_DDL = """
     outcome_id VARCHAR PRIMARY KEY,
@@ -116,9 +97,6 @@ BASELINE_MEASUREMENTS_COLUMNS: tuple[str, ...] = (
     "group_title",
 )
 
-#: table name -> (DDL, column tuple), in landing order. Both backends iterate
-#: this rather than repeating the list, so a table added here is landed by
-#: both or by neither.
 RESULTS_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("outcome_measures", OUTCOME_MEASURES_DDL, OUTCOME_MEASURES_COLUMNS),
     ("outcome_groups", OUTCOME_GROUPS_DDL, OUTCOME_GROUPS_COLUMNS),
@@ -130,26 +108,12 @@ RESULTS_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 RESULTS_TABLE_NAMES: tuple[str, ...] = tuple(name for name, _ddl, _cols in RESULTS_TABLES)
 
 
-# ------------------------------------------------------------------ id keys
-
 def outcome_id(nct_id: str, outcome_type: Optional[str], title: Optional[str],
                time_frame: Optional[str], duplicate_ordinal: int = 0) -> str:
-    """A stable content hash, not the source's own row id.
-
-    Neither source offers a key this project can depend on: the CT.gov API's
-    `outcomeMeasures[]` entries carry no id at all, and AACT's `outcomes.id`
-    is a surrogate that is not stable across AACT's own rebuilds. A content
-    hash makes re-pulling a study a refresh rather than a fresh identity,
-    which is the same reason `conform/pipeline.py` hashes rather than uuids.
-
-    `outcome_type` is case-folded into the key (but stored verbatim on the
-    row) because the two backends spell the same value differently -- AACT's
-    "Primary" and the API's "PRIMARY" name one outcome, and re-pulling a study
-    through the other backend should not renumber it.
-
-    `duplicate_ordinal` disambiguates the rare study that reports two outcomes
-    identical in all four key fields; it is 0 for every other row.
-    """
+    """A content hash: the API's `outcomeMeasures[]` carry no id and AACT's
+    `outcomes.id` is not stable across rebuilds. `outcome_type` is case-folded
+    into the key because the backends spell it differently.
+    `duplicate_ordinal` disambiguates two outcomes identical in all four fields."""
     key = "|".join(
         [
             nct_id or "",
@@ -163,9 +127,7 @@ def outcome_id(nct_id: str, outcome_type: Optional[str], title: Optional[str],
 
 
 def baseline_id(nct_id: str, title: Optional[str], unit_of_measure: Optional[str]) -> str:
-    """The *characteristic* grain -- one id per (study, baseline characteristic),
-    shared by every arm row reporting it, so `conformed.endpoint_results` can
-    link a characteristic once rather than once per arm."""
+    """One id per (study, baseline characteristic), shared by every arm row."""
     key = "|".join([nct_id or "", (title or "").strip(), (unit_of_measure or "").strip()])
     return hashlib.md5(key.encode("utf-8")).hexdigest()
 
@@ -175,20 +137,14 @@ def analysis_id(outcome_id_value: str, ordinal: int) -> str:
 
 
 def _trim_sql(expr: str) -> str:
-    """`str.strip()`, in SQL. DuckDB's `trim()` strips spaces only, so a title
-    ending in a newline would hash differently from the Python side and the
-    same study pulled through the two backends would get two different
-    `outcome_id`s -- the one thing these keys exist to prevent."""
+    """`str.strip()` in SQL; DuckDB's `trim()` strips spaces only."""
     return f"regexp_replace(coalesce({expr}, ''), '^\\s+|\\s+$', '', 'g')"
 
 
 def outcome_id_sql(
     nct_id: str, outcome_type: str, title: str, time_frame: str, duplicate_ordinal: str
 ) -> str:
-    """`outcome_id` as a SQL expression over the AACT columns, so the AACT
-    backend lands the same key the Python parser computes for the same study.
-    Tested against `outcome_id` directly (tests/test_results_ingest.py) rather
-    than trusted to stay in step by inspection."""
+    """`outcome_id` as SQL over the AACT columns; tested against the Python version."""
     return (
         "md5("
         f"coalesce({nct_id}, '') || '|' || "
@@ -213,8 +169,7 @@ def analysis_id_sql(outcome_id_expr: str, ordinal_expr: str) -> str:
 
 
 class _OutcomeKeyer:
-    """Hands out `outcome_id`s for one study, bumping `duplicate_ordinal` only
-    when a later outcome collides with an earlier one on all four key fields."""
+    """Hands out `outcome_id`s for one study, bumping `duplicate_ordinal` on collisions."""
 
     def __init__(self) -> None:
         self._seen: dict[tuple, int] = {}
@@ -227,20 +182,14 @@ class _OutcomeKeyer:
         return outcome_id(nct_id, outcome_type, title, time_frame, ordinal)
 
 
-# ------------------------------------------------------------- value parsing
-
-# A registry numeric field is free text: "12.4", "-0.03", "1,204", "NA",
-# "<0.001", "99.9%". Everything that is not a plain number keeps its string in
-# the `*_value` column and leaves `*_value_num` NULL -- an unparseable value is
-# a fact about the row, not a reason to drop it.
+# A registry numeric field is free text: "12.4", "1,204", "NA", "<0.001",
+# "99.9%". Anything not a plain number keeps its string in `*_value` and
+# leaves `*_value_num` NULL.
 _NUMERIC_RE = re.compile(r"^[+-]?(\d{1,3}(,\d{3})+|\d*)(\.\d+)?([eE][+-]?\d+)?$")
 _P_VALUE_RE = re.compile(r"^\s*(?P<modifier><=?|>=?|=|≤|≥|<|>)?\s*(?P<number>[0-9.eE+-]+)\s*$")
 
 
 def to_number(value: Any) -> Optional[float]:
-    """`value` as a float, or None if it is not a plain number. Thousands
-    separators are tolerated; comparators, units and "NA" are not -- those
-    belong to the verbatim column beside it."""
     if value is None:
         return None
     if isinstance(value, bool):
@@ -266,17 +215,9 @@ def to_int(value: Any) -> Optional[int]:
 def split_p_value(value: Any) -> tuple[Optional[str], Optional[str], Optional[float]]:
     """A registry p-value -> (display, modifier, number).
 
-    The API reports one string ("<0.001"); AACT splits it into
-    `p_value_modifier` + `p_value` already. Both end up in the same three
-    columns, so a censored p-value keeps both halves and a distribution built
-    over `p_value_num` can include or exclude the censored ones deliberately
-    rather than by accident.
-
-    `display` is the p-value as the registry shows it, canonicalised in one
-    respect only: an equality is written without a redundant leading "=", so
-    the API's "0.021" and AACT's ("=", 0.021) land the same string. `number`
-    for a censored p-value is the *bound*, not the value -- 0.001 for
-    "<0.001" -- which is why the modifier has to be read alongside it.
+    The API reports one string ("<0.001"); AACT splits it. `display` is the
+    p-value as shown, with a redundant leading "=" dropped. `number` for a
+    censored p-value is the bound, so the modifier has to be read alongside it.
     """
     if value is None:
         return None, None, None
@@ -296,8 +237,7 @@ def split_p_value(value: Any) -> tuple[Optional[str], Optional[str], Optional[fl
 
 
 def combine_p_value(modifier: Any, value: Any) -> tuple[Optional[str], Optional[str], Optional[float]]:
-    """AACT's already-split (modifier, value) pair, put back through the same
-    parser so both backends land identical columns."""
+    """AACT's split (modifier, value) pair through the same parser."""
     modifier_text = (str(modifier).strip() if modifier is not None else "") or ""
     value_text = str(value).strip() if value is not None else ""
     if not value_text:
@@ -305,24 +245,14 @@ def combine_p_value(modifier: Any, value: Any) -> tuple[Optional[str], Optional[
     return split_p_value(f"{modifier_text}{value_text}")
 
 
-#: An analysis's `non_inferiority_type` value set is small but not knowable
-#: from this environment (see the module docstring): observed values include
-#: "Superiority", "Non-Inferiority", "Equivalence", "Non-Inferiority or
-#: Equivalence" and "Superiority or Other". Matching on the substring rather
-#: than an equality means an unanticipated spelling of the same idea is still
-#: recognised, and anything genuinely new reads as "not a non-inferiority
-#: analysis" rather than as one.
+# Observed `non_inferiority_type` values include "Superiority",
+# "Non-Inferiority", "Equivalence", "Non-Inferiority or Equivalence" and
+# "Superiority or Other". Substring match so an unseen spelling still counts.
 _NON_INFERIORITY_MARKERS = ("non-inferiority", "noninferiority", "equivalence")
 
 
 def is_non_inferiority(flag: Any, type_text: Any) -> Optional[bool]:
-    """Whether an analysis is a non-inferiority (or equivalence) comparison.
-
-    The API states it outright; AACT states only the type string, so the
-    string is the fallback -- and the source of truth for both when the flag
-    is absent, so the two backends agree on rows where only one of them has a
-    boolean to offer.
-    """
+    """The API states it outright; AACT states only the type string."""
     explicit = to_bool(flag)
     if explicit is not None:
         return explicit
@@ -347,8 +277,6 @@ def to_bool(value: Any) -> Optional[bool]:
     return None
 
 
-# ------------------------------------------------- CT.gov API v2 extraction
-
 def _get(obj: Any, *path: str) -> Any:
     for key in path:
         if not isinstance(obj, dict):
@@ -358,16 +286,8 @@ def _get(obj: Any, *path: str) -> Any:
 
 
 def _denominator_counts(denoms: Any) -> tuple[dict[str, Optional[int]], Optional[str]]:
-    """`denoms[]` -> ({group_key: n}, units).
-
-    A results module may state several denominators for one outcome (a
-    participant count and an eye/lesion count, say). The participant one is
-    preferred, because every conversion in `results/dispersion.py` that needs
-    an `n` needs the number of *analysis units the statistic was computed
-    over*, and the registry's own convention is that the first/participant
-    denominator is that one. The units actually used are recorded beside the
-    count rather than assumed.
-    """
+    """`denoms[]` -> ({group_key: n}, units). The participant denominator is
+    preferred where several are stated."""
     if not isinstance(denoms, list) or not denoms:
         return {}, None
     chosen = None
@@ -387,9 +307,7 @@ def _denominator_counts(denoms: Any) -> tuple[dict[str, Optional[int]], Optional
 
 
 def _measurement_rows(measure: dict, *, class_denoms: bool = True):
-    """`classes[].categories[].measurements[]` -> flat rows, carrying the class
-    and category titles down. A single-valued outcome reports exactly one
-    class with one unnamed category, so the flattening is lossless."""
+    """`classes[].categories[].measurements[]` -> flat rows with class and category titles."""
     for klass in _get(measure, "classes") or []:
         class_title = klass.get("title")
         class_counts, _units = (
@@ -402,14 +320,8 @@ def _measurement_rows(measure: dict, *, class_denoms: bool = True):
 
 
 def extract_ctgov_results(study: dict) -> dict[str, list[tuple]]:
-    """One study record from CT.gov API v2 -> rows for each of RESULTS_TABLES.
-
-    `resultsSection` is already in the payload `ingest/ctgov_api.py` fetches --
-    `_fetch_page` sends no `fields` parameter, so the full study record comes
-    back and this module is the parsing that was missing. A study with no
-    results section yields empty lists for every table, which is the ordinary
-    case rather than an error.
-    """
+    """One CT.gov API v2 study record -> rows for each of RESULTS_TABLES.
+    A study with no results section yields empty lists."""
     nct_id = _get(study, "protocolSection", "identificationModule", "nctId")
     results = _get(study, "resultsSection") or {}
     rows: dict[str, list[tuple]] = {name: [] for name in RESULTS_TABLE_NAMES}
@@ -520,9 +432,7 @@ def _as_text(value: Any) -> Optional[str]:
 
 
 def has_results(study: dict) -> Optional[bool]:
-    """CT.gov's own `hasResults` flag, which is a claim about the registry
-    record rather than about what this parser found -- a study can be flagged
-    `hasResults` and still post only participant flow and adverse events.
-    Landed so gate question 1 ("what share of conformed studies have results")
-    is answerable against the registry's answer, not this project's."""
+    """CT.gov's `hasResults` flag: a claim about the record, not about what
+    this parser found. A flagged study may post only participant flow and
+    adverse events."""
     return to_bool(study.get("hasResults"))

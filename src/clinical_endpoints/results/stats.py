@@ -1,31 +1,11 @@
-"""D7, D8 and D9: the empirical distributions the warehouse can now answer for.
+"""`endpoints stats`: the empirical distributions the results section supports.
 
-`endpoints stats --measurement fev1` answers the question the whole results
-tier exists for -- *what variability should I expect for this endpoint?* -- as
-a distribution over the trials that actually reported one, never as a single
-authoritative number.
-
-Three rules shape every function here, and they are the reason the output
-looks the way it does.
-
-**Nothing pools across a boundary that changes the quantity.** Results are
-grouped by (form, unit) before anything is summarised: the SD of FEV1 *change
-from baseline* is not the SD of FEV1, and the SD in litres is not the SD in
-millilitres. Where `scales.yaml` declares a conversion, the group is the
-converted unit and the values are the converted ones; where it does not, each
-unit stands alone. A log-scale SD (from a geometric CV) is never in the same
-group as an arithmetic one.
-
-**Every aggregate ships its denominator.** `coverage` on each group is the
-share of conformed studies for that endpoint that reported a usable
-dispersion. A `stats` output without it would be a machine for producing
-confident numbers off eight arms.
-
-**Baseline variability is its own source, not a fallback** (D8). For a
-change-from-baseline endpoint the SD of the change score and the SD of the raw
-baseline value are different quantities, and converting between them needs the
-baseline/follow-up correlation, which registries do not report. `--source
-baseline` selects the second; nothing silently substitutes it for the first.
+Results are grouped by (form, unit) before anything is summarised, since the
+SD of a change from baseline is not the SD of a raw value and litres are not
+millilitres. Where scales.yaml declares a conversion, the group is the
+converted unit. A log-scale SD is never grouped with an arithmetic one. Every
+aggregate ships its denominator. Baseline variability is its own source
+(`--source baseline`), never a fallback for the change-score SD.
 """
 
 from __future__ import annotations
@@ -48,34 +28,21 @@ SOURCES = ("outcome", "baseline")
 
 @dataclass(frozen=True)
 class StatsFilters:
-    """What to narrow the corpus to. `measurement` is the only one that is
-    normally load-bearing; the rest exist because "the SD of FEV1" is not one
-    number and the caller has to be able to say which one they mean."""
-
     measurement: Optional[str] = None
     form: Optional[str] = None
     scale: Optional[str] = None
     timepoint: Optional[str] = None
     ta: Optional[str] = None
     phase: Optional[str] = None
-    #: `--drug-class`: narrow to studies whose interventions resolved to this
-    #: class. Always the STUDY tier (conformed.study_drug_class), never the arm
-    #: tier -- see `_filter_sql` and docs/DRUG_CLASS_SPEC.md.
+    # Always the study tier (conformed.study_drug_class), never the arm tier.
     drug_class: Optional[str] = None
     source: str = "outcome"
-    #: Wan et al.'s IQR/range estimators are approximations from order
-    #: statistics. Included by default and always counted separately, so a
-    #: library built mostly out of them is visibly that.
     include_approximate: bool = True
-    #: `--only-reported` drops every derived SD, leaving only the ones trials
-    #: reported as standard deviations outright.
     include_derived: bool = True
 
 
 @dataclass
 class SdGroup:
-    """One (form, unit) group's distribution, and its denominator."""
-
     form_id: Optional[str]
     scale_id: Optional[str]
     sd_scale: str
@@ -121,13 +88,8 @@ def _filter_sql(filters: StatsFilters) -> tuple[str, list]:
         where.append("r.nct_id IN (SELECT nct_id FROM raw.studies WHERE phase = ?)")
         params.append(filters.phase)
     if filters.drug_class:
-        # Study tier, deliberately. A dispersion row is per ARM, so the tempting
-        # join is conformed.arm_drug_class -- but the results section's
-        # `outcome_groups.group_key` is a results group id linked to a protocol
-        # arm only by title, and nobody has measured how often those titles
-        # agree (docs/DRUG_CLASS_SPEC.md, "Class is an arm property"). Narrowing
-        # to studies that USED this class is a claim the data supports; claiming
-        # the SD came from an arm that RECEIVED it is not.
+        # Study tier: the results section's group_key links to a protocol arm
+        # only by title, so an arm-level join is not yet defensible.
         where.append(
             "r.nct_id IN (SELECT nct_id FROM conformed.study_drug_class WHERE drug_class_id = ?)"
         )
@@ -145,7 +107,7 @@ def _table_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str) -> bo
 
 
 class NotComputed(RuntimeError):
-    """`endpoints results conform` has not been run against this warehouse."""
+    pass
 
 
 def _require(con: duckdb.DuckDBPyConnection, filters: Optional[StatsFilters] = None) -> None:
@@ -165,8 +127,7 @@ def _require(con: duckdb.DuckDBPyConnection, filters: Optional[StatsFilters] = N
 
 
 def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> dict:
-    """The arm-level SD distribution for the selected endpoint, one block per
-    (form, unit) group, each with its own denominator."""
+    """The arm-level SD distribution, one block per (form, unit) group."""
     _require(con, filters)
     if filters.source not in SOURCES:
         raise ValueError(f"--source must be one of {SOURCES}, got {filters.source!r}")
@@ -176,10 +137,8 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
     if filters.scale:
         scale_filter = " AND coalesce(d.si_scale_id, d.scale_id) = ?"
 
-    # The pooling unit: the converted one where scales.yaml declares a
-    # conversion, otherwise the reported one. Because si_scale_id is a
-    # function of scale_id, a group never mixes converted and unconverted
-    # values -- which is what makes one median per group defensible.
+    # si_scale_id is a function of scale_id, so a group never mixes converted
+    # and unconverted values.
     rows = con.execute(
         f"""
         SELECT
@@ -202,9 +161,6 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
     if not filters.include_derived:
         rows = [row for row in rows if not row[7]]
 
-    # The denominator: conformed studies for this endpoint, whether or not
-    # they reported a usable dispersion. A trial that reported none is absent
-    # from the numerator and present here.
     denominator_rows = con.execute(
         f"""
         SELECT r.form_id, count(DISTINCT r.nct_id)
@@ -283,13 +239,8 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
 
 
 def _quantile(values: list[float], q: float) -> Optional[float]:
-    """A linear-interpolation quantile, defined for a single value.
-
-    `statistics.quantiles` needs at least two points and would raise on the
-    perfectly ordinary case of one arm having reported a usable SD -- which is
-    exactly the case whose number most needs its denominator printed beside
-    it, not an exception.
-    """
+    """Linear-interpolation quantile that is defined for a single value
+    (`statistics.quantiles` raises below two points)."""
     if not values:
         return None
     if len(values) == 1:
@@ -300,8 +251,6 @@ def _quantile(values: list[float], q: float) -> Optional[float]:
     return values[low] + (values[high] - values[low]) * (position - low)
 
 
-#: How many classes `stratify_by_drug_class` will report side by side. A
-#: stratification with thirty blocks is not a comparison, it is a table dump.
 MAX_STRATA = 8
 
 
@@ -313,25 +262,12 @@ def stratify_by_drug_class(
     analyses: bool = False,
     limit: int = MAX_STRATA,
 ) -> list[tuple[str, dict]]:
-    """Run the selected distribution once per drug class present in the filtered
+    """Run the selected distribution once per drug class in the filtered
     corpus, most-studied first. Returns [(drug_class_id, report), ...].
 
-    This is `--by drug-class`, and it is a different question from
-    `--drug-class`. The filter answers "what is the SD in GLP-1 trials"; the
-    stratifier answers "does the SD differ between classes at all", which on the
-    dispersion side is the more useful of the two: the SD of change-from-baseline
-    HbA1c is mostly a property of the population, the assay and the timepoint,
-    not of the drug, so splitting a thin SD library by class mostly buys smaller
-    denominators. Where the strata DO differ sharply, that is evidence the groups
-    were never exchangeable and the pooled number was already wrong.
-
-    On `--analyses` the relationship inverts and the stratifier is the point:
-    pooling treatment effects across mechanisms is not a variance question but a
-    category error, and a median effect across "all drugs" has no referent.
-
-    `kind` defaults to `mechanism` because that is the axis that carries signal.
-    Stratifying by a mixture of kinds would put "PD-1 inhibitor" and "monoclonal
-    antibody" in adjacent blocks as though they were alternatives.
+    `kind` defaults to `mechanism`; stratifying across kinds would put
+    "PD-1 inhibitor" and "monoclonal antibody" in adjacent blocks as if they
+    were alternatives.
     """
     _require(con)
     if not _table_exists(con, "conformed", "study_drug_class"):
@@ -362,23 +298,13 @@ def stratify_by_drug_class(
 
 
 def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> dict:
-    """D9: the effect sizes, p-values and non-inferiority margins reported for
-    the selected endpoint.
-
-    Distributions, never a pooled estimate. Pooling a treatment effect across
-    trials grouped only by conformed endpoint means pooling across different
-    populations, comparators and eras -- that is a systematic review, not a
-    query, and shipping it as a query invites exactly the misuse the audit
-    trail exists to prevent.
-    """
+    """Effect sizes, p-values and non-inferiority margins reported for the
+    selected endpoint. Distributions, never a pooled estimate."""
     _require(con, filters)
     if not _table_exists(con, "raw", "outcome_analyses"):
         raise NotComputed("raw.outcome_analyses is empty -- run `endpoints pull` first")
 
     where, params = _filter_sql(StatsFilters(**{**filters.__dict__, "source": "outcome"}))
-    # The unit the outcome was reported in, carried through so a difference-
-    # scale effect is never pooled across units. Taken from the dispersion
-    # table, which has already resolved it against scales.yaml.
     rows = con.execute(
         f"""
         SELECT
@@ -402,11 +328,9 @@ def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters)
         params,
     ).fetchall()
 
-    # A hazard, odds or risk ratio is dimensionless whatever the underlying
-    # measurement was reported in, so those pool on the effect alone. Every
-    # other effect is on the scale of the endpoint -- a mean difference of
-    # 0.23 L and one of 120 mL are the same size, and their median is not a
-    # number about anything.
+    # Ratio effects are dimensionless and pool on the effect alone; every
+    # other effect is on the endpoint's scale and pools per unit, converted
+    # alongside it.
     effects: dict[tuple, list] = {}
     effect_labels: dict[tuple, str] = {}
     for row in rows:
@@ -414,10 +338,6 @@ def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters)
         dimensionless = kind in RATIO_SCALE_EFFECTS
         key = (kind, None if dimensionless else row[15])
         if row[1] is not None:
-            # A difference-scale effect is on the endpoint's own scale, so it
-            # is converted alongside the unit it is grouped under -- a mean
-            # difference of 120 mL and one of 0.23 L belong in one
-            # distribution, at 0.12 and 0.23 litres, or in neither.
             factor = 1.0 if dimensionless else (row[16] if row[16] is not None else 1.0)
             effects.setdefault(key, []).append((row[1] * factor, row[12]))
         effect_labels.setdefault(key, row[0] or kind)
@@ -441,8 +361,7 @@ def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters)
             }
         )
 
-    # A censored p-value ("<0.001") carries its bound in `p_value_num`, so it
-    # is counted but never treated as an observed value.
+    # A censored p-value ("<0.001") carries its bound in p_value_num; counted, never treated as observed.
     stated = [row for row in rows if row[2] is not None]
     censored = [row for row in stated if row[4] not in (None, "=")]
     exact = [row for row in stated if row[4] in (None, "=") and row[3] is not None]

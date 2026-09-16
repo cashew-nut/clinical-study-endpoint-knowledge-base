@@ -1,4 +1,4 @@
-# USDM SYNTAX TEMPLATES -- how a conformed endpoint becomes a USDM 4.0
+# USDM SYNTAX TEMPLATES: how a conformed endpoint becomes a USDM 4.0
 # SyntaxTemplate with tags.
 #
 # Not a term list, so this file loads through its own path like matching.yaml
@@ -28,7 +28,7 @@
 # GRAMMAR.
 # TIMEPOINTS CARRY THEIR OWN PREPOSITION. render_timepoint returns "at Week 16",
 # "over 6 weeks", "from first dose through Week 52", "until the required number
-# of events" -- so templates write a bare "[ {timepoint}]" and never supply
+# of events", so templates write a bare "[ {timepoint}]" and never supply
 # "at"/"during"/"over" themselves. Doing it the other way round produced
 # "during through Week 52" and "up to until the required number of events",
 # because a third of the timepoint categories render a self-contained phrase
@@ -52,7 +52,7 @@ kind: usdm_syntax_templates
 # Endpoint.purpose is required by USDM and stated by no registry record, so it
 # is derived from the resolved measurement's `domain` (the closed set in
 # vocab/schema.py MEASUREMENT_DOMAINS). Every endpoint carrying one is flagged
-# derived=purpose in its extensions -- unflagged synthesis in a
+# derived=purpose in its extensions, because unflagged synthesis in a
 # standards-conformant document is indistinguishable from sourced fact.
 purpose_by_domain:
   efficacy: "To assess the efficacy of the study intervention."
@@ -83,17 +83,16 @@ templates:
   # docs/EVENT_SEMANTICS_SPEC.md phase C: these three event-family forms name
   # the EVENT, not the assessment. {reference} became optional (a stated or
   # named-endpoint-resolved origin still renders "Time from randomisation to
-  # ..."; a genuinely unresolved one renders "Time to ..." rather than
-  # asserting randomisation nobody stated) and reference_fallback was deleted
-  # -- a form-keyed fallback would assert randomisation on DoR rows (whose
-  # origin is response_onset) and on single-arm trials alike, silently. The
-  # definitional path in named_endpoints.yaml asserts randomisation only
-  # where a citation backs it and the study is actually randomised.
-  # {event} is required: an event-family row whose event does not resolve
-  # must not render the assessment in the event slot ("Time from
-  # randomisation to Tumour burden (RECIST)" -- the confident-and-wrong
-  # rendering this spec exists to kill). It degrades to the not_stated frame
-  # at partial tier instead -- see usdm/project.py's `_render_endpoint`.
+  # ..."; an unresolved one renders "Time to ..." rather than asserting a
+  # randomisation nobody stated) and reference_fallback was deleted, because a
+  # form-keyed fallback would assert randomisation on DoR rows, whose origin is
+  # response_onset, and on single-arm trials alike. The definitional path in
+  # named_endpoints.yaml asserts randomisation only where a citation backs it
+  # and the study is randomised.
+  # {event} is required: an event-family row whose event does not resolve must
+  # not render the assessment in the event slot, as in "Time from randomisation
+  # to Tumour burden (RECIST)". It degrades to the not_stated frame at partial
+  # tier instead; see usdm/project.py's `_render_endpoint`.
   - form: time_to_event
     template: "Time[ from {reference}] to {event}[ {timepoint}]"
 
@@ -110,7 +109,7 @@ templates:
     notes: >-
       {threshold} is required because forms.yaml marks this form
       expects_threshold: true. A responder proportion with no recoverable
-      threshold is a partial, not a templated, endpoint -- rendering "proportion
+      threshold is a partial rather than a templated endpoint: rendering "proportion
       of participants achieving PASI" would assert a responder definition that
       the registry string did not state.
 
@@ -153,7 +152,7 @@ templates:
     notes: >-
       No "per {scale}" group. scales.yaml's rate units are events_per_year and
       count_per_period, whose inline forms are the whole phrase rather than a
-      denominator -- "per events per year" is not a sentence. The unit travels
+      denominator, since "per events per year" is not a sentence. The unit travels
       in extensions until scales.yaml carries a denominator form.
 
   - form: annualized_rate_of_change
@@ -166,18 +165,18 @@ templates:
   - form: correlation
     template: "Correlation involving {measurement}[ {timepoint}]"
     notes: >-
-      Under-modelled, deliberately. A correlation endpoint has two variables and
-      conformed.endpoints has one measurement_id. "Involving" is the honest
-      wording: borrowing {reference} for the second variable would misuse a
-      dimension whose kinds are time_origin, value_reference and
-      external_standard, none of which is "the other thing we correlated
-      against". Fixing this means a schema change, not a template change.
+      Under-modelled by design. A correlation endpoint has two variables and
+      conformed.endpoints has one measurement_id. "Involving" avoids borrowing
+      {reference} for the second variable, which would misuse a dimension whose
+      kinds are time_origin, value_reference and external_standard, none of
+      which means the other thing correlated against. Fixing this means a
+      schema change rather than a template change.
 
   - form: not_stated
     template: "{measurement}[ {timepoint}]"
     notes: >-
       The fallback frame. 31% of rows name a measurement and no form, so this is
-      the most-used template in the file -- it asserts only what was actually
+      the most-used template in the file, and it asserts only what was actually
       resolved.
 
   - form: descriptive
