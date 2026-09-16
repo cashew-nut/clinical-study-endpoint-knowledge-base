@@ -187,7 +187,7 @@ version: 1
 kind: usdm_syntax_templates
 
 # Rendered into Endpoint.purpose, keyed on the resolved measurement's `domain`.
-# Required by USDM, absent from every registry record -- so it is derived, and
+# Required by USDM and absent from every registry record, so it is derived, and
 # every endpoint carrying one is flagged `derived: purpose` in its extensions.
 purpose_by_domain:
   efficacy:               "To assess the efficacy of the study intervention."
@@ -438,8 +438,8 @@ which is what every endpoint in all three CDISC examples does today.
 renders it at conform time by calling this module's own renderer
 (`usdm/project.py`'s `render_endpoint_text`, factored out of `_build_endpoint`
 for exactly this reuse) over the row it just resolved, so the parameterized
-template is queryable directly by SQL -- `SELECT usdm_text FROM
-conformed.endpoints` -- without projecting a whole trial through `usdm show`.
+template is queryable directly by SQL, via `SELECT usdm_text FROM
+conformed.endpoints`, without projecting a whole trial through `usdm show`.
 One rendering path serves both call sites, so the stored column and what
 `usdm show` serves live can never drift apart. `label` and the fidelity tier
 are not similarly materialized: both are one function call away
