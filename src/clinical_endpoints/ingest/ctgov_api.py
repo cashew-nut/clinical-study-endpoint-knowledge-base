@@ -1,23 +1,11 @@
-"""Filtered pull of study data via the public ClinicalTrials.gov API v2, as a
-fallback ingestion backend when AACT access is unavailable.
+"""Pull study data from the public ClinicalTrials.gov API v2.
 
-Produces the *same* raw.studies / raw.design_outcomes shape as ingest/aact.py,
-so everything downstream (vocab sampling, conforming, projection) is
-source-agnostic and doesn't care which backend a given pull came from. Switch
-back to AACT with `--source aact` once AACT access is resolved: the live API is
-also the thing that gets you rate-limited or blocked, so this backend is a
-stopgap, not a replacement.
+Lands the same raw.* shape as ingest/aact.py. Built from the documented API
+v2 shape, not verified against a live response; `CtgovApiError` surfaces the
+full HTTP body when a field or param name is wrong.
 
-CAVEAT: this was built from ClinicalTrials.gov's documented API v2 shape, not
-verified against a live response -- the sandbox this was built in also can't
-reach clinicaltrials.gov (network-policy blocked), so this needs its first
-real test run against the live API. If a field/param name below is wrong,
-`CtgovApiError` surfaces the full HTTP response body, which is normally enough
-to fix the one wrong param name without re-guessing from scratch.
-
-Known gap vs. AACT: `raw.design_outcomes.population` is always NULL here --
-the API v2 outcome objects don't expose the per-outcome population
-description AACT's `design_outcomes.population` column carries.
+`raw.design_outcomes.population` is always NULL here: the API's outcome
+objects do not carry the per-outcome population AACT does.
 """
 
 from __future__ import annotations
@@ -66,10 +54,8 @@ from clinical_endpoints.ta.resolver import (
 API_BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
 SOURCE = "ctgov_api"
 
-# What this backend actually lands, for raw._pull_log.source_tables (differs from
-# the AACT backend: the API exposes no MeSH tree numbers at all, so there is no
-# mesh_terms table here -- instead it lands the coarse browse-branch letters AACT
-# has no equivalent of; see ingest/aact.py).
+# The API exposes no MeSH tree numbers, so no mesh_terms table; it lands the
+# coarse browse branches AACT has no equivalent of.
 SOURCE_TABLES = (
     "studies",
     "design_outcomes",
@@ -80,46 +66,28 @@ SOURCE_TABLES = (
     "browse_condition_branches",
 ) + INTERVENTION_TABLE_NAMES
 
-# ...plus the results section, when `--no-results` was not given. Recorded
-# separately so raw._pull_log.source_tables says which of the two shapes a
-# given pull actually landed -- a warehouse can hold both.
 RESULTS_SOURCE_TABLES = RESULTS_TABLE_NAMES
 
 PAGE_SIZE = 200
 REQUEST_TIMEOUT_S = 30
 MAX_RETRIES = 3
-MAX_PAGES = 25  # safety cap: at PAGE_SIZE=200 this scans up to 5000 studies
+MAX_PAGES = 25  # at PAGE_SIZE=200, up to 5000 studies
 
-# `--ta` isn't a CT.gov API search parameter -- there's no server-side way to
-# ask for "respiratory" the way this project defines it, so filtering has to
-# happen client-side against the pages the phase/since query returns, and
-# recent registrations skew heavily toward whichever conditions dominate
-# trial activity generally (oncology). Without a much deeper scan, a niche
-# `--ta` would starve on the first `MAX_PAGES` pages before ever accumulating
-# `--limit` matches -- see the bug this constant fixes: `--ta respiratory`
-# landing only a handful of studies because 500 non-respiratory studies filled
-# the pull first. This cap only applies when `--ta` is given.
-# `--drug-class` has exactly the same problem and widens the scan the same way,
-# under this same cap -- CT.gov cannot express a drug class server-side either.
-# See docs/DRUG_CLASS_SPEC.md's CLI section.
+# `--ta` and `--drug-class` are not API search parameters, so they are applied
+# client-side against the pages the phase/since query returns. Recent
+# registrations skew toward oncology, so a niche area would starve on the
+# first MAX_PAGES before accumulating `--limit` matches. Applies only when
+# one of those filters is given.
 MAX_PAGES_TA_FILTERED = 150  # up to 30,000 studies scanned
 
 
 class CtgovApiError(RuntimeError):
-    """Raised when the ClinicalTrials.gov API is unreachable or returns an error."""
+    pass
 
 
 def _quote_essie_phrase(value: str) -> str:
-    """Essie's fielded AREA[...] search treats an unquoted multi-word value as
-    separate tokens rather than one phrase -- AREA[LeadSponsorName]Memorial
-    Sloan Kettering would scope only "Memorial" to that field and let "Sloan"
-    and "Kettering" fall through to an unscoped term search. Quoting keeps a
-    multi-word organization name scoped to the one field it belongs in.
-    Unverified against a live response, like the rest of this module's query
-    construction (see the module docstring's CAVEAT) -- a wrong assumption
-    here would surface as an unexpectedly wide/narrow result set, not an HTTP
-    error, since a malformed AREA value doesn't necessarily 400.
-    """
+    """AREA[...] treats an unquoted multi-word value as separate tokens, so a
+    multi-word organisation name is quoted to keep it scoped to the field."""
     return '"' + value.replace('"', '\\"') + '"'
 
 
@@ -143,8 +111,6 @@ def _build_query_term(
 
 
 def _organization_matches(organization: Optional[str], wanted_fragments: tuple[str, ...]) -> bool:
-    """Case-insensitive substring match, as a client-side safety net behind the
-    server-side AREA[LeadSponsorName] filter -- see `run_pull`."""
     if not organization:
         return False
     haystack = organization.lower()
@@ -202,7 +168,7 @@ def _parse_date(raw: Optional[str]) -> Optional[str]:
 def _join_phases(phases: list[str]) -> Optional[str]:
     if not phases:
         return None
-    return "/".join(phases)  # matches AACT's "PHASE1/PHASE2" convention for combined phases
+    return "/".join(phases)  # AACT's "PHASE1/PHASE2" convention
 
 
 def _extract_study_row(study: dict) -> dict:
@@ -223,8 +189,6 @@ def _extract_study_row(study: dict) -> dict:
         ),
         "brief_title": ident.get("briefTitle"),
         "official_title": ident.get("officialTitle"),
-        # Design and eligibility, per CDISC's ct-gov_mapping.xlsx -- see
-        # ingest/design.py for the field-by-field USDM targets.
         "intervention_model": design_info.get("interventionModel"),
         "primary_purpose": design_info.get("primaryPurpose"),
         "allocation": design_info.get("allocation"),
@@ -238,16 +202,12 @@ def _extract_study_row(study: dict) -> dict:
         "minimum_age": eligibility.get("minimumAge"),
         "maximum_age": eligibility.get("maximumAge"),
         "population_description": eligibility.get("studyPopulation"),
-        # The *lead* sponsor only, never a collaborator -- matches the
-        # AREA[LeadSponsorName] filter `_build_query_term` applies server-side.
         "organization": _get_path(proto, "sponsorCollaboratorsModule", "leadSponsor", "name"),
-        # The registry's own flag, landed regardless of `--no-results`.
         "has_results": has_results(study),
     }
 
 
 def _extract_arm_rows(study: dict) -> list[dict]:
-    """protocolSection.armsInterventionsModule.armGroups[] -> raw.design_groups."""
     nct_id = _get_path(study, "protocolSection", "identificationModule", "nctId")
     arms = _get_path(study, "protocolSection", "armsInterventionsModule", "armGroups") or []
     return [
@@ -285,16 +245,14 @@ def _extract_outcome_rows(study: dict) -> list[dict]:
 
 
 def _extract_condition_rows(study: dict) -> list[dict]:
-    """Sponsor free-text conditions, protocolSection.conditionsModule.conditions[] --
-    not MeSH-coded, so this feeds raw.conditions, not raw.browse_conditions."""
+    """Sponsor free-text conditions (not MeSH-coded) -> raw.conditions."""
     nct_id = _get_path(study, "protocolSection", "identificationModule", "nctId")
     conditions = _get_path(study, "protocolSection", "conditionsModule", "conditions") or []
     return [{"nct_id": nct_id, "name": name} for name in conditions if name]
 
 
 def _extract_mesh_rows(study: dict, *, module: str, mesh_type: str) -> list[dict]:
-    """NLM-assigned MeSH terms from derivedSection.<module>.meshes[] (id, term) --
-    shared by conditionBrowseModule and interventionBrowseModule."""
+    """NLM-assigned MeSH terms from derivedSection.<module>.meshes[]."""
     nct_id = _get_path(study, "protocolSection", "identificationModule", "nctId")
     meshes = _get_path(study, "derivedSection", module, "meshes") or []
     rows = []
@@ -314,9 +272,8 @@ def _extract_mesh_rows(study: dict, *, module: str, mesh_type: str) -> list[dict
 
 
 def _extract_condition_branch_rows(study: dict) -> list[dict]:
-    """Coarse top-level MeSH tree branches, derivedSection.conditionBrowseModule
-    .browseBranches[] (abbrev, name) -- e.g. "BC04" = Neoplasms. This is the only
-    tree-level signal the API exposes; there is no per-condition tree number."""
+    """Coarse top-level MeSH branches from conditionBrowseModule.browseBranches[]
+    ("BC04" = Neoplasms), the only tree-level signal the API exposes."""
     nct_id = _get_path(study, "protocolSection", "identificationModule", "nctId")
     branches = _get_path(study, "derivedSection", "conditionBrowseModule", "browseBranches") or []
     rows = []
@@ -329,13 +286,6 @@ def _extract_condition_branch_rows(study: dict) -> list[dict]:
 
 
 def _interventions_for_matching(intervention_rows: dict[str, list[tuple]]) -> list[Intervention]:
-    """The rows `extract_ctgov_interventions` produced -> the `Intervention`
-    objects the drug-class resolver takes.
-
-    The conversion lives here rather than in the resolver because this is the
-    one module that owns both shapes: the resolver reads raw.* tables and should
-    not also know the positional layout of an extractor's tuples.
-    """
     aliases: dict[int, list[str]] = defaultdict(list)
     for _nct_id, ordinal, _other_name, other_name_normalised in intervention_rows.get(
         "intervention_other_names", []
@@ -361,49 +311,18 @@ def run_pull(
     filters: PullFilters,
     on_page: Optional[Callable[[int, int], None]] = None,
 ) -> dict:
-    """Pull filtered studies + their outcome measures from the CT.gov API into raw.*.
+    """Pull filtered studies from the CT.gov API into raw.*.
 
-    Paginates the API, filtering server-side (query.term) and re-checking
-    client-side as a safety net, then does a final client-side sort by
-    start_date desc before truncating to `limit` -- this way "most recent N"
-    stays correct even if the server-side `sort` param turns out to be wrong
-    or unsupported.
+    Filters server-side via query.term and re-checks client-side, then sorts
+    by start_date desc before truncating to `limit`. `ta` and `drug_class`
+    are applied client-side before a study counts toward `limit`, judged by
+    the same per-study functions the resolvers use. `org` is expressed
+    server-side (AREA[LeadSponsorName]).
 
-    `filters.ta`, if given, is also applied client-side, *before* a study
-    counts toward `limit` -- CT.gov's API has no server-side way to ask for
-    this project's therapeutic areas, and recent registrations skew heavily
-    toward whichever conditions dominate trial activity generally (oncology),
-    so filtering only *after* collecting the most recent `limit` studies of
-    any area would starve a smaller area of matches it actually has. Pulling
-    "the 500 most recent respiratory studies" therefore has to keep scanning
-    past non-matching studies -- see `MAX_PAGES_TA_FILTERED`. A study is
-    judged by the exact same layered rules `ta/resolver.py` uses to write
-    conformed.study_therapeutic_area, via `resolve_study_ta_matches`, so a
-    pull-time match always agrees with the truth `pull` resolves afterward.
+    Upserts: raw.studies per nct_id, child tables replaced for this pull's
+    nct_ids only. `filters.replace` drops the tables first.
 
-    `filters.drug_class`, if given, is applied the same way and for the same
-    reason as `ta` -- the API has no server-side notion of a drug class either,
-    so it is judged client-side, before `limit`, by `resolve_study_drug_class_matches`.
-    It shares `ta`'s widened scan cap rather than adding one of its own.
-
-    `filters.org`, if given, is unlike `ta`: the API *can* express it
-    server-side (AREA[LeadSponsorName] in query.term), so it needs none of
-    `ta`'s scan-cap widening -- it narrows `query.term` the same way
-    phase/since already do, and `max_pages`/`target` stay as they are. The
-    client-side `_organization_matches` check is only a safety net behind
-    that, the same role phase/since's re-checks already play.
-
-    Upserts rather than replaces: raw.studies is updated/inserted per nct_id,
-    and every child table (design_outcomes, conditions, browse_*) has its rows
-    for *this pull's* nct_ids replaced -- studies landed by earlier pulls with
-    different filters are never touched. `filters.replace` overrides this: see
-    `ingest/upsert.py`'s `ensure_table`.
-
-    `on_page`, if given, is called as `on_page(page_index, studies_collected)`
-    after each page is fetched and filtered -- the eventual `limit` isn't known
-    until pagination stops (a page can contain studies later dropped by
-    `since`/phase/`ta`/`org` re-checks), so this reports pre-truncation
-    progress rather than a percentage of an unknowable total.
+    `on_page(page_index, studies_collected)` reports pre-truncation progress.
     """
     aact_phases = normalize_phases(list(filters.phases))
     query_term = _build_query_term(aact_phases, filters.since, filters.org)
@@ -483,10 +402,6 @@ def run_pull(
             study_interventions = extract_ctgov_interventions(study)
 
             if wanted_class_ids is not None:
-                # Judged by the exact same per-study match `drug_class/resolver.py`
-                # uses to write conformed.study_drug_class, so a pull-time match
-                # always agrees with the truth `pull` resolves afterward -- the
-                # property `--ta` already has via `resolve_study_ta_matches`.
                 class_matches = resolve_study_drug_class_matches(
                     interventions=_interventions_for_matching(study_interventions),
                     mesh_terms=[m["mesh_term"] for m in browse_interventions],
@@ -507,10 +422,6 @@ def run_pull(
             studies.append(row)
             outcomes_by_nct[nct_id] = _extract_outcome_rows(study)
             if filters.with_results:
-                # Parsed here rather than after truncation because the payload
-                # is only in hand while the page is: `studies` is truncated to
-                # `--limit` below, and rows for the dropped studies are simply
-                # never read back out of this dict.
                 results_by_nct[nct_id] = extract_ctgov_results(study)
             arms_by_nct[nct_id] = _extract_arm_rows(study)
             conditions_by_nct[nct_id] = _extract_condition_rows(study)

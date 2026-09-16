@@ -23,11 +23,11 @@ runs first. Three schemas:
 | schema | written by | holds |
 |---|---|---|
 | `raw` | `pull` | studies, design outcomes, conditions, MeSH browse rows, the registered interventions (`interventions`, `arm_interventions`, `browse_intervention_*`), the results section (`outcome_*`, `baseline_measurements`), the pull log |
-| `vocab` | `vocab validate`, `pull` | the endpoint library, loaded from `vocab/*.yaml` (`pull` loads it only if the warehouse has none -- it never rewrites a loaded one) |
+| `vocab` | `vocab validate`, `pull` | the endpoint library, loaded from `vocab/*.yaml`. `pull` loads it only if the warehouse has none, and never rewrites a loaded one |
 | `conformed` | `conform`, `results conform`, `pull` | `endpoints`, `review_queue`, `study_therapeutic_area`, `study_drug_class`, `arm_drug_class`, `drug_class_review_queue`, `endpoint_results`, `endpoint_dispersion`, `results_review_queue` |
 
 Every command that touches the warehouse takes `--warehouse <path>`, so several
-can sit side by side (one per therapeutic area, one per vocabulary revision):
+can sit side by side, one per therapeutic area or one per vocabulary revision:
 
 ```bash
 uv run endpoints vocab validate --warehouse onc.duckdb
@@ -57,11 +57,11 @@ uv run endpoints pull --phase 3 --limit 500 --source aact
 uv run endpoints pull --phase 3 --limit 500 --no-results
 ```
 
-Deliberately thin: fetch, filter, upsert. Everything downstream is
-source-agnostic, which is what lets the two backends be interchangeable.
-Shows a progress bar while it runs -- per API page for `--source ctgov_api`
-(the eventual study count isn't known until pagination stops), per landed
-table for `--source aact`.
+Thin by design: fetch, filter, upsert. Everything downstream is
+source-agnostic, which is what lets the two backends be interchangeable. A
+progress bar runs per API page for `--source ctgov_api`, since the eventual
+study count is not known until pagination stops, and per landed table for
+`--source aact`.
 
 ### One pull, one wave
 
@@ -81,9 +81,8 @@ axis:
 
 Both derived axes are read out of `vocab.*` tables rather than the YAML, so a
 warehouse with no vocabulary in it cannot classify what it lands. Rather than
-land the studies and leave their classification to a *second, network-costing*
-pull, `pull` loads the vocabulary itself when the warehouse holds none, and
-says so:
+leave classification to a second, network-costing pull, `pull` loads the
+vocabulary itself when the warehouse holds none, and says so:
 
 ```
 Loaded the vocabulary from /path/to/vocab first -- this warehouse had none
@@ -92,21 +91,20 @@ Loaded the vocabulary from /path/to/vocab first -- this warehouse had none
 ```
 
 So `endpoints pull --phase 3` into an empty directory is a complete first run,
-and `--ta`/`--drug-class` work there too. The load is narrow: it fires only
-when the tables an axis needs are *absent*. A complete snapshot pinned by an
-earlier `vocab validate` -- including one validated from an edited
-`--vocab-dir` -- is left exactly as it is, and an edit under `vocab/` still
-takes effect only when you re-validate. The one case where `pull` rewrites
-rather than adds is a warehouse whose vocabulary predates an axis entirely
-(validated by an older release, so it has the therapeutic-area tables and not
-the drug-class ones); there the held snapshot has no answer to give, and the
-message says the reload happened rather than claiming the warehouse had
-nothing. What `pull` writes is checked by exactly the validations `vocab
-validate` runs, and it writes nothing if they fail.
+and `--ta` and `--drug-class` work there too. The load fires only when the
+tables an axis needs are absent. A complete snapshot pinned by an earlier
+`vocab validate`, including one validated from an edited `--vocab-dir`, is left
+as it is, and an edit under `vocab/` takes effect only when you re-validate.
+The one case where `pull` rewrites rather than adds is a warehouse whose
+vocabulary predates an axis entirely, validated by an older release so that it
+has the therapeutic-area tables and not the drug-class ones. There the held
+snapshot has no answer to give, and the message says the reload happened rather
+than claiming the warehouse had nothing. What `pull` writes is checked by the
+same validations `vocab validate` runs, and it writes nothing if they fail.
 
-The one thing a pull cannot backfill is a study it never fetched. Studies landed
-by a pull from *before* a table existed have no rows in it; re-pull to cover
-them, which is why `pull` warns when a schema migration adds a column.
+A pull cannot backfill a study it never fetched. Studies landed before a table
+existed have no rows in it, so re-pull to cover them. This is why `pull` warns
+when a schema migration adds a column.
 
 ### The two backends
 
@@ -114,24 +112,23 @@ Both write the same `raw.studies` / `raw.design_outcomes` shape.
 
 | `--source` | Default? | Needs | Notes |
 |---|---|---|---|
-| `ctgov_api` | yes | nothing (no auth) | Public [ClinicalTrials.gov API v2](https://clinicaltrials.gov/data-api/api). Per-outcome `population` is always NULL -- the API does not expose it. Lands `raw.browse_condition_branches` (coarse MeSH branch letters). |
+| `ctgov_api` | yes | nothing (no auth) | Public [ClinicalTrials.gov API v2](https://clinicaltrials.gov/data-api/api). Per-outcome `population` is always NULL, since the API does not expose it. Lands `raw.browse_condition_branches` (coarse MeSH branch letters). |
 | `aact` | opt-in | `.env` credentials | [AACT](https://aact.ctti-clinicaltrials.org), a Postgres mirror of ClinicalTrials.gov updated daily. Richer and faster, and avoids live-API rate limiting. Lands `raw.mesh_terms` (full MeSH tree numbers). |
 
-The API backend is the default only because AACT access has been unreliable
-(connection timeouts) here; `--source aact` is the better source when you can
+The API backend is the default because AACT access has been unreliable here,
+with connection timeouts. `--source aact` is the better source when you can
 reach it.
 
 If a `--source ctgov_api` pull fails on an HTTP status, the error carries the
-response body,
-which is normally enough to identify a changed field or parameter name --
-`src/clinical_endpoints/ingest/ctgov_api.py` is the one place to fix it. An
-`--source aact` pull that cannot connect is almost always credentials or a
-firewall on port 5432.
+response body, which is normally enough to identify a changed field or
+parameter name. `src/clinical_endpoints/ingest/ctgov_api.py` is the one place
+to fix it. An `--source aact` pull that cannot connect is almost always
+credentials or a firewall on port 5432.
 
 ### Filtering by organisation
 
-`--org` filters to studies whose *lead* sponsor -- never a collaborator --
-matches one of the given fragments, case-insensitively:
+`--org` filters to studies whose lead sponsor, never a collaborator, matches
+one of the given fragments, case-insensitively:
 
 ```bash
 uv run endpoints pull --phase 3 --limit 500 --org "Pfizer"
@@ -140,16 +137,15 @@ uv run endpoints pull --phase 3 --limit 500 --org "Pfizer,AbbVie"   # either spo
 
 Unlike `--ta`, both backends can express this directly: the CT.gov API backend
 adds `AREA[LeadSponsorName]` to `query.term`, and the AACT backend joins
-`ctgov.sponsors` (filtered to `lead_or_collaborator = 'lead'`). Both apply it
-server-side, *before* `--limit`, the same as `--phase`/`--since` -- so there's
-none of `--ta`'s scan-cap widening to worry about, and no `vocab validate`
-precondition, since `--org` doesn't touch the vocabulary at all. The matched
-lead sponsor name lands in `raw.studies.organization` for every pull, whether
-or not `--org` was given.
+`ctgov.sponsors` filtered to `lead_or_collaborator = 'lead'`. Both apply it
+server-side and before `--limit`, as with `--phase` and `--since`, so there is
+no scan-cap widening and no `vocab validate` precondition. The matched lead
+sponsor name lands in `raw.studies.organization` for every pull, whether or not
+`--org` was given.
 
-`--org` composes with `--ta` (both narrow the same pull, before `--limit`) and
-follows the same upsert invariant as every other filter: it only ever affects
-studies *this* pull lands, never pruning a study an earlier pull with
+`--org` composes with `--ta`, both narrowing the same pull before `--limit`,
+and follows the same upsert invariant as every other filter: it affects only
+the studies this pull lands, never pruning a study an earlier pull with
 different filters already landed.
 
 ### AACT credentials (only for `--source aact`)
@@ -167,15 +163,15 @@ different filters already landed.
    ```
 
 `.env` is gitignored. Credentials are read from the environment by DuckDB's
-`postgres` extension itself (libpq conventions, via an empty `ATTACH ''`
-connection string) -- never interpolated into SQL, never written to the
-warehouse.
+`postgres` extension itself, by libpq conventions via an empty `ATTACH ''`
+connection string. They are never interpolated into SQL and never written to
+the warehouse.
 
 ### What a pull does to what is already there
 
-`pull` **upserts**. Studies matched by *this* pull are updated if present and
-inserted if new; studies landed by an earlier pull -- different filters, a
-different `--source`, whatever -- are left untouched. So:
+`pull` **upserts**. Studies matched by this pull are updated if present and
+inserted if new. Studies landed by an earlier pull, whatever its filters or
+`--source`, are left untouched. So:
 
 * re-running the same filters refreshes those studies in place;
 * running different filters accumulates alongside what is already there;
@@ -185,32 +181,31 @@ Each pull is logged to `raw._pull_log` (`pull_id`, `pulled_at`, `source`,
 `filters_json`, `source_tables`, `row_counts`); `source_tables` differs by
 backend, as the table above notes.
 
-`--replace` is the explicit opt-out of all of the above: it drops and
-recreates every raw.* table this pull would otherwise upsert into, *before*
-landing this pull's rows, so raw.* ends up holding only what this one pull
-found -- studies from any earlier pull, with any filters or `--source`, are
-gone, not just left unmatched:
+`--replace` is the opt-out of all of the above. It drops and recreates every
+`raw.*` table this pull would otherwise upsert into, before landing this pull's
+rows, so `raw.*` ends up holding only what this one pull found. Studies from
+any earlier pull, with any filters or `--source`, are gone, not just left
+unmatched:
 
 ```bash
 uv run endpoints pull --phase 3 --limit 500 --org "Pfizer" --replace
 ```
 
-Use it when you want the warehouse to mirror exactly one set of filters
-rather than accumulate across runs -- e.g. after deciding an earlier pull's
-filters were wrong and you don't want its studies lingering. It is silent
-about *which* studies it drops (they are simply gone, not migrated or
-reported row by row) but the CLI prints one clear warning that it happened;
-`raw._pull_log` still accumulates a row for the replacing pull itself, with
-`"replace": true` in `filters_json`, so the fact that a replace occurred stays
-in the audit trail even though its rows don't. This bypasses schema
-reconciliation too (there is nothing to migrate when the table is about to be
-dropped anyway), so a `--replace` pull never reports a "Migrated raw.X" line.
+Use it when you want the warehouse to mirror exactly one set of filters rather
+than accumulate across runs, for instance after deciding an earlier pull's
+filters were wrong. It does not report which studies it drops, but the CLI
+prints one warning that it happened. `raw._pull_log` still accumulates a row
+for the replacing pull, with `"replace": true` in `filters_json`, so the
+replace stays in the audit trail even though the dropped rows do not. It
+bypasses schema reconciliation too, since there is nothing to migrate when the
+table is about to be dropped, so a `--replace` pull never reports a
+"Migrated raw.X" line.
 
 > `raw._pull_log.pulled_at` is a `TIMESTAMPTZ`, and DuckDB's Python client can
 > only materialise one as a `datetime` if `pytz` is importable. A query of your
 > own that selects it may fail with `Required module 'pytz' failed to import`.
 > Select it as text (`CAST(pulled_at AS VARCHAR)`) or `pip install pytz`.
-> Nothing in this project needs it -- the one place that reads the column
+> Nothing in this project needs it: the one place that reads the column
 > renders it in SQL.
 
 ### Schema reconciliation
@@ -224,13 +219,13 @@ Migrated raw.studies: added 11 columns (intervention_model, primary_purpose,
 allocation, masking, +7 more); added PRIMARY KEY (nct_id) -- 4,812 rows preserved
 ```
 
-Migration, not a refresh: dropping and re-pulling would discard every study
-landed by an earlier pull with different filters, which is exactly what
-upserting exists to prevent. Rows violating a newly declared key (duplicates,
-NULLs) are dropped and counted; columns the current schema no longer declares
-are dropped and named. Where rows cannot be carried across at all -- a value
-that will not cast, or no key column to key them by -- `pull` stops and says so
-rather than choosing for you, leaving the table untouched:
+It migrates rather than refreshing: dropping and re-pulling would discard every
+study landed by an earlier pull with different filters, which is what upserting
+exists to prevent. Rows violating a newly declared key, whether duplicates or
+NULLs, are dropped and counted, and columns the current schema no longer
+declares are dropped and named. Where rows cannot be carried across at all,
+because a value will not cast or there is no key column to key them by, `pull`
+stops, says so, and leaves the table untouched:
 
 ```
 raw.studies has 4,812 rows but no nct_id column, so they cannot be keyed by the
@@ -242,9 +237,9 @@ once you're satisfied nothing in it is worth keeping, then re-run the pull.
 
 `pull` resolves every pulled study's therapeutic area(s) from its MeSH
 conditions and interventions into `conformed.study_therapeutic_area`, as soon as
-`vocab validate` has loaded the mapping. All matched areas are kept -- a
-lung-cancer trial is oncology *and* respiratory -- with one marked `is_primary`
-by the precedence in `therapeutic_areas.yaml`.
+`vocab validate` has loaded the mapping. All matched areas are kept, so a
+lung-cancer trial is both oncology and respiratory, with one marked
+`is_primary` by the precedence in `therapeutic_areas.yaml`.
 
 ```bash
 uv run endpoints vocab validate                              # loads the MeSH -> TA mapping
@@ -252,52 +247,50 @@ uv run endpoints pull --phase 3 --limit 500 --ta oncology
 uv run endpoints pull --phase 3 --limit 500 --ta oncology,cardiovascular
 ```
 
-`--ta` additionally *filters* the pull down to studies matching one of the
-requested areas -- *before* `--limit` is applied, not after. Neither backend's
-source (the CT.gov API's `query.term`, AACT's SQL) can express this project's
-therapeutic areas directly, so `pull` fetches phase/since-matching studies
-most-recent-first and keeps scanning past ones that don't match, rather than
-truncating to the most recent `--limit` studies of *any* area and only then
-discarding what doesn't match -- the latter would starve a smaller area
-(respiratory, say) of matches it actually has, because registrations skew
-heavily toward whichever conditions dominate trial activity generally
-(oncology). The scan is capped (`ingest/ctgov_api.py`'s `MAX_PAGES_TA_FILTERED`,
-`ingest/aact.py`'s `TA_MAX_SCANNED`); a `--ta` for a niche area combined with a
-wide `--phase`/`--since` can still land fewer than `--limit` studies, and
-`pull` says so when that happens. `--ta` filters against the mapping loaded
-into `vocab.*`, never the YAML -- but it does not require you to have run
-`vocab validate` yourself: a `pull` into a warehouse that holds no vocabulary
-loads one first (see [One pull, one wave](#one-pull-one-wave)).
+`--ta` also filters the pull down to studies matching one of the requested
+areas, before `--limit` is applied rather than after. Neither backend's source,
+the CT.gov API's `query.term` or AACT's SQL, can express this project's
+therapeutic areas directly. So `pull` fetches phase- and since-matching studies
+most-recent-first and keeps scanning past ones that do not match. Truncating to
+the most recent `--limit` studies of any area and only then discarding
+non-matches would starve a smaller area such as respiratory of matches it
+actually has, because registrations skew heavily toward whichever conditions
+dominate trial activity generally. The scan is capped by
+`MAX_PAGES_TA_FILTERED` in `ingest/ctgov_api.py` and `TA_MAX_SCANNED` in
+`ingest/aact.py`, so a `--ta` for a niche area combined with a wide `--phase`
+or `--since` can still land fewer than `--limit` studies, and `pull` says so
+when it does. `--ta` filters against the mapping loaded into `vocab.*`, never
+the YAML, but it does not require you to have run `vocab validate` yourself: a
+`pull` into a warehouse that holds no vocabulary loads one first, as described
+in [One pull, one wave](#one-pull-one-wave).
 
-`--ta` only ever affects studies *this* pull lands: a study an earlier pull
-with different filters already landed is never removed just because it
-doesn't match this pull's `--ta` (the same upsert invariant every pull
-honours -- see "The warehouse" above).
+`--ta` affects only the studies this pull lands. A study an earlier pull with
+different filters already landed is never removed just because it does not
+match this pull's `--ta`, the same upsert invariant every pull honours.
 
-The mapping is layered -- intervention rules, exact descriptor overrides, MeSH
-tree prefixes, descriptor regexes, defaults -- and the layers can disagree.
-`ta diff-tree` runs the tree-prefix layer alone and the regex layer alone over
-every pulled study's conditions and reports every disagreement, most frequent
-first:
+The mapping is layered, in the order intervention rules, exact descriptor
+overrides, MeSH tree prefixes, descriptor regexes and defaults, and the layers
+can disagree. `ta diff-tree` runs the tree-prefix layer alone and the regex
+layer alone over every pulled study's conditions and reports every
+disagreement, most frequent first:
 
 ```bash
 uv run endpoints ta diff-tree --out ta_tree_diff.csv
 ```
 
 Each disagreement is either a wrong tree prefix or a wrong regex in
-`vocab/ta_mesh_mapping.yaml`, and this diff is the only way to find them
-without a MeSH expert. See
+`vocab/ta_mesh_mapping.yaml`. See
 [`SAMPLING_AND_TA_RESOLUTION_SPEC.md`](SAMPLING_AND_TA_RESOLUTION_SPEC.md) for
 the resolution order and
 [`vocab/README.md`](../vocab/README.md) for the mapping itself.
 
 ## Drug classes
 
-`pull` also resolves what each study was *testing* -- its interventions -- into
+`pull` also resolves each study's interventions into
 `conformed.study_drug_class`. There is no separate drug-class pull and no
 separate resolve step: the interventions are in the payload `pull` already
 fetches, so an ordinary `endpoints pull --phase 3` lands them and classifies
-them in the same pass. `--drug-class` is a *filter* on that, not the way you
+them in the same pass. `--drug-class` is a filter on that, not the way you
 obtain the data.
 
 Like therapeutic areas, all matched classes are kept, with one marked
@@ -306,19 +299,19 @@ areas, every class declares a `kind`:
 
 | kind | example | what it claims |
 |---|---|---|
-| `mechanism` | `glp1_receptor_agonist` | the target or pathway acted on -- the axis that carries signal for comparing endpoints |
+| `mechanism` | `glp1_receptor_agonist` | the target or pathway acted on, the axis that carries signal for comparing endpoints |
 | `pharmacologic` | `antineoplastic_agent` | the coarse action level, from CT.gov's browse branches |
 | `modality` | `monoclonal_antibody` | what kind of product it is; orthogonal to the other two |
 | `control` | `placebo` | a comparator arm, so it can be excluded |
 
 A study normally carries several at once, and that is correct: pembrolizumab is
-a PD-1 inhibitor *and* a monoclonal antibody, and a trial of pembrolizumab plus
-carboplatin is a checkpoint-inhibitor trial *and* a platinum-chemotherapy trial.
-Filter on `kind` whenever you group, or you will compare a mechanism against a
-modality as though they were alternatives.
+both a PD-1 inhibitor and a monoclonal antibody, and a trial of pembrolizumab
+plus carboplatin is both a checkpoint-inhibitor trial and a
+platinum-chemotherapy trial. Filter on `kind` whenever you group, or you will
+compare a mechanism against a modality as though they were alternatives.
 
 ```bash
-# Every study's classes, from an ordinary pull -- no flag needed
+# Every study's classes, from an ordinary pull; no flag needed
 uv run endpoints pull --phase 3 --limit 500
 
 # ...or narrow the corpus to one class, or several (OR'd)
@@ -328,7 +321,7 @@ uv run endpoints pull --phase 3 --limit 500 --drug-class sglt2_inhibitor,dpp4_in
 
 `--drug-class` filters exactly as `--ta` does, and for the same reason: neither
 backend can express it server-side, so `pull` scans past non-matching studies
-*before* `--limit` truncates, under the same cap.
+before `--limit` truncates, under the same cap.
 
 ### What the corpus is made of, and what it missed
 
@@ -338,35 +331,34 @@ uv run endpoints drug-class distribution --kind mechanism --primary-only
 uv run endpoints drug-class coverage                     # the denominator, and the review queue
 ```
 
-`distribution` always prints the share of studies carrying a named class,
-because a class list without its denominator is a machine for making a thin axis
-look complete. `coverage` adds the breakdown by kind and lists the most frequent
-interventions no layer could class -- those go to
+`distribution` always prints the share of studies carrying a named class, so a
+thin axis cannot read as a complete one. `coverage` adds the breakdown by kind
+and lists the most frequent interventions no layer could class. Those go to
 `conformed.drug_class_review_queue` and are the input to the next vocabulary
-round, exactly as `endpoints review list` is on the endpoint side.
+round, as `endpoints review list` is on the endpoint side.
 
 ### Where the two backends differ
 
-The CT.gov API exposes MeSH intervention *ancestors* and coarse pharmacologic
-*browse branches*; AACT publishes neither, so on an AACT pull those two layers
+The CT.gov API exposes MeSH intervention ancestors and coarse pharmacologic
+browse branches. AACT publishes neither, so on an AACT pull those two layers
 contribute nothing and classification rests on the curated agent names and WHO
-INN stems. AACT is the stronger of the two for the **arm** tier, though: it has
-a real `design_group_interventions` join table where the API offers only arm
-labels to string-match. `conformed.arm_drug_class.link_method` records which
-path produced each row.
+INN stems. AACT is the stronger of the two for the arm tier: it has a real
+`design_group_interventions` join table where the API offers only arm labels to
+string-match. `conformed.arm_drug_class.link_method` records which path produced
+each row.
 
 ```bash
 uv run endpoints drug-class diff-ancestors --out drug_class_ancestor_diff.csv
 ```
 
 `diff-ancestors` runs the curated layers alone and NLM's ancestry alone and
-reports every disagreement -- each one is either a wrong `agent_names` entry or
-a wrong `ancestor_rules` entry in `vocab/drug_class_mesh_mapping.yaml`. It
-reports; it does not reconcile. On an AACT pull it will correctly say there was
-nothing to diff.
+reports every disagreement. Each one is either a wrong `agent_names` entry or a
+wrong `ancestor_rules` entry in `vocab/drug_class_mesh_mapping.yaml`. It
+reports rather than reconciling. On an AACT pull it says there was nothing to
+diff.
 
 See [`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md) for the layer order, what is
-deliberately *not* modelled (ATC codes, chemical structure), and the four counts
+deliberately not modelled (ATC codes, chemical structure), and the four counts
 a first live pull still owes this axis.
 
 ## The vocabulary
@@ -382,12 +374,12 @@ Validation covers id uniqueness and format, synonyms claimed by more than one
 term, regex compilability, cross-file referential integrity (a `default_scale`
 naming no scale, a `direction_by_ta` keyed on a therapeutic area that does not
 exist), match-precedence lists that have drifted out of step with their terms,
-tied precedence/priority values, and closed value sets. Errors fail the command
-and write nothing; warnings are reported and do not.
+tied precedence and priority values, and closed value sets. Errors fail the
+command and write nothing. Warnings are reported and do not.
 
 Run it after any edit under `vocab/`, and before any `conform` you intend to
-trust -- the pipeline reads the loaded tables, so an unvalidated edit simply
-does not take effect.
+trust. The pipeline reads the loaded tables, so an unvalidated edit does not
+take effect.
 
 ### Sampling registry text for a vocabulary review
 
@@ -400,7 +392,7 @@ from evidence rather than from imagination. It reads `raw.design_outcomes`, so
 uv run endpoints vocab sample
 uv run endpoints vocab sample --min-frequency 3 --singleton-sample 500 --seed 7
 
-# Joinable row-level sample -- what measure had this time_frame/description?
+# Joinable row-level sample: what measure had this time_frame/description?
 uv run endpoints vocab sample --format rows --limit 1000
 
 # Just primary outcomes, where efficacy endpoints concentrate
@@ -408,11 +400,12 @@ uv run endpoints vocab sample --outcome-type primary
 ```
 
 Every value occurring `--min-frequency` (default 2) times or more is kept
-uncapped; the tail below that is a seeded random sample (`--singleton-sample`,
-default 300), not an alphabetical head, so one-off endpoint wordings are fairly
-represented. `vocab_review_coverage.csv` (or `<out>_coverage.csv`) reports, per
-field, what fraction of rows the kept values account for -- machine-readable, so
-the next review round can diff it against this one. The reasoning is in
+uncapped. The tail below that is a seeded random sample (`--singleton-sample`,
+default 300) rather than an alphabetical head, so one-off endpoint wordings are
+fairly represented. `vocab_review_coverage.csv`, or `<out>_coverage.csv`,
+reports per field what fraction of rows the kept values account for, in a
+machine-readable form the next review round can diff against this one. The
+reasoning is in
 [`SAMPLING_AND_TA_RESOLUTION_SPEC.md`](SAMPLING_AND_TA_RESOLUTION_SPEC.md).
 
 ## Conforming endpoints
@@ -426,32 +419,32 @@ a large pull the row-conforming step is parallelized across worker processes
 by default once there's enough work to be worth it (`--jobs N` to pick the
 worker count yourself, `--jobs 1` to force serial).
 
-Reads `raw.design_outcomes` and the `vocab.*` tables -- never the YAML directly
--- and, for every outcome row:
+Reads `raw.design_outcomes` and the `vocab.*` tables, never the YAML directly,
+and for every outcome row:
 
 1. resolves a **named endpoint** first, where the string names one outright
    (`PFS`, `OS`, `DFS`), which fixes the event and time origin definitionally;
 2. runs `matching.yaml`'s **cascade** (`measure` → `description` →
    `time_frame`, `exact` → `syntactic_rule`) for form, measurement, reference
    and event;
-3. falls back to **token-overlap semantic matching** for measurement -- the one
+3. falls back to **token-overlap semantic matching** for measurement, the one
    dimension whose cascade ends in the review queue rather than in a default
    term;
 4. classifies the **timepoint** (preprocessing → `not_if_matches` guards →
    patterns in priority order → named-group extraction);
 5. parses the **threshold** comparator, value and unit;
 6. **derives direction** from the resolved form's `direction_rule` and the
-   measurement's `default_direction` / `event_polarity` -- direction is never
+   measurement's `default_direction` or `event_polarity`. Direction is never
    matched from text.
 
-Two vocabulary-driven disambiguation overrides apply after the plain cascade:
-`forms.yaml`'s `disambiguation` (a generically ambiguous form pair, resolved on
-the measurement's polarity and domain rather than on wording), and
-`timepoint_patterns.yaml`'s (a baseline "through"/"up to" call, resolved by the
-resolved form).
+Two vocabulary-driven disambiguation overrides apply after the plain cascade.
+`forms.yaml`'s `disambiguation` resolves a generically ambiguous form pair on
+the measurement's polarity and domain rather than on wording, and
+`timepoint_patterns.yaml`'s resolves a baseline "through" or "up to" call by
+the resolved form.
 
-A row whose measurement does not resolve -- not even semantically -- is written
-to `conformed.review_queue` and never conformed at any confidence. Everything
+A row whose measurement does not resolve, not even semantically, is written to
+`conformed.review_queue` and never conformed at any confidence. Everything
 else lands in `conformed.endpoints`, where `form_match_method`,
 `measurement_match_method`, `reference_match_method` and `event_match_method`
 record whether each dimension was an `exact` hit, an inferred `syntactic_rule`,
@@ -459,15 +452,14 @@ or a `semantic` fallback, alongside per-dimension confidence and the source
 field the value came from.
 
 `conformed.endpoints.usdm_text` carries each row's rendered USDM
-`SyntaxTemplate.text` -- the parameterized sentence with `<usdm:tag
-name="..."/>` markup in place of the resolved values, or (for forms with no
-template, like `descriptive`, or a row whose required tag still didn't
-resolve) the escaped raw registry string -- so it is queryable directly by
-SQL rather than only through `usdm show`. `conform` renders it with the same
-code `usdm show` uses live (`usdm/project.py`'s `render_endpoint_text`), so
-the two can never disagree.
+`SyntaxTemplate.text`: the parameterized sentence with `<usdm:tag name="..."/>`
+markup in place of the resolved values, or the escaped raw registry string for
+forms with no template, such as `descriptive`, and for rows whose required tag
+did not resolve. It is therefore queryable by SQL rather than only through
+`usdm show`. `conform` renders it with the same code `usdm show` uses live,
+`render_endpoint_text` in `usdm/project.py`, so the two cannot disagree.
 
-`conform` replaces both tables wholesale each run -- it is a pure function of
+`conform` replaces both tables wholesale each run. It is a pure function of
 `raw.*` plus `vocab.*`, so re-running after a vocabulary edit is the normal way
 to see the effect of that edit.
 
@@ -480,17 +472,17 @@ uv run endpoints review list --status pending
 ```
 
 Each entry carries the raw strings, the reason, the best semantic candidate and
-its score -- so the queue doubles as the shortlist for the next vocabulary
-round. Resolving entries from the CLI (`review resolve`) is
-[not implemented](#not-implemented); work the queue with SQL for now.
+its score, so the queue doubles as the shortlist for the next vocabulary round.
+Resolving entries from the CLI with `review resolve` is
+[not implemented](#not-implemented). Work the queue with SQL for now.
 
 ## The results section
 
-A `pull` also lands what each study *reported*, for the studies that posted
-results -- five tables mirroring the protocol side's shape. On by default,
-because the CT.gov API returns the results section inside the payload the pull
-already fetches; `--no-results` opts out, and saves warehouse size rather than
-network.
+A `pull` also lands what each study reported, for the studies that posted
+results, in five tables mirroring the protocol side's shape. This is on by
+default, because the CT.gov API returns the results section inside the payload
+the pull already fetches. `--no-results` opts out, and saves warehouse size
+rather than network.
 
 | table | grain | carries |
 |---|---|---|
@@ -507,19 +499,19 @@ section itself was landed.
 uv run endpoints results conform
 ```
 
-Conforms the reported titles through the *same* engine `conform` uses -- no
-second matcher -- and writes three tables:
+Conforms the reported titles through the same engine `conform` uses, with no
+second matcher, and writes three tables:
 
 * **`conformed.endpoint_results`**, one row per reported outcome and per
   baseline characteristic, carrying the same dimension columns as
   `conformed.endpoints` plus a link back to the planned endpoint:
-  `link_method` is `exact_title` (the reported title *is* a planned `measure`),
+  `link_method` is `exact_title` (the reported title is a planned `measure`),
   `conformed_measurement` (different strings, same conformed measurement in the
   same study), or NULL.
 * **`conformed.endpoint_dispersion`**, one row per arm-level measurement, with
   an `sd_estimate` and `sd_method` / `sd_is_derived` / `sd_is_approximate` /
-  `sd_inputs` recording exactly how it was arrived at -- or `sd_skip_reason`
-  where none could be.
+  `sd_inputs` recording how it was arrived at, or `sd_skip_reason` where none
+  could be.
 * **`conformed.results_review_queue`**, for a reported title that conforms
   nowhere (`measurement_unmatched`) and for a reported outcome with no planned
   counterpart at all (`unlinked_to_planned`). Its own table, not
@@ -533,11 +525,11 @@ uv run endpoints results coverage
 
 The four numbers this tier was gated on, measured against your warehouse: what
 share of conformed studies posted results; what share of reported titles match
-a planned one; the exact `param_type` / `dispersion_type` value sets in play
+a planned one; the exact `param_type` and `dispersion_type` value sets in play
 and which of them the vocabulary does not yet recognise; and what share of
 `unit_of_measure` strings normalise against `scales.yaml`. Section 3's
-"not recognised" list is the input to the next vocabulary round --
-see [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md#the-gate).
+"not recognised" list is the input to the next vocabulary round. See
+[`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md#the-gate).
 
 ## Endpoint variability
 
@@ -570,42 +562,41 @@ No SD from: dispersion_type_unrecognised 1
 ```
 
 **`--drug-class` filters; `--by drug-class` stratifies**, and which you want
-depends on what you are asking. On the SD side the filter is the useful one
-("what should I assume for FEV1 in LAMA trials"): the SD is mostly a property of
-the population, the assay and the timepoint rather than the drug, so stratifying
-mostly buys smaller denominators -- its real use is as a homogeneity check,
-because strata that differ sharply mean the pooled number was never
-exchangeable. On `--analyses` that inverts and the stratifier is the point:
-pooling treatment effects across mechanisms is a category error, and a median
-effect across "all drugs" has no referent. `--by drug-class` stratifies over
-`mechanism` classes by default (`--by-kind` changes that) and the strata are not
-disjoint -- a combination trial appears under every class it used.
+depends on what you are asking. On the SD side the filter is the useful one,
+as in "what should I assume for FEV1 in LAMA trials". The SD is mostly a
+property of the population, the assay and the timepoint rather than the drug,
+so stratifying mostly buys smaller denominators. Its use there is as a
+homogeneity check: strata that differ sharply mean the pooled number was never
+exchangeable. On `--analyses` that inverts and the stratifier is the point,
+since pooling treatment effects across mechanisms is a category error and a
+median effect across all drugs has no referent. `--by drug-class` stratifies
+over `mechanism` classes by default, which `--by-kind` changes, and the strata
+are not disjoint: a combination trial appears under every class it used.
 
-`--drug-class` is the **study** tier: it narrows to trials that used the class.
-It does not claim the SD came from an arm that received it. See
+`--drug-class` is the study tier. It narrows to trials that used the class, and
+does not claim the SD came from an arm that received it. See
 [`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md#class-is-an-arm-property-not-a-study-property)
 for why the arm tier, which is written to `conformed.arm_drug_class`, is not
 joined here yet.
 
-One block per **(form, unit)** group, always: the SD of a change from baseline
-is not the SD of a raw value, and the SD in litres is not the SD in
-millilitres. `--form` and `--scale` narrow the selection; they are not needed
-to make the output safe. Where `scales.yaml` declares a conversion the group is
-the converted unit and says so.
+There is always one block per **(form, unit)** group, because the SD of a
+change from baseline is not the SD of a raw value and the SD in litres is not
+the SD in millilitres. `--form` and `--scale` narrow the selection and are not
+needed to make the output safe. Where `scales.yaml` declares a conversion, the
+group is the converted unit and says so.
 
 | flag | what it does |
 |---|---|
-| `--source baseline` | baseline characteristics instead of reported outcomes -- a larger denominator and a *different quantity*, never a fallback |
+| `--source baseline` | baseline characteristics instead of reported outcomes: a larger denominator and a different quantity, never a fallback |
 | `--analyses` | effect sizes, p-values and non-inferiority margins instead of the SD distribution |
 | `--only-reported` | drop every derived SD, leaving only the ones trials reported outright |
 | `--no-approximate` | drop the Wan et al. IQR/range estimates, which are approximations rather than conversions |
 | `--json` | the same report as JSON, including every group's coverage |
 
-The **coverage** line is the share of conformed studies *for that endpoint*
-that reported a usable dispersion. Narrowing with `--only-reported` shrinks the
-numerator and leaves the denominator alone, which is the point: a `stats`
-output without its denominator is a machine for producing confident numbers off
-eight arms.
+The **coverage** line is the share of conformed studies for that endpoint that
+reported a usable dispersion. Narrowing with `--only-reported` shrinks the
+numerator and leaves the denominator alone, so the output always reports how
+many arms it stands on.
 
 ## Projecting to USDM 4.0
 
@@ -632,15 +623,15 @@ class instances (`objectives[]`, `dictionaries[]`, `bcSurrogates[]`,
 `analysisPopulations[]`) inside a knowledge-base envelope (`profile`, `study`,
 `provenance`) whose `profile` field states that boundary machine-readably.
 `--envelope wrapper` is a full, canonical USDM `Wrapper` for consumers whose
-tooling only eats one; it carries no `profile` because it needs none, and names
-every attribute it had to default in `provenance.synthesized[]`.
+tooling accepts only that. It carries no `profile` because it needs none, and
+names every attribute it had to default in `provenance.synthesized[]`.
 
 **Three fidelity tiers.** Every row in `raw.design_outcomes` becomes exactly one
 USDM `Endpoint`: `templated` (every required tag resolved), `partial` (an
 optional group dropped, or the form was `not_stated`), or `verbatim` (the
 registry string passed through, for rows `conform` sent to the review queue). A
-study whose endpoints did not conform renders less richly, never appears to have
-fewer endpoints.
+study whose endpoints did not conform renders less richly, never with fewer
+endpoints.
 
 **Announced defaults.** `usdm coverage` also reports, per tag, how many
 `templated` endpoints stand on an announced default rather than a value
@@ -651,7 +642,7 @@ defaulted attribute carries its own `derived` flag in `extensionAttributes`
 (`purpose`, `reference`, `objective`), not one blanket flag per endpoint.
 
 **Where the decomposition goes.** Each endpoint's decomposition rides along in
-`extensionAttributes`, split into what it *means* (`decomposition`) and how
+`extensionAttributes`, split into what it means (`decomposition`) and how
 confidently and by what method each dimension was decided (`conformance`).
 Templates live in [`../vocab/usdm_templates.yaml`](../vocab/usdm_templates.yaml),
 one per form id, validated by `vocab validate` with everything else.
@@ -683,9 +674,9 @@ curl "localhost:8000/v4/studies/NCT04162249/endpoints?level=primary&flatten=true
 curl localhost:8000/v4/vocab/measurement/pasi
 ```
 
-Every response carries `X-USDM-Version` and an `ETag` -- a content hash of the
+Every response carries `X-USDM-Version` and an `ETag`, a content hash of the
 projection with the build timestamp excluded, so an unchanged warehouse always
-produces the same tag. A study that was never pulled is a 404; one that was
+produces the same tag. A study that was never pulled is a 404, and one that was
 pulled but never conformed is a 409.
 
 ## Not implemented
@@ -695,6 +686,6 @@ anything:
 
 | command | status | do this instead |
 |---|---|---|
-| `endpoints query "<sql>"` | not implemented | `duckdb warehouse.duckdb -c "<sql>"` -- see [`QUERY_CHEATSHEET.md`](QUERY_CHEATSHEET.md) |
+| `endpoints query "<sql>"` | not implemented | `duckdb warehouse.duckdb -c "<sql>"`, see [`QUERY_CHEATSHEET.md`](QUERY_CHEATSHEET.md) |
 | `endpoints export --query … --format …` | not implemented | `duckdb warehouse.duckdb -c "COPY (<sql>) TO 'out.parquet'"` |
 | `endpoints review resolve <id> <term>` | not implemented | edit `vocab/*.yaml`, re-run `vocab validate` and `conform` |

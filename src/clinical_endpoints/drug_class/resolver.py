@@ -1,36 +1,18 @@
-"""Layered intervention -> drug-class resolution, plus the curated-vs-NLM diff
-tool (docs/DRUG_CLASS_SPEC.md).
+"""Layered intervention -> drug-class resolution, and the curated-vs-NLM diff.
 
-Reads the `vocab.drug_class_*` tables `vocab validate` writes and the
-`raw.interventions` / `raw.intervention_other_names` / `raw.arm_interventions` /
-`raw.browse_interventions` / `raw.browse_intervention_ancestors` /
-`raw.browse_intervention_branches` tables `pull` now lands, and writes
+Reads `vocab.drug_class_*` and the raw intervention tables; writes
 `conformed.study_drug_class`, `conformed.arm_drug_class` and
-`conformed.drug_class_review_queue`.
+`conformed.drug_class_review_queue`. Shaped like `ta/resolver.py`, with two
+differences forced by the data:
 
-Deliberately shaped as `ta/resolver.py` is, including the split that lets
-pull-time `--drug-class` filtering and bulk resolution share one per-study
-function -- a filter that disagreed with the table written afterwards would be
-worse than no filter.
-
-TWO THINGS DIFFER FROM THE TA RESOLVER, and both are forced by the data.
-
-**Matching is per source item, and the items are not all the same grain.** An
-intervention is a row of its own (name, type); a MeSH descriptor, an ancestor
-and a browse branch are all attached to the STUDY, with no link back to which
-intervention they describe. So the intervention layers run per intervention and
-the MeSH layers run per study, and their matches are unioned. A study-level
-match is therefore a weaker claim than an intervention-level one, which is why
-`rule_layer` is recorded on every row and why the arm tier below uses only the
-intervention-level half.
-
-**Kinds do not suppress each other.** Within one source item the first layer to
-match a given `kind` wins that kind, and later layers can still fill the kinds
-still open -- so pembrolizumab is `pd1_inhibitor` (mechanism) AND
-`monoclonal_antibody` (modality), and neither defeats the other. See
-`drug_class_mesh_mapping.yaml`'s `resolution.modality_is_orthogonal`. The one
-exception is a control match, which short-circuits its intervention entirely: a
-placebo is not a small molecule with a placebo mechanism, it is a placebo.
+* Interventions are rows of their own; MeSH descriptors, ancestors and browse
+  branches are attached to the study with no link back to an intervention. So
+  the intervention layers run per intervention, the MeSH layers per study, and
+  the matches are unioned. The arm tier uses only the intervention-level half.
+* Kinds do not suppress each other. Within one source item the first layer to
+  match a `kind` wins that kind and later layers can still fill the others, so
+  pembrolizumab is `pd1_inhibitor` (mechanism) and `monoclonal_antibody`
+  (modality). A control match short-circuits its intervention entirely.
 """
 
 from __future__ import annotations
@@ -46,10 +28,8 @@ import duckdb
 from clinical_endpoints.vocab.loader import default_vocab_dir, load_vocab, normalise
 from clinical_endpoints.vocab.schema import normalise_intervention_type
 
-# Lower rank = stronger evidence. Used only to decide which (rule_layer,
-# matched_on) is recorded when the *same* class is independently reached more
-# than once for one study -- every class reached by any layer is still kept
-# (`resolution.keep_all_matches`).
+# Lower rank = stronger evidence; decides which (rule_layer, matched_on) is
+# recorded when one class is reached more than once for a study.
 RULE_LAYERS = (
     "control_rule",
     "term_override",
@@ -67,8 +47,6 @@ _REVIEW_UNCLASSIFIED = "unclassified_agent"
 
 @dataclass(frozen=True)
 class DrugClassMapping:
-    """In-memory snapshot of the layered mapping, loaded once per call."""
-
     control_rules: list[tuple[str, re.Pattern]]  # (class_id, pattern), file order
     term_overrides: dict[str, list[str]]  # mesh_term_normalised -> class ids
     agent_names: dict[str, list[str]]  # agent_name_normalised -> class ids
@@ -108,8 +86,6 @@ class ResolvedArmDrugClass:
 
 @dataclass(frozen=True)
 class Intervention:
-    """One registered intervention, with the alias list already attached."""
-
     ordinal: int
     intervention_type: Optional[str]
     name: Optional[str]
@@ -120,10 +96,7 @@ class Intervention:
 def load_drug_class_mapping(
     con: duckdb.DuckDBPyConnection, *, vocab_dir: Path | str | None = None
 ) -> DrugClassMapping:
-    """Read the layered mapping from the `vocab.drug_class_*` tables (requires
-    `vocab validate` to have been run against this warehouse). The `defaults`
-    block is not persisted anywhere in vocab.*, so it is read straight from the
-    YAML -- the same split `ta/resolver.py`'s `load_ta_mapping` makes."""
+    """The `defaults` block is not persisted in vocab.*, so it is read from the YAML."""
     resolved_vocab_dir = Path(vocab_dir) if vocab_dir else default_vocab_dir()
     docs = load_vocab(resolved_vocab_dir)
     defaults = docs["drug_class_mesh_mapping"].get("defaults") or {}
@@ -187,9 +160,7 @@ def load_drug_class_mapping(
 
 
 class _ItemMatches:
-    """Matches accumulated for ONE source item, enforcing first-hit-wins per
-    `kind` -- the rule that lets a mechanism and a modality coexist while
-    keeping two mechanisms from the same item's later layers out."""
+    """Matches for one source item, first-hit-wins per `kind`."""
 
     def __init__(self, mapping: DrugClassMapping) -> None:
         self._mapping = mapping
@@ -200,13 +171,9 @@ class _ItemMatches:
         return kind in self._claimed_kinds
 
     def add(self, class_ids: Iterable[str], rule_layer: str, matched_on: Optional[str]) -> None:
-        """Record every class in `class_ids` whose kind is still open.
-
-        A single rule may legitimately carry two classes of the SAME kind
-        (amivantamab is an EGFR inhibitor and a bispecific engager), so the
-        kinds are claimed once the whole rule has been applied rather than per
-        class -- otherwise the second half of such a rule would be dropped by
-        the first half."""
+        """Record every class whose kind is still open. Kinds are claimed after
+        the whole rule is applied, since one rule may carry two classes of the
+        same kind (amivantamab is an EGFR inhibitor and a bispecific engager)."""
         wanted = [c for c in class_ids if not self.claimed(self._mapping.kind_of(c))]
         for class_id in wanted:
             self.matches[class_id] = (rule_layer, matched_on)
@@ -216,42 +183,29 @@ class _ItemMatches:
 def resolve_intervention(
     intervention: Intervention, mapping: DrugClassMapping
 ) -> dict[str, tuple[str, Optional[str]]]:
-    """The layered match for ONE intervention: class_id -> (rule_layer, matched_on).
-
-    Layers 0, 2, 3 and 6 of `drug_class_mesh_mapping.yaml` -- the ones that read
-    the intervention row itself. The MeSH layers are study-level and live in
-    `resolve_study_drug_class_matches`.
-    """
+    """The intervention-level layers for one intervention: class_id -> (rule_layer, matched_on)."""
     item = _ItemMatches(mapping)
     name = intervention.name_normalised
 
-    # Layer 0. A control short-circuits: no later layer may add to it, because
-    # a placebo carries the study's MeSH codes like every other arm and a
-    # placebo tablet is not "a small molecule" in any sense worth recording.
+    # A control short-circuits: a placebo is not a small molecule with a placebo mechanism.
     if name:
         for class_id, pattern in mapping.control_rules:
             if pattern.search(name):
                 item.add([class_id], "control_rule", intervention.name)
                 return item.matches
 
-    # Layer 1: the hand-settled overrides. They are keyed on MeSH descriptors,
-    # but for interventions a descriptor IS a drug name and the sponsor usually
-    # writes the same string -- so a study registering "Aspirin" must get the
-    # same settled answer as one NLM coded as "Aspirin", or the override only
-    # applies to half the corpus at random.
+    # term_overrides are keyed on MeSH descriptors, but sponsors usually write
+    # the same string, so they are tried against the name and aliases too.
     for candidate in (name, *intervention.other_names_normalised):
         if candidate and (class_ids := mapping.term_overrides.get(candidate)):
             item.add(class_ids, "term_override", candidate)
 
-    # Layer 2: the curated dictionary, against the sponsor's own name first and
-    # then each alias. Aliases matter more than they look -- a new molecular
-    # entity is often registered under a development code with the generic name
-    # only in `otherNames`.
+    # Aliases matter: a new molecular entity is often registered under a
+    # development code with the generic name only in `otherNames`.
     for candidate in (name, *intervention.other_names_normalised):
         if candidate and (class_ids := mapping.agent_names.get(candidate)):
             item.add(class_ids, "agent_name", candidate)
 
-    # Layer 3: WHO INN stems and the vaccine-platform words, in file order.
     for candidate in (name, *intervention.other_names_normalised):
         if not candidate:
             continue
@@ -261,8 +215,6 @@ def resolve_intervention(
             if pattern.search(candidate):
                 item.add([class_id], "name_pattern", candidate)
 
-    # Layer 6: modality from the registry's own type, only where the name did
-    # not already say what kind of thing this is.
     type_key = normalise_intervention_type(intervention.intervention_type)
     if type_key and (class_id := mapping.modality_rules.get(type_key)):
         if not item.claimed(mapping.kind_of(class_id)):
@@ -272,10 +224,7 @@ def resolve_intervention(
 
 
 def _resolve_mesh_term(mesh_term: str, mapping: DrugClassMapping) -> dict[str, tuple[str, Optional[str]]]:
-    """Layers 1-3 against one NLM intervention descriptor. For interventions the
-    descriptor *is* a drug name, so the curated dictionary is reused here rather
-    than duplicated -- `term_overrides` exists only for the descriptors whose
-    obvious class is the wrong one."""
+    """term_overrides, agent_names and name_patterns against one NLM intervention descriptor."""
     item = _ItemMatches(mapping)
     key = normalise(mesh_term)
     if class_ids := mapping.term_overrides.get(key):
@@ -301,19 +250,11 @@ def resolve_study_drug_class_matches(
         Callable[[Intervention, dict[str, tuple[str, Optional[str]]]], None]
     ] = None,
 ) -> dict[str, tuple[str, Optional[str]]]:
-    """The layered match for *one* study: class_id -> (rule_layer, matched_on).
+    """The layered match for one study: class_id -> (rule_layer, matched_on).
+    Shared by the bulk resolver and pull-time `--drug-class` filtering.
 
-    The single place the layer order is applied, factored out so pull-time
-    `--drug-class` filtering judges a study by exactly the same rules the bulk
-    resolver later writes to `conformed.study_drug_class` -- the property
-    `ta/resolver.py`'s `resolve_study_ta_matches` already guarantees for `--ta`.
-
-    `on_intervention`, if given, is called as
-    `on_intervention(intervention, its_matches)` for each intervention as it is
-    resolved. It exists so `resolve_drug_classes` can fill the arm tier, the
-    primary tie-break and the review queue from this single pass rather than
-    re-running `resolve_intervention` over the whole corpus a second time.
-    Pull-time filtering, which needs only the match set, leaves it unset.
+    `on_intervention(intervention, its_matches)` is called per intervention so
+    the bulk resolver can fill the arm tier, tie-break and review queue in one pass.
     """
     matches: dict[str, tuple[str, Optional[str]]] = {}
 
@@ -355,9 +296,6 @@ def resolve_study_drug_class_matches(
     return matches
 
 
-# ------------------------------------------------------------------ bulk read
-
-
 def _table_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str) -> bool:
     return bool(
         con.execute(
@@ -376,8 +314,8 @@ def _where(nct_ids: Optional[list[str]], column: str = "nct_id") -> tuple[str, l
 def load_interventions(
     con: duckdb.DuckDBPyConnection, *, nct_ids: Optional[list[str]] = None
 ) -> dict[str, list[Intervention]]:
-    """nct_id -> its interventions, aliases attached. Empty (not an error) on a
-    warehouse pulled before the intervention tables existed."""
+    """nct_id -> interventions with aliases attached. Empty on a warehouse
+    pulled before the intervention tables existed."""
     if not _table_exists(con, "raw", "interventions"):
         return {}
     where, params = _where(nct_ids)
@@ -432,13 +370,10 @@ def resolve_drug_classes(
     vocab_dir: Path | str | None = None,
     nct_ids: Optional[list[str]] = None,
 ) -> tuple[list[ResolvedDrugClass], list[ResolvedArmDrugClass], list[tuple]]:
-    """Resolve every study's interventions into (study, class) rows, (arm, class)
-    rows, and review-queue rows. Writes nothing -- see the `write_*` functions.
+    """(study, class) rows, (arm, class) rows, and review-queue rows. Writes nothing.
 
-    The arm tier uses only the intervention-level layers, because that is all
-    that is attributable to an arm: a study's MeSH descriptors, ancestors and
-    browse branches describe the study, and pushing them onto an arm would
-    attribute the experimental drug's class to the placebo arm.
+    The arm tier uses only the intervention-level layers: study-level MeSH
+    signals pushed onto an arm would attribute the drug's class to the placebo arm.
     """
     mapping = load_drug_class_mapping(con, vocab_dir=vocab_dir)
 
@@ -465,17 +400,11 @@ def resolve_drug_classes(
         interventions = interventions_by_nct.get(nct_id, [])
         unclassified: list[Intervention] = []
         per_intervention: dict[int, dict[str, tuple[str, Optional[str]]]] = {}
-        # The tie break, per drug_classes.yaml's `resolution.tie_break`: the
-        # class backed by the most interventions wins a precedence tie.
-        backing: Counter = Counter()
+        backing: Counter = Counter()  # tie-break: most interventions backing a class
 
         def note(
             intervention: Intervention, item_matches: dict[str, tuple[str, Optional[str]]]
         ) -> None:
-            """Everything this study's per-intervention pass has to yield, taken
-            in one walk: the arm tier's input, the tie-break tally, and the
-            review queue. Called synchronously below, before the next study
-            rebinds these accumulators."""
             per_intervention[intervention.ordinal] = item_matches
             backing.update(item_matches.keys())
             if not item_matches:
@@ -551,13 +480,7 @@ def _load_arm_links(
     return dict(out)
 
 
-# --------------------------------------------------------------------- write
-
-
 def write_study_drug_class(con: duckdb.DuckDBPyConnection, resolved: list[ResolvedDrugClass]) -> int:
-    """Replace `conformed.study_drug_class` wholesale, matching how
-    `write_study_therapeutic_area` refreshes its own table: this is derived from
-    raw.*, so it has no state worth preserving independently of its source."""
     con.execute("CREATE SCHEMA IF NOT EXISTS conformed")
     con.execute(
         """
@@ -577,15 +500,9 @@ def write_study_drug_class(con: duckdb.DuckDBPyConnection, resolved: list[Resolv
 
 
 def write_arm_drug_class(con: duckdb.DuckDBPyConnection, resolved: list[ResolvedArmDrugClass]) -> int:
-    """Replace `conformed.arm_drug_class` wholesale.
-
-    Written, but deliberately not consumed by `endpoints stats` -- see
-    docs/DRUG_CLASS_SPEC.md, "Class is an arm property". `stats` groups the
-    results section, whose `outcome_groups.group_key` is a *results* group id
-    linked to a protocol arm only by title, and nobody has measured how often
-    those titles agree. Until they have, an arm-level SD would be a number built
-    on an unmeasured join.
-    """
+    """Written but not consumed by `endpoints stats`: the results section's
+    `outcome_groups.group_key` links to a protocol arm only by title, and how
+    often those titles agree has not been measured."""
     con.execute("CREATE SCHEMA IF NOT EXISTS conformed")
     con.execute(
         """
@@ -605,13 +522,7 @@ def write_arm_drug_class(con: duckdb.DuckDBPyConnection, resolved: list[Resolved
 
 
 def write_drug_class_review_queue(con: duckdb.DuckDBPyConnection, review: list[tuple]) -> int:
-    """Replace `conformed.drug_class_review_queue`.
-
-    Its own table rather than rows in `conformed.review_queue`, for the reason
-    `conformed.results_review_queue` is its own table: `conform` wholesale-
-    replaces that one, and rows kept there would be silently deleted by the next
-    protocol-side run.
-    """
+    """Its own table: `conform` replaces `conformed.review_queue` wholesale."""
     con.execute("CREATE SCHEMA IF NOT EXISTS conformed")
     con.execute(
         """
@@ -630,9 +541,6 @@ def write_drug_class_review_queue(con: duckdb.DuckDBPyConnection, review: list[t
 def run_drug_class_resolution(
     con: duckdb.DuckDBPyConnection, *, vocab_dir: Path | str | None = None
 ) -> dict:
-    """Resolve + write all three tables for every pulled study. Returns a
-    summary: row counts, the primary-class distribution, and the coverage
-    number that keeps the distribution honest."""
     resolved, arm_resolved, review = resolve_drug_classes(con, vocab_dir=vocab_dir)
     write_study_drug_class(con, resolved)
     write_arm_drug_class(con, arm_resolved)
@@ -656,28 +564,15 @@ def run_drug_class_resolution(
     }
 
 
-# ---------------------------------------------------------------------- diff
-
-
 def diff_ancestors(
     con: duckdb.DuckDBPyConnection,
     *,
     vocab_dir: Path | str | None = None,
     nct_ids: Optional[list[str]] = None,
 ) -> list[dict]:
-    """Run the curated layers alone and NLM's ancestry alone over every study,
-    and return every disagreement, most frequent first.
-
-    The counterpart of `endpoints ta diff-tree`, and it has the same discipline:
-    it reports, it does not reconcile. Editing the YAML until the diff is empty
-    destroys the only external check this axis has -- `agent_names` is a human
-    assertion and `ancestor_rules` is NLM's, and where they disagree exactly one
-    of them is wrong.
-
-    Only classes of the same `kind` are compared. A curated mechanism class and
-    an ancestor-derived pharmacologic one are not in conflict; they are two
-    different claims, and the resolver keeps both.
-    """
+    """Run the curated layers and NLM's ancestry independently over every
+    study and return every disagreement, most frequent first. Only classes of
+    the same `kind` are compared."""
     mapping = load_drug_class_mapping(con, vocab_dir=vocab_dir)
     interventions_by_nct = load_interventions(con, nct_ids=nct_ids)
     ancestors_by_nct = _load_study_terms(
@@ -722,15 +617,8 @@ def diff_ancestors(
 
 
 def coverage_summary(con: duckdb.DuckDBPyConnection) -> dict:
-    """How much of the corpus the axis actually covers, split the way the
-    distribution has to be read: a class list without this is a machine for
-    making a thin axis look complete.
-
-    `ancestor_studies` and `branch_studies` are reported because both are
-    CT.gov-only signals (AACT publishes neither), so a warehouse pulled from
-    AACT will show zero there and a lower mechanism share -- that is a backend
-    difference, not a vocabulary failure.
-    """
+    """How much of the corpus the axis covers. `ancestor_studies` and
+    `branch_studies` are CT.gov-only signals; AACT publishes neither."""
     def _count(sql: str) -> int:
         return con.execute(sql).fetchone()[0]
 

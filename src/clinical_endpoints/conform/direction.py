@@ -1,11 +1,7 @@
-"""Direction derivation: directions.yaml's `direction = apply(form.direction_rule,
-measurement)`. Direction is never matched from text directly -- it is computed
-from the resolved form's `direction_rule` and the resolved measurement's
+"""Direction derivation. Direction is never matched from text: it is computed
+from the resolved form's `direction_rule` and the measurement's
 `default_direction` / `event_polarity`, with directions.yaml's
-`event_polarity_cues` allowed to override the measurement's own polarity per
-vocab/README.md decision #3 (RECIST hosts both "time to progression" and
-"time to response" under one measurement id).
-"""
+`event_polarity_cues` able to override the measurement's own polarity."""
 
 from __future__ import annotations
 
@@ -25,7 +21,7 @@ class DirectionRules:
     measurement_event_polarity: dict[str, Optional[str]]
     measurement_domain: dict[str, Optional[str]]
     direction_by_ta: dict[tuple[str, str], str]  # (measurement_id, ta_id) -> direction_id
-    event_polarity: dict[str, Optional[str]]  # event_id -> polarity (events.yaml)
+    event_polarity: dict[str, Optional[str]]  # event_id -> polarity
 
 
 def load_direction_rules(con: duckdb.DuckDBPyConnection) -> DirectionRules:
@@ -60,8 +56,6 @@ def load_direction_rules(con: duckdb.DuckDBPyConnection) -> DirectionRules:
 
 
 def _event_polarity_from_cues(text: str, cues: dict[str, tuple[re.Pattern, ...]]) -> Optional[str]:
-    # directions.yaml resolution order: an event cue is more specific than the
-    # measurement's own default_polarity, so it is checked first.
     for polarity in ("benefit", "harm"):
         for pattern in cues.get(polarity, ()):
             if pattern.search(text):
@@ -84,14 +78,9 @@ def derive_direction(
     ta_id: Optional[str] = None,
     event_id: Optional[str] = None,
 ) -> DirectionResult:
-    """docs/EVENT_SEMANTICS_SPEC.md step 5: event polarity first (from a
-    RESOLVED event -- `event_id` not None/'not_stated'), then the free-text
-    event_polarity_cues, then the matched measurement's own event_polarity,
-    then not_stated. `event_id` is None for a non-event-family form (there is
-    no event to have a polarity) and for an event-family form whose event
-    itself resolved to 'not_stated' -- either way this cascades to the cues,
-    exactly as it did before events existed, so direction never flips on a
-    row this dimension does not change."""
+    """Polarity comes from the resolved event first, then the free-text cues,
+    then the measurement's own event_polarity. `event_id` is None for
+    non-event-family forms and for an event that resolved to 'not_stated'."""
     polarity = None
     if event_id and event_id != "not_stated":
         polarity = rules.event_polarity.get(event_id)
@@ -113,10 +102,8 @@ def derive_direction(
         mapped = {"harm": "longer_is_better", "benefit": "shorter_is_better"}.get(polarity)
         return DirectionResult(mapped or rules.default_when_underivable, polarity)
 
-    # inherit_measurement (and any other/unrecognised rule): measurement's
-    # default_direction, with a per-TA override where measurements.yaml declares
-    # one (direction genuinely depends on indication -- weight in obesity vs
-    # cachexia).
+    # inherit_measurement: the measurement's default_direction, with a per-TA
+    # override where one is declared (weight in obesity vs cachexia).
     if measurement_id and ta_id and (measurement_id, ta_id) in rules.direction_by_ta:
         return DirectionResult(rules.direction_by_ta[(measurement_id, ta_id)], polarity)
     default_direction = rules.measurement_default_direction.get(measurement_id) if measurement_id else None

@@ -1,28 +1,14 @@
-"""D6's other half: the free-text `unit_of_measure` a results row carries,
-resolved against `scales.yaml`.
+"""Resolve a results row's free-text `unit_of_measure` against scales.yaml.
 
-On the protocol side the scale is inferred -- from an explicit unit in the
-text, else the form's typical scale, else the measurement's default (see
-scales.yaml's header). On the results side the registry states it outright, in
-a field whose *entire content* is the unit: "L", "mL", "months", "mg/dL",
-"percentage of participants". That difference is what this module exists for.
+The field's entire content is the unit ("L", "mL", "months"), so a
+whole-string comparison is available that in-prose matching is not: the
+generic matcher never matches the single-character synonym "L" inside a
+sentence, but as a whole field it is unambiguous. Cascade:
 
-It means a whole-string comparison is available here that is not available in
-prose, and that matters: matching.yaml sets `min_synonym_length: 2`, so the
-generic matcher deliberately never matches the single-character synonym "L"
-inside a sentence (too many false friends). As the entire content of the unit
-field, "L" is unambiguous. So the cascade is:
-
-1. the whole field, compared to the scale synonyms  -> `exact`
-2. the whole field with a trailing parenthetical removed ("Liters (L)")
-   -> `exact`
-3. the generic in-prose matcher over the field       -> `syntactic_rule`
-4. scales.yaml's own `default_when_unmatched`        -> no match method
-
-Step 4 resolves to `not_stated` rather than to NULL, exactly as the vocabulary
-declares, so an unresolved unit stays countable -- which is what makes gate
-question 4 ("what share of results units normalise against scales.yaml as it
-stands") answerable at all.
+1. the whole field against the scale synonyms            -> `exact`
+2. the same with a trailing parenthetical split off       -> `exact`
+3. the generic in-prose matcher                          -> `syntactic_rule`
+4. scales.yaml's `default_when_unmatched` (not_stated)   -> None
 """
 
 from __future__ import annotations
@@ -42,27 +28,18 @@ _TRAILING_PARENTHETICAL_RE = re.compile(r"\s*\(([^()]*)\)\s*$")
 @dataclass(frozen=True)
 class UnitResolution:
     scale_id: str
-    #: 'exact' | 'syntactic_rule' | None (the declared fallback fired)
-    match_method: Optional[str]
+    match_method: Optional[str]  # 'exact' | 'syntactic_rule' | None
 
 
 @dataclass(frozen=True)
 class UnitRules:
-    """Everything `resolve_unit` and `to_si` need, loaded once per run."""
-
-    #: normalised synonym -> scale id, for the case-insensitive comparison.
-    by_synonym: dict[str, str]
-    #: the same, keyed on the un-casefolded synonym, for short all-caps
-    #: acronyms ("L", "mL", "IU/L") where matching.yaml's case-sensitivity rule
-    #: applies and lower-cased "l" must not win.
-    by_case_sensitive_synonym: dict[str, str]
+    by_synonym: dict[str, str]  # lower-cased synonym -> scale id
+    by_case_sensitive_synonym: dict[str, str]  # as written, for short all-caps acronyms
     matcher: matcher_mod.TermMatcher
     normalisation_steps: list[str]
     default_scale_id: str
-    #: scale id -> (si scale id, multiplicative factor), for the terms where
-    #: scales.yaml declares one. Absent means "not convertible", which is a
-    #: deliberate statement for mg/dL <-> mmol/L (needs a molar mass) and for
-    #: HbA1c's NGSP <-> IFCC (affine, not a factor).
+    # scale id -> (si scale id, factor). Absent means not convertible, which is
+    # deliberate for mg/dL <-> mmol/L (needs a molar mass) and HbA1c NGSP <-> IFCC (affine).
     si: dict[str, tuple[str, float]]
     kind: dict[str, Optional[str]]
 
@@ -114,10 +91,8 @@ def _is_short_acronym(text: str) -> bool:
 
 
 def _lookup_whole(text: str, rules: UnitRules) -> Optional[str]:
-    """matching.yaml's case-sensitivity rule, applied to a whole-field
-    comparison: a short all-caps synonym must be written in capitals to
-    match ("L" is litres, "l" is a letter), everything else is
-    case-insensitive."""
+    """Whole-field comparison under matching.yaml's case rule: a short all-caps
+    synonym must be written in capitals ("L" is litres, "l" is a letter)."""
     exact = rules.by_case_sensitive_synonym.get(text)
     if exact is not None:
         return exact
@@ -125,9 +100,6 @@ def _lookup_whole(text: str, rules: UnitRules) -> Optional[str]:
     owner = rules.by_synonym.get(lowered)
     if owner is None:
         return None
-    # The registry wrote it in some other case; refuse only where the
-    # vocabulary's own spelling is a short acronym whose capitals are the
-    # evidence it was meant.
     for candidate, term_id in rules.by_case_sensitive_synonym.items():
         if candidate.lower() == lowered and term_id == owner and _is_short_acronym(candidate):
             return None
@@ -135,7 +107,6 @@ def _lookup_whole(text: str, rules: UnitRules) -> Optional[str]:
 
 
 def resolve_unit(raw: Optional[str], rules: UnitRules) -> UnitResolution:
-    """A results-section `unit_of_measure` -> a scale id and how it was decided."""
     text = normalise(raw, rules.normalisation_steps)
     if not text:
         return UnitResolution(rules.default_scale_id, None)
@@ -144,8 +115,7 @@ def resolve_unit(raw: Optional[str], rules: UnitRules) -> UnitResolution:
     if hit:
         return UnitResolution(hit, "exact")
 
-    # "Liters (L)" and "Percentage of participants (%)" -- the registry's
-    # habit of restating the symbol. Try the parenthetical, then the stem.
+    # "Liters (L)": try the parenthetical, then the stem.
     parenthetical = _TRAILING_PARENTHETICAL_RE.search(text)
     if parenthetical:
         inner = parenthetical.group(1).strip()
@@ -162,14 +132,9 @@ def resolve_unit(raw: Optional[str], rules: UnitRules) -> UnitResolution:
 
 
 def to_si(scale_id: Optional[str], value: Optional[float], rules: UnitRules):
-    """`value`, expressed in `scale_id`, converted to that family's canonical
-    unit -- or (None, None) where scales.yaml declares no factor.
-
-    Valid for a standard deviation as well as for a measurement: an SD scales
-    by |a| under any y = a*x + b, so a purely multiplicative factor carries it
-    across unchanged. That is exactly why the affine pair (HbA1c NGSP vs IFCC)
-    carries no `factor_to_si` -- and why nothing here tries to invent one.
-    """
+    """`value` in `scale_id` converted to the family's canonical unit, or
+    (None, None) where no factor is declared. Valid for an SD as well as a
+    measurement, since an SD scales by |a| under y = a*x + b."""
     if scale_id is None or value is None:
         return None, None
     entry = rules.si.get(scale_id)

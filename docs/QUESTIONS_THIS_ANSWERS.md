@@ -1,9 +1,9 @@
 # Questions this answers
 
 The rest of the documentation describes the machinery: the vocabularies, the
-conformance engine, the warehouse, the USDM projection. This page is the other
-direction -- six questions a clinical, biostatistics or study-design team
-actually asks, and what running the pipeline gives back for each.
+conformance engine, the warehouse, the USDM projection. This page takes the
+other direction. It lists six questions a clinical, biostatistics or
+study-design team asks, and what running the pipeline gives back for each.
 
 Each one names who asks it, what they do today instead, the commands that
 answer it, and the shape of the answer. Every example below was executed; see
@@ -30,9 +30,10 @@ and the resulting `n` inherits whatever those papers happened to enrol.
 
 **What the project does instead.** The results section is already sitting on the
 registry for every trial that posted one. `results conform` reads it, normalises
-whatever that sponsor called "dispersion" -- SD, standard error, 95% CI,
-inter-quartile range -- into one estimated SD, and `endpoints stats` reports the
-distribution across every trial that measured the same thing the same way.
+whatever that sponsor called dispersion, whether an SD, a standard error, a
+95% CI or an inter-quartile range, into one estimated SD. `endpoints stats`
+then reports the distribution across every trial that measured the same thing
+the same way.
 
 ```bash
 uv run endpoints stats --measurement fev1
@@ -49,7 +50,7 @@ measurement=fev1, source=outcome
     coverage    4 of 4 conformed studies reported a usable dispersion (100.0%)
 ```
 
-Three things in that output are the reason it is worth having:
+Three things in that output carry the answer:
 
 * **The grouping is `form` x `unit`, not measurement.** The SD of a change from
   baseline is not the SD of a raw value, and an FEV1 SD in millilitres is not
@@ -60,13 +61,13 @@ Three things in that output are the reason it is worth having:
   from_standard_error 4 · from_confidence_interval 2` says how much of this
   median is an SD a trial actually printed and how much is one this pipeline
   derived. `--only-reported` drops the derivations; `--no-approximate` drops
-  the Wan et al. IQR/range estimators, which are approximations rather than
+  the Wan et al. IQR and range estimators, which are approximations rather than
   conversions.
-* **The coverage line is the denominator.** Without it the command is a machine
-  for producing confident numbers off eight arms.
+* **The coverage line is the denominator**, so the median is always read
+  against the number of arms behind it.
 
-`--source baseline` answers the adjacent question -- the baseline SD, which is
-a different quantity and should never be silently substituted for a change-score
+`--source baseline` answers the adjacent question. The baseline SD is a
+different quantity and should never be silently substituted for a change-score
 SD:
 
 ```
@@ -74,21 +75,21 @@ measurement=fev1, source=baseline
   not_stated · litres   studies 4   arms 9   SD median 0.5   IQR 0.48-0.53
 ```
 
-Half a litre at baseline against ~0.30 L on the change score is the
-within-patient correlation showing up as it should, and it is exactly the
-distinction that gets lost when someone pulls "the FEV1 SD" out of one paper.
+Half a litre at baseline against about 0.30 L on the change score is the
+within-patient correlation showing up as it should. That is the distinction
+lost when someone pulls "the FEV1 SD" out of one paper.
 
 ---
 
 ## 2. What is the endpoint convention in this indication?
 
 **Who asks.** Whoever is choosing the primary endpoint and then writing its
-definition -- clinical development lead, medical writer, the biostatistician
-who has to make it estimable. Two separate decisions hide inside "what is
-standard here": which endpoint, and, once chosen, at which threshold and which
-timepoint. Getting the second wrong is the more expensive mistake, because a
-PASI 75 trial and a PASI 90 trial are not comparable and the regulator has
-seen both.
+definition: a clinical development lead, a medical writer, or the
+biostatistician who has to make it estimable. Two separate decisions hide
+inside "what is standard here": which endpoint, and, once chosen, at which
+threshold and which timepoint. Getting the second wrong is the more expensive
+mistake, because a PASI 75 trial and a PASI 90 trial are not comparable and the
+regulator has seen both.
 
 **Which endpoint.** Join the conformed endpoints out to therapeutic area and
 look at what primaries other sponsors picked:
@@ -114,10 +115,10 @@ respiratory          change_from_baseline   fev1                            2
 
 That is the endpoint-selection landscape as a table rather than as a literature
 review. `pull --org "<sponsor>"` narrows the same query to one company's
-portfolio, which is the competitive-intelligence version of the question.
+portfolio.
 
 **At which threshold.** Responder definitions are parsed out of the registry
-string into `threshold_comparator` / `threshold_value` / `threshold_unit`, so
+string into `threshold_comparator`, `threshold_value` and `threshold_unit`, so
 the convention is countable:
 
 ```sql
@@ -143,13 +144,12 @@ recurs across sponsors, every one an `exact` match, is a standard (HbA1c < 7.0%
 is the ADA target). A threshold appearing once behind a `semantic` match is one
 team's choice.
 
-The two SGRQ rows are worth reading rather than tidying away. They are the same
-published 4-point MCID, written by two sponsors as *"(Decrease of >= 4 Units)"*
-and *"a Decrease of at Least 4 Points"*; the parser recovered the comparator and
-the value from both and the unit from only one, so they group separately.
-Grouping on `threshold_value` rather than on the whole tuple is the fix when
-counting conventions -- and the split is a reminder that the threshold parser
-reads text, so it inherits the text's inconsistencies.
+The two SGRQ rows are the same published 4-point MCID, written by two sponsors
+as "(Decrease of >= 4 Units)" and "a Decrease of at Least 4 Points". The parser
+recovered the comparator and the value from both and the unit from only one, so
+they group separately. Group on `threshold_value` rather than on the whole
+tuple when counting conventions. The split shows that the threshold parser
+reads text and inherits the text's inconsistencies.
 
 **At which timepoint.** `timepoint_pattern` classifies the `time_frame` string
 into a small set of shapes, and `timepoint_extracted` holds what was pulled out
@@ -165,9 +165,8 @@ bare_duration          22    event_driven      1    multi_timepoint  1
 cumulative_window      20
 ```
 
-The practical use is narrower than the totals: filter to one measurement and
-the answer is "the assessment visit this endpoint is conventionally read at",
-which is a schedule-of-assessments input, not trivia.
+Filter to one measurement and the answer is the assessment visit this endpoint
+is conventionally read at, which is a schedule-of-assessments input.
 
 ---
 
@@ -201,11 +200,10 @@ dlqi          2  4  change_from_baseline, not_stated
 tumour_burden_recist  2  4  time_to_event, responder_proportion
 ```
 
-`vital_status` across ten studies is the textbook case: the same measurement,
+`vital_status` across ten studies is the clearest case: the same measurement,
 reported as a survival distribution in seven trials and as a mortality
-proportion in three -- and `direction_id` correctly reverses between them,
-because direction is *derived* from form plus measurement polarity rather than
-matched from the text:
+proportion in three. `direction_id` reverses between them, because direction is
+derived from form plus measurement polarity rather than matched from the text:
 
 ```
 vital_status  time_to_event          longer_is_better    7 studies
@@ -215,11 +213,11 @@ vital_status  incidence_proportion   decrease_is_better  3 studies
 Nothing in either registry string says which way is better. Getting this wrong
 is how a forest plot ends up with a sign error.
 
-**Same concept, different instrument.** The harder case, which the form join
-cannot reach: two trials both measured respiratory quality of life, one with
-SGRQ and one with AQLQ. `measurements.yaml` names instruments at instrument
-level -- deliberately, since SGRQ and AQLQ are not interchangeable -- and
-carries a `concept` for exactly this query.
+**Same concept, different instrument.** The form join cannot reach this case:
+two trials both measured respiratory quality of life, one with SGRQ and one
+with AQLQ. `measurements.yaml` names instruments at instrument level, since
+SGRQ and AQLQ are not interchangeable, and carries a `concept` for this
+query.
 
 ```sql
 SELECT m.concept, count(DISTINCT e.measurement_id) AS instruments,
@@ -236,12 +234,11 @@ health_related_quality_of_life 2 3  eortc_qlq_c30, fact_g
 blood_pressure                2  2  systolic_blood_pressure, diastolic_blood_pressure
 ```
 
-Each row is a candidate mapping exercise, not a completed one. The answer is
-"these trials are in scope for a comparison and here is the instrument
-mismatch you would have to defend" -- which is the useful answer, because the
-alternative is discovering the mismatch in peer review.
+Each row is a candidate mapping exercise, not a completed one. It says these
+trials are in scope for a comparison and names the instrument mismatch you
+would have to defend, rather than leaving it to be discovered in peer review.
 
-Note what the vocabulary deliberately does *not* collapse: PASI sits under
+Note what the vocabulary deliberately does not collapse. PASI sits under
 `psoriasis_severity` and sPGA under `skin_disease_global_severity`, so the
 query above will not offer them as one concept. Both are psoriasis severity in
 the loose sense, and neither trial would accept the other's as its endpoint;
@@ -253,10 +250,10 @@ reasoning behind each one.
 ## 4. What non-inferiority margin has precedent here?
 
 **Who asks.** Regulatory strategy and biostatistics, designing a
-non-inferiority trial. The margin is the single most negotiable -- and most
-challengeable -- number in the protocol, and the defence for it is precedent:
-what margin has been accepted for this endpoint before, in trials of this size.
-That precedent is buried in free text in the analysis section of the registry.
+non-inferiority trial. The margin is the most negotiable and most challengeable
+number in the protocol, and the defence for it is precedent: what margin has
+been accepted for this endpoint before, in trials of this size. That precedent
+is buried in free text in the analysis section of the registry.
 
 ```bash
 uv run endpoints stats --measurement hba1c --analyses
@@ -280,11 +277,11 @@ NCT90000033  Mean Difference (Final   0.3 %   Non-inferiority margin of 0.3%
 ```
 
 The margin is parsed out of the sponsor's own prose where it can be, and the
-prose is shown where it cannot -- so the row is always traceable to the trial
-that used it rather than to a parser's guess. Same for p-values: a censored
-`<0.001` contributes its bound and is counted separately from an exact value,
-because averaging censored and exact p-values together is how a "median
-p-value" becomes meaningless.
+prose is shown where it cannot, so the row is always traceable to the trial
+that used it rather than to a parser's guess. The same holds for p-values: a
+censored `<0.001` contributes its bound and is counted separately from an exact
+value, because averaging censored and exact p-values together makes a median
+p-value meaningless.
 
 Every margin in the corpus, with its trials, is also one join away:
 
@@ -305,15 +302,15 @@ reporting bias. The question is a two-sided join between what a study
 registered and what it later posted, and it is normally done by eye, one trial
 at a time.
 
-`results conform` runs the reported outcome titles through the *same*
-conformance engine the protocol side uses, then records how each reported
-outcome was linked to a planned one, with its own provenance:
+`results conform` runs the reported outcome titles through the same conformance
+engine the protocol side uses, then records how each reported outcome was
+linked to a planned one, with its own provenance:
 
 | `link_method` | what it means |
 |---|---|
 | `exact_title` | the reported title is, after normalisation, a planned `measure` in that study |
 | `conformed_measurement` | different strings, same conformed measurement in that study |
-| NULL | no planned counterpart -- kept, flagged, never force-joined |
+| NULL | no planned counterpart: kept, flagged, never force-joined |
 
 Three findings fall out of it.
 
@@ -363,12 +360,11 @@ NCT90000035
 
 Same study, same measurement, a continuous endpoint registered and a
 dichotomised one reported. Whether that is a protocol amendment, a
-pre-specified secondary analysis or a finding is a human judgment -- the point
-is that the row surfaces instead of matching silently on the shared
-measurement.
+pre-specified secondary analysis or a finding is a human judgment. The row
+surfaces instead of matching silently on the shared measurement.
 
-`endpoints results coverage` puts the same question at corpus level, including
-the honest denominators:
+`endpoints results coverage` puts the same question at corpus level, with its
+denominators:
 
 ```
 1. Results posting
@@ -383,20 +379,20 @@ the honest denominators:
 ## 6. Can our endpoint text leave the registry as CDISC USDM 4.0?
 
 **Who asks.** Data standards, and whoever is building the study in a system
-that speaks USDM -- a protocol authoring tool, an EDC spec, a downstream
-metadata repository. Registry endpoint text is prose; USDM wants structure.
-The default is that somebody retypes it, and the retyping is where the
-definition quietly changes.
+that speaks USDM: a protocol authoring tool, an EDC spec, a downstream metadata
+repository. Registry endpoint text is prose and USDM wants structure. The
+default is that somebody retypes it, and the retyping is where the definition
+changes.
 
 ```bash
 uv run endpoints usdm show <NCT_ID> --level primary
 uv run endpoints serve --port 8000   # GET /v4/studies/{nctId}/endpoints
 ```
 
-The projection's design decision is what makes it auditable: each endpoint's
-`text` is a *syntax template* whose tags resolve, through that endpoint's own
-`SyntaxTemplateDictionary`, back into the controlled vocabularies -- while the
-original registry string is kept verbatim in `description`.
+The projection is auditable because each endpoint's `text` is a syntax template
+whose tags resolve, through that endpoint's own `SyntaxTemplateDictionary`,
+back into the controlled vocabularies, while the original registry string is
+kept verbatim in `description`.
 
 ```
 Percentage of Participants Achieving PASI 100 at Week 16
@@ -408,15 +404,14 @@ Change From Baseline in Dermatology Life Quality Index (DLQI) at Week 16
         <usdm:tag name="timepoint"/> (<usdm:tag name="scale"/>)</p>
 ```
 
-So the output is a projection, not a rewrite: a reviewer can see both the
+The output is a projection rather than a rewrite: a reviewer sees both the
 structure and the string it came from, and every synthesized or defaulted
 attribute is flagged as such rather than presented as something the sponsor
 wrote.
 
-The other half of the answer is that endpoint *counts* are preserved. Every raw
-outcome row becomes exactly one USDM `Endpoint`, at one of three fidelity tiers,
-so a study whose endpoints did not conform renders less richly but never appears
-to have fewer endpoints:
+Endpoint counts are preserved. Every raw outcome row becomes exactly one USDM
+`Endpoint`, at one of three fidelity tiers, so a study whose endpoints did not
+conform renders less richly but never with fewer endpoints:
 
 ```
 uv run endpoints usdm coverage
@@ -429,9 +424,9 @@ total             98
 reference defaulted: 2 (2.8% of templated)
 ```
 
-`partial` and `verbatim` are the honest tiers. A study sitting at `verbatim`
-tells you its endpoints need a human before anything downstream consumes them,
-which is more useful than a uniformly confident payload.
+A study sitting at `verbatim` tells you its endpoints need a human before
+anything downstream consumes them, which a uniformly confident payload would
+not.
 
 ---
 
@@ -444,9 +439,9 @@ this page:
 * **Measurement coverage is partial and head-weighted.** A row whose
   measurement resolves nowhere goes to `conformed.review_queue` and never
   becomes comparable to anything. Round-two coverage was 64.5% on an unbiased
-  sample, and 77% of `measure` strings occur exactly once -- so an unusual
+  sample, and 77% of `measure` strings occur exactly once, so an unusual
   instrument used in two trials is disproportionately likely to be missing.
-  Absence of a link is not evidence that no link exists; check the review queue
+  Absence of a link is not evidence that no link exists. Check the review queue
   before concluding anything from an empty result.
 * **The variability answers stack three biases.** Not every trial posts results;
   not every endpoint conforms; not every posted result carries a usable
@@ -462,32 +457,35 @@ the queries they apply to.
 
 ## How these were validated
 
-Every command and query on this page was executed, end to end, through the real
-pipeline -- `vocab validate` -> TA resolution -> `conform` -> `results conform`
--> `stats` / `usdm` -- and the outputs above are pasted from those runs. The
-full test suite (520 passed, 1 skipped) was run alongside.
+Every command and query on this page was executed end to end through the real
+pipeline, from `vocab validate` through therapeutic-area resolution, `conform`,
+`results conform` and finally `stats` and `usdm`. The outputs above are pasted
+from those runs. The full test suite (520 passed, 1 skipped) was run
+alongside.
 
 One caveat matters for how you read the numbers. The environment this was
 validated in cannot reach ClinicalTrials.gov, so `endpoints pull` could not
 run. In its place, a 24-study corpus was seeded directly into `raw.*` through
-the project's own DDL -- Phase 2/3 registrations across oncology, respiratory,
-dermatology, cardiovascular/metabolic and neurology, with endpoint text written
-in registry idiom and a posted results section for 18 of them.
+the project's own DDL: Phase 2 and 3 registrations across oncology,
+respiratory, dermatology, cardiovascular and metabolic, and neurology, with
+endpoint text written in registry idiom and a posted results section for 18 of
+them.
 
 Question 5 needed one more step: the seeded trials all reported what they
 registered, so the two drift paths had nothing to fire on. A copy of the
-warehouse gained two extra reported outcomes -- one never registered, one
-registered as a change from baseline and reported as a responder proportion --
-and `results conform` was re-run over it. That is what the `unlinked_to_planned`
-and `link_agrees_on_form = false` examples above come from: the detection is
-real, the two trials behind those rows are constructions.
+warehouse gained two extra reported outcomes, one never registered and one
+registered as a change from baseline and reported as a responder proportion,
+and `results conform` was re-run over it. That is where the
+`unlinked_to_planned` and `link_agrees_on_form = false` examples above come
+from: the detection is real, and the two trials behind those rows are
+constructions.
 
-So: **the mechanisms are validated, the numbers are not findings about the
-registry.** "`endpoints stats --measurement fev1` pools millilitre-reported and
-litre-reported trials into one SD distribution and shows its provenance" is
-established. "The FEV1 change-from-baseline SD is 0.30 L" is not -- that is a
-property of 24 seeded studies. Re-run each command after a real `pull` to get
-answers about the actual corpus.
+**The mechanisms are validated; the numbers are not findings about the
+registry.** That `endpoints stats --measurement fev1` pools millilitre-reported
+and litre-reported trials into one SD distribution and shows its provenance is
+established. That the FEV1 change-from-baseline SD is 0.30 L is not, since that
+is a property of 24 seeded studies. Re-run each command after a real `pull` to
+get answers about the actual corpus.
 
 For the record, what the seeded run produced: 100 registered outcomes, 94
 conformed and 6 queued; 45 reported results rows conformed with 62 of 74

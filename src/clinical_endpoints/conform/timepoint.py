@@ -1,10 +1,6 @@
-"""timepoint_patterns.yaml's parser: preprocessing -> not_if_matches guards ->
-patterns in priority order -> named-group extraction, exactly as the task
-requires. Every step name, abbreviation/typo/numeral dict, and pattern comes
-from `vocab.timepoint_*` (written by `vocab validate`); only the text-
-transformation CODE for each named preprocessing step lives here, the same
-division of labour as conform/text.py.
-"""
+"""timepoint_patterns.yaml's parser: preprocessing -> guards -> patterns in
+priority order -> named-group extraction. Step names, dictionaries and patterns
+come from `vocab.timepoint_*`; only the step implementations live here."""
 
 from __future__ import annotations
 
@@ -36,7 +32,7 @@ class TimepointRules:
     numeral_words: dict[str, int]
     unit_alternation: str  # e.g. "minutes|minute|hours|hour|..."
     terms: tuple[TimepointTerm, ...]  # priority order
-    fallback: str  # vocab.matching_cascade[timepoint].fallback, e.g. 'unspecified'
+    fallback: str
     disambiguation: tuple[dict, ...]
 
 
@@ -46,7 +42,7 @@ class TimepointResult:
     raw: str
     prepared: str
     extracted: dict
-    match_method: Optional[str]  # 'exact' when a real pattern hit, else None
+    match_method: Optional[str]  # 'exact' when a pattern hit, else None
 
 
 def load_timepoint_rules(con: duckdb.DuckDBPyConnection) -> TimepointRules:
@@ -104,9 +100,6 @@ def load_timepoint_rules(con: duckdb.DuckDBPyConnection) -> TimepointRules:
     )
 
 
-# --------------------------------------------------------------- preprocessing
-
-
 def _drop_uninformative_parentheticals(text: str, unit_alt: str) -> str:
     has_unit_digit = re.compile(rf"\d+\s*(?:{unit_alt})|(?:{unit_alt})\s*\d+", re.IGNORECASE)
     while True:
@@ -147,8 +140,7 @@ def _normalise_list_separators(text: str) -> str:
 
 
 def _expand_dict(text: str, mapping: dict[str, str]) -> str:
-    # Longest key first so a compound entry ("twenty-four") is substituted
-    # before a shorter entry it contains ("four") can pre-empt it.
+    # Longest key first so "twenty-four" is substituted before "four".
     for word in sorted(mapping, key=len, reverse=True):
         text = re.sub(rf"\b{re.escape(word)}\b", str(mapping[word]), text, flags=re.IGNORECASE)
     return text
@@ -164,8 +156,7 @@ _STEP_FUNCTIONS = {
     "normalise_list_separators": lambda text, rules: _normalise_list_separators(text),
     "strip_trailing_punctuation": lambda text, rules: text.rstrip(".;").strip(),
     "expand_numeral_words": lambda text, rules: _expand_dict(text, rules.numeral_words),
-    # common_typos has no preprocessing step of its own in timepoint_patterns.yaml;
-    # bundled here since it is the same class of whole-token substitution.
+    # common_typos has no step of its own; applied with the abbreviations.
     "expand_abbreviations": lambda text, rules: _expand_dict(_expand_dict(text, rules.common_typos), rules.abbreviations),
     "match_case_insensitively": lambda text, rules: text,  # patterns already run with IGNORECASE
 }
@@ -209,10 +200,9 @@ def _connective_signals_window(prepared_text: str) -> bool:
 
 
 def apply_disambiguation(result: TimepointResult, form_id: Optional[str], rules: TimepointRules) -> TimepointResult:
-    """timepoint_patterns.yaml's `disambiguation`: the resolved FORM can
-    override a baseline_to_timepoint/cumulative_window call when the string is
-    genuinely ambiguous (a baseline token plus a "through"/"up to" connective
-    and exactly one horizon) -- see that file's `connective_evidence`."""
+    """timepoint_patterns.yaml's `disambiguation`: the resolved form can
+    override a baseline_to_timepoint/cumulative_window call when the string
+    carries a "through"/"up to" connective."""
     for rule in rules.disambiguation:
         if result.pattern_id != rule["otherwise"] or result.pattern_id not in rule["between"]:
             continue

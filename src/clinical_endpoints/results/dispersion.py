@@ -1,28 +1,11 @@
-"""D6: turning what a trial *reported* as spread into an estimated standard
-deviation, and recording how (docs/ENDPOINT_RESULTS_SPEC.md).
+"""Turn what a trial reported as spread into an estimated standard deviation,
+recording how.
 
-Reported spread on ClinicalTrials.gov is not a standard deviation.
-`dispersion_type` mixes standard deviation, standard error, inter-quartile
-range, full range, several confidence-interval widths and geometric
-coefficient of variation; `param_type` mixes mean, median, least-squares mean,
-geometric mean and several count types. Pooling them without conversion
-produces a number that means nothing, which is why this module exists and why
-every row it writes carries `sd_method`, `sd_is_derived` and the inputs used.
-
-Two rules run through all of it.
-
-**An unrecognised value is never coerced.** The exact value sets these two
-fields use could not be confirmed from this project's build environment (see
-docs/ENDPOINT_RESULTS_SPEC.md, "What was not measured"), so the folding below
-is a recognition pass over an *open* set: a `dispersion_type` no marker
-matches yields no SD and a `sd_skip_reason` naming it, and
-`endpoints results coverage` lists exactly those strings so the vocabulary can
-grow to cover them. Guessing would be the one failure mode that never shows up
-in the output.
-
-**A row with no usable dispersion is absent from the numerator and present in
-the denominator.** Nothing here imputes, and `estimate_sd` returning no value
-is an ordinary outcome rather than an error.
+`dispersion_type` mixes SD, SE, IQR, full range, several CI widths and
+geometric CV; `param_type` mixes mean, median, LS mean, geometric mean and
+count types. Both are recognised from an open set: an unrecognised value
+yields no SD and a `sd_skip_reason` naming it, never a coerced number. A row
+with no usable dispersion stays in the denominator.
 """
 
 from __future__ import annotations
@@ -35,38 +18,22 @@ from typing import Optional
 
 _NORMAL = NormalDist()
 
-# --------------------------------------------------------------- folding
-
 _FOLD_RE = re.compile(r"[^a-z0-9]+")
 
 
 def fold(value: Optional[str]) -> str:
-    """A registry enumeration value -> a comparable key.
-
-    The two backends spell the same value differently -- the API's
-    `STANDARD_DEVIATION` and AACT's `Standard Deviation` -- and the ingest
-    layer deliberately keeps both verbatim, so the folding has to happen here.
-    Case and every run of non-alphanumerics collapse, which also absorbs
-    `Inter-Quartile Range` vs `Interquartile range` and `95%_CONFIDENCE_
-    INTERVAL` vs `95% Confidence Interval`.
-    """
+    """A registry enumeration value -> a comparable key. Absorbs the API's
+    `STANDARD_DEVIATION` vs AACT's `Standard Deviation`."""
     if value is None:
         return ""
     return _FOLD_RE.sub("_", value.strip().lower()).strip("_")
 
 
-#: dispersion kind -> the substrings (already folded) that identify it, in
-#: precedence order. Substrings rather than equalities: the value sets are not
-#: confirmable from this environment, so a spelling this list has not seen
-#: ("Standard Deviation (SD)") still has to land in the right kind. Anything
-#: matching nothing is `unknown`, which is a reported fact, not a default.
-#: Matched against the folded value *padded with underscores on both ends*, so
-#: a marker written as `_sd_` is a whole-token test that also catches a value
-#: that is nothing but "SD".
+# dispersion kind -> folded substrings, in precedence order. Matched against the
+# folded value padded with underscores, so `_sd_` is a whole-token test.
 _DISPERSION_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    # Checked before `standard_deviation`, since "standard error" contains
-    # neither, and before the CI rule, since "standard error of the mean"
-    # must not be read as a confidence interval.
+    # Before `standard_deviation` and before the CI rule: "standard error of
+    # the mean" must not read as a confidence interval.
     ("standard_error", ("standard_error", "std_error", "_se_", "_sem_")),
     ("standard_deviation", ("standard_deviation", "std_deviation", "_sd_", "stdev", "_std_")),
     ("confidence_interval", ("confidence_interval", "_ci_")),
@@ -79,13 +46,10 @@ _DISPERSION_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("coefficient_of_variation", ("coefficient_of_variation", "_cv_")),
 )
 
-#: Values that positively state "no dispersion was reported", as opposed to a
-#: value this module failed to recognise. Distinguished because the first is a
-#: fact about the trial and the second is a gap in this list.
+# Values that positively state "no dispersion reported", as opposed to unrecognised.
 _DISPERSION_NONE = frozenset({"", "not_applicable", "na", "n_a", "none", "not_reported"})
 
-#: param kind -> markers, same open-set treatment. `least_squares_mean` and
-#: `geometric_mean` are checked before the bare `mean` they contain.
+# `least_squares_mean` and `geometric_mean` are checked before the bare `mean` they contain.
 _PARAM_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("geometric_least_squares_mean", ("geometric_least_squares_mean", "geometric_ls_mean")),
     ("least_squares_mean", ("least_squares_mean", "_ls_mean_", "lsmean", "adjusted_mean")),
@@ -97,19 +61,13 @@ _PARAM_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("number", ("number", "count", "_n_")),
 )
 
-#: The param kinds whose reported value is a location estimate of a continuous
-#: quantity, and therefore the only ones an arm-level SD is meaningful for. A
-#: count has a dispersion column too -- and pooling its "spread" into an SD
-#: library would put participant counts and litres in the same distribution.
+# The only param kinds an arm-level SD is meaningful for.
 CONTINUOUS_PARAM_KINDS = frozenset(
     {"mean", "least_squares_mean", "median", "geometric_mean", "geometric_least_squares_mean"}
 )
 
-#: The param kinds a *mean-based* conversion is valid for. A confidence
-#: interval around a median is not (upper - lower) x sqrt(n) / (2z) wide: that
-#: formula is the inverse of the standard error of a mean. Wan et al.'s
-#: estimators are the median's counterpart, and they take an IQR or a range,
-#: never a CI.
+# The kinds a mean-based CI conversion is valid for. A CI around a median is
+# not (upper - lower) x sqrt(n) / (2z) wide.
 MEAN_LIKE_PARAM_KINDS = frozenset(
     {"mean", "least_squares_mean", "geometric_mean", "geometric_least_squares_mean"}
 )
@@ -141,13 +99,8 @@ def classify_param(value: Optional[str]) -> str:
 
 def confidence_percent(value: Optional[str]) -> Optional[float]:
     """The stated confidence level of a CI dispersion type, e.g. 95.0 from
-    "95% Confidence Interval".
-
-    Read from the string rather than assumed to be 95: the registry's own
-    enumeration carries 80, 90, 95, 97.5 and 99 (and this project could not
-    confirm that list against live payloads, so it parses rather than
-    matches). Assuming 95 for a 90% interval understates the SD by 18%.
-    """
+    "95% Confidence Interval". Parsed, not assumed: the registry carries 80,
+    90, 95, 97.5 and 99, and assuming 95 for a 90% interval understates the SD by 18%."""
     folded = fold(value)
     if "confidence" not in folded and not re.search(r"(^|_)ci($|_)", folded):
         return None
@@ -161,53 +114,33 @@ def confidence_percent(value: Optional[str]) -> Optional[float]:
 
 
 def z_for_percent(percent: float) -> float:
-    """The two-sided normal quantile for a `percent`% interval: 1.96 at 95."""
     return _NORMAL.inv_cdf(1.0 - (1.0 - percent / 100.0) / 2.0)
-
-
-# --------------------------------------------------- Wan et al. (2014)
 
 
 def wan_iqr_divisor(n: int) -> float:
     """eta(n) = 2 x Phi^-1((0.75n - 0.125) / (n + 0.25)), Wan et al. (2014)
-    method 3 -- the sample-size-aware divisor turning an inter-quartile range
-    into an SD. Tends to 1.35 for large n, which is the textbook shortcut this
-    deliberately does not take for small trials."""
+    method 3. Tends to 1.35 for large n."""
     return 2.0 * _NORMAL.inv_cdf((0.75 * n - 0.125) / (n + 0.25))
 
 
 def wan_range_divisor(n: int) -> float:
-    """xi(n) = 2 x Phi^-1((n - 0.375) / (n + 0.25)), Wan et al. (2014) method
-    1. Weak: the full range is driven by the two most extreme participants, so
-    an SD derived from it is flagged approximate and is separable in every
-    aggregate downstream."""
+    """xi(n) = 2 x Phi^-1((n - 0.375) / (n + 0.25)), Wan et al. (2014) method 1."""
     return 2.0 * _NORMAL.inv_cdf((n - 0.375) / (n + 0.25))
-
-
-# ------------------------------------------------------------- the result
 
 
 @dataclass(frozen=True)
 class SdEstimate:
-    """One arm-level measurement's estimated SD, and the whole of how it got there.
-
-    `value is None` is the ordinary case for most registry rows, and
-    `skip_reason` always says which of the several reasons applied -- so a
-    coverage line can name what was lost rather than only how much.
-    """
+    """One arm-level measurement's estimated SD and how it got there.
+    `value is None` is the ordinary case, with `skip_reason` saying why."""
 
     value: Optional[float] = None
-    #: 'reported' | 'from_standard_error' | 'from_confidence_interval' |
-    #: 'from_inter_quartile_range' | 'from_full_range' | 'from_geometric_cv'
+    # 'reported' | 'from_standard_error' | 'from_confidence_interval' |
+    # 'from_inter_quartile_range' | 'from_full_range' | 'from_geometric_cv'
     method: Optional[str] = None
     is_derived: bool = False
-    #: Wan et al.'s estimators are approximations from order statistics, not
-    #: conversions. Filterable, because a library built mostly out of
-    #: range-derived estimates is a different object from one built out of
-    #: reported SDs.
+    # Wan et al.'s estimators are approximations from order statistics.
     is_approximate: bool = False
-    #: 'arithmetic' | 'log'. A geometric CV yields an SD on the log scale,
-    #: which must never be pooled with an arithmetic one.
+    # 'arithmetic' | 'log'. A geometric CV yields a log-scale SD.
     scale: str = "arithmetic"
     inputs: dict = field(default_factory=dict)
     skip_reason: Optional[str] = None
@@ -224,20 +157,14 @@ def estimate_sd(
 ) -> SdEstimate:
     """One arm-level measurement -> an SD estimate, or a reason there is none.
 
-    The conversions, and what each needs:
-
-    | reported as         | conversion                            | needs        |
-    |---------------------|---------------------------------------|--------------|
-    | standard deviation  | identity                              | --           |
-    | standard error      | SE x sqrt(n)                          | n            |
-    | k% confidence interval | (upper - lower) x sqrt(n) / (2 z_k)| n, a mean    |
-    | inter-quartile range| Wan et al. (2014) eta(n)              | n            |
-    | full range          | Wan et al. (2014) xi(n)               | n            |
-    | geometric CV        | sqrt(ln(1 + (CV/100)^2)), log scale   | --           |
-
-    The CI row is the one with an extra precondition: the width-to-SD formula
-    inverts the standard error *of a mean*, so a CI reported around a median
-    is refused rather than converted.
+    | reported as            | conversion                            | needs      |
+    |------------------------|---------------------------------------|------------|
+    | standard deviation     | identity                              | --         |
+    | standard error         | SE x sqrt(n)                          | n          |
+    | k% confidence interval | (upper - lower) x sqrt(n) / (2 z_k)   | n, a mean  |
+    | inter-quartile range   | Wan et al. (2014) eta(n)              | n          |
+    | full range             | Wan et al. (2014) xi(n)               | n          |
+    | geometric CV           | sqrt(ln(1 + (CV/100)^2)), log scale   | --         |
     """
     param_kind = classify_param(param_type)
     dispersion_kind = classify_dispersion(dispersion_type)
@@ -251,9 +178,7 @@ def estimate_sd(
     if dispersion_kind == "unknown":
         return SdEstimate(skip_reason="dispersion_type_unrecognised", inputs=inputs)
     if dispersion_kind == "coefficient_of_variation":
-        # An arithmetic CV needs the mean to become an SD, and the mean is a
-        # different column with its own units; rather than reach across, this
-        # is left to a later vocabulary round.
+        # An arithmetic CV needs the mean, which is a different column.
         return SdEstimate(skip_reason="dispersion_type_unsupported", inputs=inputs)
 
     if dispersion_kind == "standard_deviation":
@@ -267,10 +192,8 @@ def estimate_sd(
     if dispersion_kind == "geometric_cv":
         if dispersion_value is None:
             return SdEstimate(skip_reason="no_dispersion_value", inputs=inputs)
-        # The registry reports geometric CV as a percentage. The corresponding
-        # SD is on the log scale and stays there: converting it to an
-        # arithmetic SD needs the geometric mean and an assumption of
-        # log-normality that the trial never stated.
+        # Reported as a percentage. The SD stays on the log scale: converting
+        # to arithmetic needs the geometric mean and a log-normality assumption.
         cv = dispersion_value / 100.0
         return SdEstimate(
             value=math.sqrt(math.log(1.0 + cv * cv)), method="from_geometric_cv",
@@ -331,8 +254,6 @@ def estimate_sd(
 
 
 def _usable_n(n: Optional[int]) -> bool:
-    """Wan's estimators need at least two observations; so, meaningfully, does
-    every other conversion here."""
     return n is not None and n >= 2
 
 

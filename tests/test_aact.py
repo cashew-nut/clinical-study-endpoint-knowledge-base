@@ -31,9 +31,9 @@ def test_run_pull_lands_filtered_studies_and_outcomes(fake_aact_con):
         "browse_conditions": 3,  # NCT001 has two MeSH conditions, NCT002 one; NCT003 excluded (PHASE1)
         "browse_interventions": 2,
         "mesh_terms": 0,  # AACT's mesh_terms is empty in the fake, same as the real database today
-        # The interventions (docs/DRUG_CLASS_SPEC.md). NCT003 is excluded (PHASE1),
-        # so 3 of the fake's 4 interventions land, with one alias and the four
-        # arm<->intervention links AACT's join table carries.
+        # NCT003 is excluded (PHASE1), so 3 of the fake's 4 interventions
+        # land, with one alias and the four arm/intervention links AACT's
+        # join table carries.
         "interventions": 3,
         "intervention_other_names": 1,
         "arm_interventions": 4,
@@ -148,11 +148,8 @@ def test_run_pull_is_idempotent_refresh_not_append(fake_aact_con):
 
 
 def test_run_pull_upsert_preserves_studies_from_earlier_pulls_with_different_filters(fake_aact_con):
-    """The bug this guards against: a pull used to `CREATE OR REPLACE TABLE`
-    every raw.* table wholesale, so a second pull with different filters wiped
-    out everything the first pull landed. `pull` must upsert instead --
-    updating/inserting the newly-pulled studies without dropping studies a
-    previous, differently-filtered pull already landed."""
+    """`pull` upserts: it updates and inserts the newly-pulled studies
+    without dropping studies an earlier, differently-filtered pull landed."""
     run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))  # lands NCT001, NCT002
     run_pull(fake_aact_con, PullFilters(phases=("1",), limit=500))  # lands NCT003
 
@@ -171,9 +168,8 @@ def test_run_pull_upsert_preserves_studies_from_earlier_pulls_with_different_fil
 
 
 def test_run_pull_updates_existing_study_fields_on_rerun(fake_aact_con):
-    """The "update existing" half of upsert: a study re-pulled with fresher
-    source data should have its raw.studies row updated in place, not left
-    stale and not duplicated."""
+    """The update half of the upsert: a study re-pulled with fresher source
+    data has its raw.studies row updated in place, not duplicated."""
     run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
     fake_aact_con.execute(
         "UPDATE aact.ctgov.studies SET overall_status = 'COMPLETED' WHERE nct_id = 'NCT002'"
@@ -191,10 +187,9 @@ def test_run_pull_updates_existing_study_fields_on_rerun(fake_aact_con):
 
 
 def test_pull_mesh_terms_picks_up_a_populated_tree_number_column(fake_aact_con):
-    """If AACT's mesh_terms ever carries real tree numbers, `_pull_mesh_terms`
-    should find them by introspecting the schema, not by a hardcoded column
-    name -- this is the "verify before writing the query" ask from
-    docs/NEXT_SESSION.md task 3, exercised against a populated fake."""
+    """If AACT's mesh_terms carries real tree numbers, `_pull_mesh_terms`
+    finds them by introspecting the schema rather than by a hardcoded column
+    name."""
     fake_aact_con.execute("DROP TABLE aact.ctgov.mesh_terms")
     fake_aact_con.execute(
         "CREATE TABLE aact.ctgov.mesh_terms (mesh_term VARCHAR, tree_number VARCHAR)"
@@ -221,10 +216,9 @@ def test_pull_mesh_terms_picks_up_a_populated_tree_number_column(fake_aact_con):
 
 
 def test_run_pull_lands_design_and_eligibility_columns(fake_aact_con):
-    """The study-level facts the USDM projection needs, per CDISC's
-    ct-gov_mapping.xlsx: a valid USDM Wrapper requires
-    StudyDesignPopulation.includesHealthySubjects and
-    InterventionalStudyDesign.model, and neither used to be collected."""
+    """The study-level facts the USDM projection needs: a valid USDM Wrapper
+    requires StudyDesignPopulation.includesHealthySubjects and
+    InterventionalStudyDesign.model."""
     run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500, since=None))
 
     rows = fake_aact_con.execute(
@@ -270,9 +264,9 @@ def test_run_pull_lands_arms_into_design_groups(fake_aact_con):
 
 
 def test_run_pull_migrates_a_warehouse_left_by_the_pre_upsert_release(fake_aact_con):
-    """The reported failure, end to end: a raw.studies created by the release
-    that used `CREATE OR REPLACE TABLE ... AS SELECT` has no PRIMARY KEY, so the
-    upsert's ON CONFLICT could not bind against it."""
+    """A raw.studies created by `CREATE OR REPLACE TABLE ... AS SELECT` has no
+    PRIMARY KEY, so the upsert's ON CONFLICT cannot bind against it until the
+    table is migrated."""
     fake_aact_con.execute(
         """
         CREATE TABLE raw.studies AS
@@ -309,10 +303,10 @@ def test_run_pull_needs_no_migration_on_a_warehouse_it_built_itself(fake_aact_co
 
 @pytest.fixture
 def ta_fake_aact_con(fake_aact_con):
-    """`fake_aact_con` plus the real shipped MeSH -> TA mapping loaded, the
-    precondition `--ta` filtering requires (the CLI enforces the same thing
-    before ever calling `run_pull`). NCT001/NCT002 (both PHASE3, in the base
-    fixture) resolve to oncology; NCT003 is PHASE1 and never in scope here."""
+    """`fake_aact_con` plus the real shipped MeSH -> TA mapping loaded, which
+    is the precondition `--ta` filtering requires. NCT001 and NCT002, both
+    PHASE3 in the base fixture, resolve to oncology. NCT003 is PHASE1 and
+    never in scope here."""
     vocab_dir = default_vocab_dir(__file__)
     write_vocab_tables(fake_aact_con, load_vocab(vocab_dir), vocab_dir=vocab_dir)
     return fake_aact_con
@@ -334,11 +328,10 @@ def test_run_pull_ta_filter_keeps_matching_studies(ta_fake_aact_con):
 
 
 def test_run_pull_ta_filter_scans_past_non_matching_batches(ta_fake_aact_con, monkeypatch):
-    """NCT001/NCT002 (most recent) are both oncology; the one respiratory
-    study is added last, so it's the oldest. A batch size of 1 forces
-    multiple round-trips -- `run_pull` must keep scanning past the
-    non-matching batches to find it, the same way ctgov_api paginates past
-    non-matching pages."""
+    """NCT001 and NCT002, the most recent, are both oncology, and the one
+    respiratory study is added last so it is the oldest. A batch size of 1
+    forces multiple round-trips, and `run_pull` keeps scanning past the
+    non-matching batches, as ctgov_api paginates past non-matching pages."""
     monkeypatch.setattr(aact_backend, "TA_BATCH_SIZE", 1)
 
     ta_fake_aact_con.execute(
@@ -369,8 +362,8 @@ def test_run_pull_ta_filter_reports_hit_scan_cap_when_capped_before_a_match(ta_f
 
 
 def test_run_pull_ta_filter_since_still_applies(ta_fake_aact_con):
-    """--since must still narrow the candidate pool --ta scans, exactly as it
-    does without --ta."""
+    """`--since` narrows the candidate pool `--ta` scans, as it does without
+    `--ta`."""
     result = run_pull(
         ta_fake_aact_con,
         PullFilters(phases=("3",), limit=500, since=date(2024, 1, 1), ta=("oncology",)),
@@ -381,9 +374,8 @@ def test_run_pull_ta_filter_since_still_applies(ta_fake_aact_con):
 
 
 def test_run_pull_ta_filter_preserves_earlier_pulls_with_different_filters(ta_fake_aact_con):
-    """The same upsert invariant every other pull honours: a study another
-    pull landed with different filters is never touched, even if it doesn't
-    match this pull's --ta."""
+    """A study another pull landed with different filters is left alone, even
+    when it does not match this pull's `--ta`."""
     run_pull(ta_fake_aact_con, PullFilters(phases=("3",), limit=500))  # lands NCT001, NCT002, no --ta
 
     run_pull(ta_fake_aact_con, PullFilters(phases=("3",), limit=500, ta=("respiratory",)))  # matches neither
@@ -404,10 +396,9 @@ def test_run_pull_org_filter_keeps_matching_studies(fake_aact_con):
 
 
 def test_run_pull_org_filter_excludes_collaborator_only_match(fake_aact_con):
-    """NCT001's collaborator is "National Cancer Institute" -- --org must match
-    the lead sponsor only (the same distinction the CT.gov API backend's
-    AREA[LeadSponsorName] draws), so a fragment only the collaborator carries
-    matches nothing."""
+    """NCT001's collaborator is "National Cancer Institute". `--org` matches
+    the lead sponsor only, as the API backend's AREA[LeadSponsorName] does, so
+    a fragment only the collaborator carries matches nothing."""
     result = run_pull(
         fake_aact_con, PullFilters(phases=("3",), limit=500, org=("National Cancer Institute",))
     )
@@ -440,9 +431,9 @@ def test_run_pull_org_filter_since_still_applies(fake_aact_con):
 
 
 def test_run_pull_org_filter_combines_with_ta(ta_fake_aact_con):
-    """--org and --ta compose (AND), rather than one silently overriding the
-    other -- NCT001/NCT002 are both oncology (per ta_fake_aact_con's fixture),
-    so --ta oncology alone keeps both; adding --org Merck narrows to NCT001."""
+    """`--org` and `--ta` compose as an AND. NCT001 and NCT002 are both
+    oncology, so `--ta oncology` alone keeps both and adding `--org Merck`
+    narrows to NCT001."""
     result = run_pull(
         ta_fake_aact_con,
         PullFilters(phases=("3",), limit=500, ta=("oncology",), org=("Merck",)),
@@ -455,9 +446,7 @@ def test_run_pull_org_filter_combines_with_ta(ta_fake_aact_con):
 
 
 def test_run_pull_replace_discards_studies_from_an_earlier_differently_filtered_pull(fake_aact_con):
-    """The inverse of
-    test_run_pull_upsert_preserves_studies_from_earlier_pulls_with_different_filters:
-    --replace is the explicit opt-out of that guarantee."""
+    """`--replace` is the opt-out of the upsert guarantee."""
     run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))  # lands NCT001, NCT002
 
     run_pull(fake_aact_con, PullFilters(phases=("1",), limit=500, replace=True))  # lands NCT003 only
@@ -481,8 +470,8 @@ def test_run_pull_replace_also_empties_child_tables_from_earlier_pulls(fake_aact
 
 
 def test_run_pull_replace_reports_no_migrations(fake_aact_con):
-    """A replace on a pre-existing, differently-shaped raw.studies must not be
-    reported as a migration -- it's a deliberate wipe, not a reconciliation."""
+    """A replace on a differently-shaped raw.studies is a wipe, not a
+    reconciliation, so it is not reported as a migration."""
     fake_aact_con.execute(
         """
         CREATE TABLE raw.studies AS
@@ -501,9 +490,9 @@ def test_run_pull_replace_reports_no_migrations(fake_aact_con):
 
 
 def test_run_pull_lands_interventions_and_the_join_table_arm_link(fake_aact_con):
-    """The AACT side of docs/DRUG_CLASS_SPEC.md phase 1. The arm link is the
-    reason this backend is the stronger of the two for the arm tier: it has a
-    real join table where the CT.gov API offers only labels to string-match."""
+    """The arm link is why this backend is the stronger of the two for the arm
+    tier: it has a real join table where the CT.gov API offers only labels to
+    string-match."""
     run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
 
     interventions = fake_aact_con.execute(
@@ -538,8 +527,8 @@ def test_run_pull_lands_interventions_and_the_join_table_arm_link(fake_aact_con)
 
 
 def test_run_pull_reports_when_aact_cannot_supply_interventions(fake_aact_con):
-    """A backend that cannot supply them must cost the drug-class axis, never
-    the pull -- the same contract the results section already has."""
+    """A backend that cannot supply interventions costs the drug-class axis,
+    not the pull, as with the results section."""
     fake_aact_con.execute("DROP TABLE aact.ctgov.interventions")
     result = run_pull(fake_aact_con, PullFilters(phases=("3",), limit=500))
 

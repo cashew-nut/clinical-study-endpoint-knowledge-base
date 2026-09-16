@@ -1,9 +1,8 @@
-"""D7, D8, D9 and the gate command.
+"""`endpoints stats` and `endpoints results coverage`.
 
-The tests that matter here are the ones about what `stats` refuses to pool and
-what it insists on printing: an endpoint statistics reference whose numbers are
-right and whose denominators are missing is not a smaller version of the right
-answer, it is a machine for producing confident numbers off eight arms.
+The tests here are mostly about what `stats` refuses to pool and what it
+insists on printing: a distribution without its denominator reads as more
+confident than the arms behind it support.
 """
 
 from __future__ import annotations
@@ -44,8 +43,8 @@ def test_sd_distribution_groups_by_form_and_unit(results_con):
 
 
 def test_litres_and_millilitres_are_pooled_only_after_conversion(results_con):
-    """The two studies report FEV1 in different units. Pooling their raw
-    numbers would give a median of about 155 -- of nothing."""
+    """The two studies report FEV1 in different units, so pooling their raw
+    numbers would give a median of about 155, which is not a quantity."""
     report = sd_distribution(results_con, StatsFilters(measurement="fev1"))
     group = _group(report, "change_from_baseline")
     assert 0.2 < group.median < 0.4
@@ -54,8 +53,8 @@ def test_litres_and_millilitres_are_pooled_only_after_conversion(results_con):
 
 def test_a_change_score_sd_is_never_pooled_with_a_raw_sd(results_con):
     """Converting between them needs the baseline/follow-up correlation, which
-    registries do not report. They are different quantities and stay in
-    different groups -- and `--source baseline` is how you ask for the second."""
+    registries do not report, so they stay in different groups and
+    `--source baseline` selects the second."""
     outcomes = sd_distribution(results_con, StatsFilters(measurement="fev1"))
     assert {g.form_id for g in outcomes["groups"]} == {"change_from_baseline"}
 
@@ -64,8 +63,7 @@ def test_a_change_score_sd_is_never_pooled_with_a_raw_sd(results_con):
     )
     assert baseline["groups"]
     assert {g.form_id for g in baseline["groups"]} == {"not_stated"}
-    # And they really are different numbers: baseline FEV1 varies far more
-    # than the change in it does.
+    # They are different numbers: baseline FEV1 varies more than the change.
     assert baseline["groups"][0].median > outcomes["groups"][0].median
 
 
@@ -77,8 +75,8 @@ def test_every_group_carries_its_own_denominator(results_con):
 
 
 def test_the_method_mix_is_always_broken_out(results_con):
-    """A library built mostly out of range-derived estimates is a different
-    object from one built out of reported SDs, so the mix is not optional."""
+    """A library built mostly from range-derived estimates is a different thing
+    from one built from reported SDs."""
     group = _group(sd_distribution(results_con, StatsFilters(measurement="fev1")), "change_from_baseline")
     assert group.methods["reported"] == 3
     assert group.methods["from_inter_quartile_range"] == 1
@@ -92,12 +90,12 @@ def test_approximate_and_derived_estimates_can_be_excluded(results_con):
     group = _group(strict, "change_from_baseline")
     assert set(group.methods) == {"reported"}
     assert group.arms == 3
-    # ...and the denominator does not shrink with the numerator.
+    # The denominator does not shrink with the numerator.
     assert group.studies_conformed == 2
 
 
 def test_rows_that_yielded_no_sd_are_reported_as_skip_reasons(results_con):
-    """Silence is not a missing value to impute; it is a number to print."""
+    """A row that yielded no SD is reported, not imputed."""
     report = sd_distribution(results_con, StatsFilters(measurement="fev1"))
     assert report["skip_reasons"]["dispersion_type_unrecognised"] == 1
 
@@ -123,8 +121,8 @@ def test_filters_narrow_without_changing_the_shape(results_con):
 
 
 def test_a_single_arm_group_gets_a_quantile_rather_than_an_exception(results_con):
-    """One arm having reported a usable SD is the case whose number most needs
-    its denominator printed beside it -- not a crash."""
+    """`statistics.quantiles` raises below two points; one arm is an ordinary
+    case that needs its denominator printed, not an exception."""
     report = sd_distribution(results_con, StatsFilters(measurement="st_georges_respiratory_questionnaire"))
     group = report["groups"][0]
     assert group.arms == 1
@@ -156,8 +154,8 @@ def test_effect_measures_are_grouped_by_kind_and_unit(results_con):
 
 
 def test_a_difference_effect_is_converted_before_being_pooled(results_con):
-    """0.23 L and 120 mL are 0.23 and 0.12 of the same thing. Their unconverted
-    median, 60.1, is a number about nothing."""
+    """0.23 L and 120 mL are 0.23 and 0.12 of the same thing, so their
+    unconverted median of 60.1 is not a quantity."""
     report = analysis_distribution(results_con, StatsFilters(measurement="fev1"))
     mean_difference = next(e for e in report["effects"] if e["effect_kind"] == "mean_difference")
     assert mean_difference["median"] == pytest.approx(0.175)
@@ -228,9 +226,8 @@ def test_parse_ni_margin_reads_a_stated_margin(text, value, unit):
     ],
 )
 def test_parse_ni_margin_refuses_rather_than_guesses(text):
-    """A margin is a regulatory commitment. A guessed one is worse than none,
-    and this table does not exist publicly in any form, so it must not be
-    seeded with numbers that were never margins."""
+    """A margin is a regulatory commitment, so a guessed one is worse than
+    none."""
     margin = parse_ni_margin(text)
     assert margin.value is None
     assert margin.source is None
@@ -276,9 +273,8 @@ def test_gate_measurements_answer_all_four_questions(results_con):
 
 
 def test_the_gate_lists_the_exact_strings_the_vocabulary_is_missing(results_con):
-    """The point of shipping the gate as a command: after a real pull it names
-    which spellings to add, rather than reporting a percentage nobody can act
-    on."""
+    """The coverage command names which spellings to add, rather than reporting
+    a percentage on its own."""
     enums = gate_measurements(results_con)["enumerations"]
     unrecognised = {e["value"]: e["rows"] for e in enums["dispersion_type_raw_unrecognised"]}
     assert unrecognised == {"Bootstrap Spread": 1}
@@ -362,9 +358,8 @@ def test_results_conform_cli_reports_what_it_wrote(results_warehouse_path, tmp_p
 
 
 def test_drug_class_filter_narrows_to_studies_that_used_the_class(results_con):
-    """The STUDY tier, deliberately: it narrows to trials that used the class
-    and does not claim the SD came from an arm that received it
-    (docs/DRUG_CLASS_SPEC.md, "Class is an arm property")."""
+    """The study tier: it narrows to trials that used the class, and does not
+    claim the SD came from an arm that received it."""
     everything = sd_distribution(results_con, StatsFilters(measurement="fev1"))
     narrowed = sd_distribution(
         results_con, StatsFilters(measurement="fev1", drug_class="muscarinic_antagonist")
@@ -385,15 +380,15 @@ def test_stratify_by_drug_class_returns_one_report_per_class(results_con):
     strata = stratify_by_drug_class(results_con, StatsFilters(measurement="fev1"))
     classes = [class_id for class_id, _report in strata]
     assert "muscarinic_antagonist" in classes
-    # Each stratum is a full report, carrying its own denominator -- the rule
-    # that keeps a thin stratum from reading as a confident one.
+    # Each stratum is a full report carrying its own denominator, so a thin
+    # stratum does not read as a confident one.
     for _class_id, report in strata:
         assert "studies_conformed" in report
 
 
 def test_stratify_by_drug_class_respects_the_kind(results_con):
     """Stratifying over a mixture of kinds would put "PD-1 inhibitor" and
-    "monoclonal antibody" in adjacent blocks as though they were alternatives."""
+    "monoclonal antibody" in adjacent blocks."""
     mechanisms = dict(stratify_by_drug_class(results_con, StatsFilters(measurement="fev1")))
     controls = dict(
         stratify_by_drug_class(results_con, StatsFilters(measurement="fev1"), kind="control")
@@ -417,8 +412,8 @@ def test_stats_cli_stratifies_by_drug_class(results_warehouse_path):
     )
     assert result.exit_code == 0, result.output
     assert "muscarinic_antagonist" in result.output
-    # The reminder that strata overlap is not decoration: a combination trial
-    # appears under every class it used, so the blocks do not sum to the corpus.
+    # A combination trial appears under every class it used, so the blocks do
+    # not sum to the corpus.
     assert "not disjoint" in result.output
 
 
@@ -442,13 +437,12 @@ def test_stats_cli_says_so_when_nothing_covers_the_selection(results_warehouse_p
          "--warehouse", results_warehouse_path],
     )
     assert result.exit_code == 0, result.output
-    # Either it found modality strata or it said plainly that it found none --
-    # never an empty screen.
+    # Either it found modality strata or it said it found none, never nothing.
     assert "modality" in result.output or "──" in result.output
 
 
 def test_drug_class_filter_without_a_resolved_axis_says_so(tmp_path, results_warehouse_path):
-    """Rather than surfacing DuckDB's CatalogException at the caller."""
+    """Rather than surfacing DuckDB's CatalogException."""
     import shutil
 
     from clinical_endpoints.db import connect

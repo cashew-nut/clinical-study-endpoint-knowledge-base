@@ -1,7 +1,5 @@
-"""The read-only USDM 4.0 HTTP surface.
-
-One call is what this exists for: GET /v4/studies/{nctId}/endpoints.
-"""
+"""The read-only USDM 4.0 HTTP surface, centred on
+GET /v4/studies/{nctId}/endpoints."""
 
 from __future__ import annotations
 
@@ -68,7 +66,7 @@ def test_an_unpulled_trial_is_404_not_an_empty_document(client):
 
 
 def test_a_trial_with_no_registered_outcomes_is_200_and_empty(client):
-    """Distinct from 404: the trial exists and registered nothing."""
+    """Distinct from 404: the trial exists and registered no outcomes."""
     body = client.get("/v4/studies/NCT00000003/endpoints").json()
     assert body["objectives"] == []
 
@@ -84,12 +82,12 @@ def test_coverage_reports_the_tier_mix(client):
     body = client.get("/v4/studies/NCT00000001/endpoints/coverage").json()
     assert body["endpoints"] == 5
     assert body["tiers"]["templated"] == 3
-    assert body["defaulted"] == {}  # none of NCT00000001's endpoints needed a fallback
+    assert body["defaulted"] == {}  # no endpoint here needed a fallback
 
 
 def test_a_vocabulary_reference_resolves_over_http(client):
-    """What makes the dictionary a real "reference source that provides a
-    listing of valid parameter names and values" (CT C207597)."""
+    """What makes the dictionary a "reference source that provides a listing of
+    valid parameter names and values" (CT C207597)."""
     body = client.get("/v4/vocab/measurement/pasi").json()
     assert body["term"]["id"] == "pasi"
     assert body["term"]["concept"] == "psoriasis_severity"
@@ -105,7 +103,7 @@ def test_a_surrogate_reference_points_at_a_live_vocab_route(client):
 
 
 def test_a_concept_reference_resolves_to_the_measurements_that_share_it(client):
-    """`concept` is a column on vocab.measurements, not a table -- but a
+    """`concept` is a column on vocab.measurements rather than a table, but a
     {concept} tag's surrogate references this route, so it has to resolve."""
     body = client.get("/v4/vocab/concept/psoriasis_severity").json()
     assert body["term"]["id"] == "psoriasis_severity"

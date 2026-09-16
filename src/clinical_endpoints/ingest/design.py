@@ -1,15 +1,8 @@
-"""Study-level design and eligibility facts, shared by both ingestion backends.
+"""Study-level design and eligibility columns, shared by both backends.
 
-The eight columns `raw.studies` started with were what the conforming pipeline
-needed. The USDM projection needs more: a schema-valid USDM `Wrapper` requires
-`StudyDesignPopulation.includesHealthySubjects` and
-`InterventionalStudyDesign.model`, and neither was collected. Filling them with
-placeholders would put invented clinical facts into a standards-conformant
-document, so they are sourced instead.
-
-The mapping is CDISC's own, not this project's invention:
-DDF-RA/Documents/Mappings/ct-gov_mapping.xlsx maps ClinicalTrials.gov fields to
-USDM 4.0.0 paths. The rows used here:
+The USDM projection needs `StudyDesignPopulation.includesHealthySubjects` and
+`InterventionalStudyDesign.model`, which a schema-valid Wrapper requires. The
+CT.gov -> USDM mapping is CDISC's own (DDF-RA ct-gov_mapping.xlsx):
 
 | CT.gov field                | USDM target                                  |
 |-----------------------------|----------------------------------------------|
@@ -23,17 +16,12 @@ USDM 4.0.0 paths. The rows used here:
 | Minimum / Maximum Age       | StudyDesignPopulation.plannedAge             |
 | Study Population Description| StudyDesignPopulation.description            |
 | Arm Title / Type            | StudyArm.label / StudyArm.type               |
-
-Both backends write the same shape, so everything downstream stays
-source-agnostic -- the property the README calls out as load-bearing.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
-#: Appended to the original eight columns of raw.studies. Additive: existing
-#: columns keep their names and meanings.
 STUDY_DESIGN_COLUMNS: tuple[tuple[str, str], ...] = (
     ("intervention_model", "VARCHAR"),
     ("primary_purpose", "VARCHAR"),
@@ -46,18 +34,13 @@ STUDY_DESIGN_COLUMNS: tuple[tuple[str, str], ...] = (
     ("minimum_age", "VARCHAR"),
     ("maximum_age", "VARCHAR"),
     ("population_description", "VARCHAR"),
-    # Not part of the CDISC mapping above -- the *lead* sponsor's name (never a
-    # collaborator's), sourced so `pull --org` has something to filter on. CT.gov
-    # API: sponsorCollaboratorsModule.leadSponsor.name. AACT: ctgov.sponsors
+    # The lead sponsor's name, for `pull --org`. CT.gov API:
+    # sponsorCollaboratorsModule.leadSponsor.name. AACT: ctgov.sponsors
     # where lead_or_collaborator = 'lead'.
     ("organization", "VARCHAR"),
-    # The registry's own claim that this study has posted results, landed
-    # whether or not `pull` was asked to land the results section itself --
-    # it is the denominator for "what share of conformed studies could have
-    # results" (docs/ENDPOINT_RESULTS_SPEC.md, gate question 1), and that
-    # question has to stay answerable for studies pulled with --no-results.
-    # CT.gov API: the study record's own `hasResults`. AACT:
-    # ctgov.studies.results_first_submitted_date IS NOT NULL.
+    # The registry's own claim that results are posted, landed whether or not
+    # the results section itself is. CT.gov API: `hasResults`. AACT:
+    # results_first_submitted_date IS NOT NULL.
     ("has_results", "BOOLEAN"),
 )
 
@@ -77,10 +60,8 @@ STUDIES_DDL = """
 DESIGN_GROUPS_DDL = "nct_id VARCHAR, group_type VARCHAR, title VARCHAR, description VARCHAR"
 DESIGN_GROUPS_COLUMNS: tuple[str, ...] = ("nct_id", "group_type", "title", "description")
 
-#: AACT stores this as free text ("Accepts Healthy Volunteers" / "No"); the
-#: CT.gov API as a JSON boolean. Both normalise here so `raw.studies` carries one
-#: type, and an unrecognised value stays NULL rather than guessing -- a wrong
-#: `includesHealthySubjects` is a clinical claim, not a formatting slip.
+# AACT stores this as free text ("Accepts Healthy Volunteers" / "No"); the
+# CT.gov API as a JSON boolean. An unrecognised value stays NULL.
 _HEALTHY_VOLUNTEER_TRUE = frozenset({"accepts healthy volunteers", "yes", "true", "y"})
 _HEALTHY_VOLUNTEER_FALSE = frozenset({"no", "false", "n"})
 

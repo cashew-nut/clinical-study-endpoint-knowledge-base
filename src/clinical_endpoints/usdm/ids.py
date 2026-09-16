@@ -1,14 +1,9 @@
-"""Readable sequential ids and the `usdm:ref` element.
+"""Sequential ids and the `usdm:ref` element.
 
-CDISC's published examples use `Endpoint_1`, `Objective_2`, `Code_622`,
-`SyntaxTemplateDictionary_1` -- no published USDM document emits UUIDs -- so
-this projection matches that. Sequential ids are only as stable as their
-ordering, and the ordering is fixed and content-derived (see
-docs/USDM_ENDPOINTS_API_SPEC.md, "Identity"): same warehouse state produces a
-byte-identical document.
-
-The durable identity is the conformed `endpoint_id` content hash, which travels
-in the endpoint's extensions -- `Endpoint_7` is a position, not a name.
+CDISC's published examples use `Endpoint_1`, `Code_622`; no published USDM
+document emits UUIDs. The ordering is content-derived, so the same warehouse
+state produces the same document. The durable identity is the conformed
+`endpoint_id` hash carried in the endpoint's extensions.
 """
 
 from __future__ import annotations
@@ -19,7 +14,7 @@ from xml.sax.saxutils import quoteattr
 
 @dataclass
 class IdFactory:
-    """Mints `ClassName_N`, N counting from 1 per class, in call order."""
+    """Mints `ClassName_N`, N counting from 1 per class."""
 
     _counts: dict[str, int] = field(default_factory=dict)
 
@@ -33,11 +28,8 @@ class IdFactory:
 
 
 def usdm_ref(klass: str, instance_id: str, attribute: str) -> str:
-    """The reference form every published USDM document uses.
-
-    Verbatim from CDISC_Pilot_Study.json:
-        <usdm:ref klass="Quantity" id="Quantity_9" attribute="value"></usdm:ref>
-    """
+    """As in CDISC_Pilot_Study.json:
+    <usdm:ref klass="Quantity" id="Quantity_9" attribute="value"></usdm:ref>"""
     return (
         f"<usdm:ref klass={quoteattr(klass)} id={quoteattr(instance_id)} "
         f"attribute={quoteattr(attribute)}></usdm:ref>"

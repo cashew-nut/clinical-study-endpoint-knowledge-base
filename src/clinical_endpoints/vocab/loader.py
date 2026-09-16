@@ -1,20 +1,8 @@
 """Load, validate, and materialise vocab/*.yaml into the warehouse `vocab.*` tables.
 
-Plan section 4: "`vocab validate` loads and checks these into `vocab.*` DuckDB
-tables (uniqueness of ids, no orphan synonyms)."
-
-Checks beyond those two, all of which caught real defects while the vocabularies
-were being written:
-
-* every regex in every file compiles
-* cross-file referential integrity -- a `default_scale` that names no scale, a
-  `direction_by_ta` keyed on a therapeutic area that does not exist, a
-  `match_precedence` list that has drifted out of step with the terms it orders
-* closed value sets (direction_rule, domain, event_polarity, reference kind)
-* a synonym claimed by two terms in the same dimension, which would make the
-  match order silently decide the answer
-
-Errors fail the command; warnings are reported and do not.
+Checks: id uniqueness, every regex compiles, cross-file referential
+integrity, closed value sets, and no synonym claimed by two terms in one
+dimension. Errors fail the command; warnings are reported and do not.
 """
 
 from __future__ import annotations
@@ -55,7 +43,7 @@ ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 class VocabError(RuntimeError):
-    """Raised when the vocabulary cannot be loaded at all (missing/unparseable file)."""
+    pass
 
 
 @dataclass
@@ -82,7 +70,6 @@ def default_vocab_dir(start: Path | str | None = None) -> Path:
         vocab_dir = candidate / VOCAB_DIRNAME
         if vocab_dir.is_dir():
             return vocab_dir
-    # Fall back to the packaged location: src/clinical_endpoints/vocab/../../../vocab
     packaged = Path(__file__).resolve().parents[3] / VOCAB_DIRNAME
     if packaged.is_dir():
         return packaged
@@ -90,7 +77,6 @@ def default_vocab_dir(start: Path | str | None = None) -> Path:
 
 
 def load_vocab(vocab_dir: Path | str) -> dict[str, Any]:
-    """Parse every vocab file. Raises VocabError on a missing or unparseable file."""
     vocab_dir = Path(vocab_dir)
     docs: dict[str, Any] = {}
     for spec in DIMENSIONS:
@@ -247,13 +233,9 @@ def _validate_precedence(
         result.error(where, f"`{key}` names unknown ids {sorted(extra)}")
 
 
-#: The six forms whose statistic is about a defined occurrence
-#: (docs/EVENT_SEMANTICS_SPEC.md). Declared explicitly in forms.yaml rather
-#: than derived from direction_rule, because direction_rule does not carve
-#: this joint: event_free_rate_at_timepoint is higher_count_better (a
-#: free-rate's direction is fixed whatever the event's polarity) yet is
-#: entirely about an event, while shift_from_baseline is
-#: inherit_event_polarity yet names no event.
+# direction_rule does not determine event_family (event_free_rate_at_timepoint
+# is higher_count_better yet about an event), so the flag is declared in
+# forms.yaml and this only warns on the likely drift.
 EVENT_FAMILY_DIRECTION_RULES = frozenset({"time_polarity", "inherit_event_polarity"})
 
 
@@ -335,11 +317,8 @@ def _validate_measurements(doc: dict, ids: dict[str, set[str]], result: Validati
 
 
 def _validate_events(doc: dict, result: ValidationResult) -> None:
-    """events.yaml, beyond the generic file-shape/cross-reference checks every
-    DimensionSpec already gets: `polarity` is a closed set, a term carries
-    `components` (an event union) XOR synonyms/patterns -- a union is reached
-    via a named-endpoint definition, never assembled from its parts at match
-    time -- and `components` edges must be acyclic."""
+    """`polarity` is a closed set, a term carries `components` XOR
+    synonyms/patterns, and `components` edges must be acyclic."""
     where = "events.yaml"
     terms = [t for t in doc.get("terms") or [] if isinstance(t, dict) and t.get("id")]
     by_id = {t["id"]: t for t in terms}
@@ -368,9 +347,7 @@ def _validate_events(doc: dict, result: ValidationResult) -> None:
 
 
 def _find_cycle(by_id: dict, edge_field: str) -> str | None:
-    """Standard three-colour DFS cycle check over `by_id[x][edge_field]` as a
-    list of ids into the same `by_id` mapping. Returns one id on a cycle, or
-    None."""
+    """Three-colour DFS over `by_id[x][edge_field]`. Returns one id on a cycle, or None."""
     WHITE, GREY, BLACK = 0, 1, 2
     color = {term_id: WHITE for term_id in by_id}
 
@@ -378,7 +355,7 @@ def _find_cycle(by_id: dict, edge_field: str) -> str | None:
         color[term_id] = GREY
         for child in (by_id.get(term_id, {}).get(edge_field) or []):
             if child not in by_id:
-                continue  # not a valid id -- reported separately by the reference check
+                continue
             if color.get(child) == GREY:
                 return True
             if color.get(child, WHITE) == WHITE and visit(child):
@@ -393,11 +370,8 @@ def _find_cycle(by_id: dict, edge_field: str) -> str | None:
 
 
 def _validate_named_endpoints(doc: dict, ids: dict[str, set[str]], result: ValidationResult) -> None:
-    """named_endpoints.yaml: not a DimensionSpec, so it gets none of the
-    generic file-shape checks for free -- id/label/synonym shape, cross-file
-    id references (form/event/reference/default_measurement), and the
-    TTE-definitions-with-a-reference-need-a-citation rule are all checked
-    here."""
+    """named_endpoints.yaml is not a DimensionSpec, so its shape and
+    cross-file references are checked here."""
     where = NAMED_ENDPOINTS_FILENAME
     if not isinstance(doc.get("version"), int):
         result.error(where, "`version` must be an integer")
@@ -468,11 +442,7 @@ def _validate_named_endpoints(doc: dict, ids: dict[str, set[str]], result: Valid
 
 
 def _validate_cross_dimension_synonyms(docs: dict[str, Any], result: ValidationResult) -> None:
-    """docs/EVENT_SEMANTICS_SPEC.md: "a synonym claimed by any two of
-    {measurement, event, named-endpoint} is an error, so the boundary cannot
-    silently regrow." Each file's own within-file collision is already
-    checked (generically for measurement/event, in _validate_named_endpoints
-    for named endpoints); this only flags a synonym shared ACROSS the three."""
+    """A synonym shared across measurement, event and named-endpoint is an error."""
     where = "measurements.yaml / events.yaml / named_endpoints.yaml"
     owners: dict[str, tuple[str, str]] = {}
 
@@ -546,12 +516,7 @@ def _validate_scales(doc: dict, result: ValidationResult) -> None:
             )
         if term.get("factor_to_si") is not None and si is None:
             result.error(where, f"{term.get('id')}: factor_to_si without si_equivalent")
-        # The unit family a term points into has to have a well-formed anchor:
-        # the term named as `si_equivalent` must anchor itself, at factor 1.
-        # Without this, `results/units.py`'s `to_si` would convert into a unit
-        # that is itself expressed in something else -- one silent factor out,
-        # in a column whose whole job is to make two trials' SDs comparable
-        # (docs/ENDPOINT_RESULTS_SPEC.md, D6).
+        # The `si_equivalent` term must anchor itself at factor 1.
         if si is not None and si in by_id:
             anchor = by_id[si]
             if anchor.get("si_equivalent") != si or anchor.get("factor_to_si") != 1:
@@ -577,14 +542,8 @@ def _validate_therapeutic_areas(doc: dict, result: ValidationResult) -> None:
 
 
 def _validate_drug_classes(doc: dict, result: ValidationResult) -> None:
-    """drug_classes.yaml: mandatory `kind` from the closed set, unique
-    precedence, and an acyclic `parent` chain.
-
-    `kind` is mandatory rather than defaulted because a query that groups by
-    drug class has to be able to say which axis it means -- mixing a mechanism
-    class with a modality class compares "PD-1 inhibitor" against "monoclonal
-    antibody" as if they were alternatives (docs/DRUG_CLASS_SPEC.md).
-    """
+    """Mandatory `kind`, unique precedence, and an acyclic same-kind `parent`
+    chain in which a child outranks its parent."""
     where = "drug_classes.yaml"
     terms = [t for t in doc.get("terms") or [] if isinstance(t, dict)]
 
@@ -605,9 +564,6 @@ def _validate_drug_classes(doc: dict, result: ValidationResult) -> None:
                 f"{term.get('id')}: `kind` must be one of {sorted(DRUG_CLASS_KINDS)}, got {kind!r}",
             )
 
-    # `parent` is one shallow level of rollup, not the recursive structure
-    # docs/COMPOSITE_ENDPOINTS_SPEC.md argues for. A cycle here would hang the
-    # rollup rather than surface as a wrong answer, so it is an error.
     parents = {t["id"]: t.get("parent") for t in terms if t.get("id")}
     for term_id in parents:
         seen = [term_id]
@@ -619,8 +575,6 @@ def _validate_drug_classes(doc: dict, result: ValidationResult) -> None:
             seen.append(cursor)
             cursor = parents.get(cursor)
 
-    # A parent of a different `kind` would make the rollup change axis halfway
-    # up, so a mechanism term could roll up into a modality one.
     kinds = {t["id"]: t.get("kind") for t in terms if t.get("id")}
     for term in terms:
         parent = term.get("parent")
@@ -631,10 +585,6 @@ def _validate_drug_classes(doc: dict, result: ValidationResult) -> None:
                 f"not {term.get('kind')!r} -- a rollup must not change axis",
             )
 
-    # A child must outrank its parent, or a study matching both gets the coarser
-    # class as its primary: `checkpoint_inhibitor` would beat `pd1_inhibitor`
-    # even where the curated layer named the specific target, and the whole
-    # point of the mechanism axis is the specific claim.
     by_id = {t["id"]: t for t in terms if t.get("id")}
     for term in terms:
         parent = by_id.get(term.get("parent") or "")
@@ -658,9 +608,8 @@ def _validate_drug_classes(doc: dict, result: ValidationResult) -> None:
 def _validate_drug_class_mapping(
     doc: dict, classes_doc: dict, ids: dict[str, set[str]], result: ValidationResult
 ) -> None:
-    """drug_class_mesh_mapping.yaml: every rule names a real drug class, every
-    regex compiles, and the two layers that must yield one particular `kind`
-    actually do."""
+    """Every rule names a real drug class, every regex compiles, and control
+    and branch rules yield the kind they must."""
     where = DRUG_CLASS_MAPPING_FILENAME
     class_ids = ids.get("drug_class", set())
     kinds = {
@@ -681,9 +630,6 @@ def _validate_drug_class_mapping(
                 )
 
     for rule in doc.get("control_rules") or []:
-        # A control rule that yielded anything but a control class would class a
-        # placebo arm as a drug, which is the one error this whole layer exists
-        # to prevent.
         check_class(rule.get("drug_class"), "control_rules", expect_kind="control")
         for pattern in rule.get("name_patterns") or []:
             _check_regex(where, f"control_rules[{rule.get('drug_class')}]", pattern, result)
@@ -701,8 +647,6 @@ def _validate_drug_class_mapping(
             _check_regex(where, f"name_patterns[{rule.get('drug_class')}]", pattern, result)
 
     for rule in doc.get("branch_rules") or []:
-        # The branch layer is the coarse one, and promoting it to a mechanism
-        # claim is exactly the error docs/DRUG_CLASS_SPEC.md warns against.
         check_class(rule.get("drug_class"), "branch_rules", expect_kind="pharmacologic")
         for pattern in rule.get("patterns") or []:
             _check_regex(where, f"branch_rules[{rule.get('drug_class')}]", pattern, result)
@@ -723,9 +667,6 @@ def _validate_timepoints(doc: dict, ids: dict[str, set[str]], result: Validation
         result.error(where, "every timepoint pattern needs a `priority`")
     elif len(set(priorities)) != len(priorities):
         result.error(where, "`priority` values must be unique -- ties make classification order-dependent")
-    # docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 3: every pattern must
-    # declare what it actually names (a point in time vs. a window vs. no
-    # calendar horizon at all), from the closed set the projection relies on.
     for term in doc.get("terms") or []:
         role = term.get("role")
         if role not in TIMEPOINT_ROLES:
@@ -738,8 +679,6 @@ def _validate_timepoints(doc: dict, ids: dict[str, set[str]], result: Validation
 
 
 def _validate_matching(doc: dict, ids: dict[str, set[str]], result: ValidationResult) -> None:
-    """matching.yaml states rules the pipeline must implement; check they are
-    internally consistent and that every id it names actually exists."""
     where = MATCHING_FILENAME
     for key in ("normalisation", "synonyms", "patterns", "precedence", "cascade", "provenance"):
         if key not in doc:
@@ -747,11 +686,7 @@ def _validate_matching(doc: dict, ids: dict[str, set[str]], result: ValidationRe
 
     synonyms = doc.get("synonyms") or {}
     if synonyms.get("match") != "whole_token":
-        result.errors.append(
-            f"{where}: synonyms.match must be `whole_token`. Substring matching is what "
-            f"assigned 9.8% of the corpus to `epistaxis_severity_score` via `ess` inside "
-            f"'assessment'; the rule exists to stop that recurring."
-        )
+        result.errors.append(f"{where}: synonyms.match must be `whole_token`")
     minimum = (synonyms.get("case_sensitivity") or {}).get("min_synonym_length")
     if not isinstance(minimum, int) or minimum < 2:
         result.errors.append(
@@ -759,11 +694,7 @@ def _validate_matching(doc: dict, ids: dict[str, set[str]], result: ValidationRe
         )
 
     for dimension, steps in (doc.get("cascade") or {}).items():
-        # "timepoint" and "named_endpoint" are cascade-only pseudo-dimensions:
-        # the first has no vocab file of its own (timepoint_patterns.yaml is
-        # dimension `timepoint_pattern`), the second is not a DimensionSpec at
-        # all (named_endpoints.yaml loads through its own path -- see
-        # NAMED_ENDPOINTS_FILENAME).
+        # "timepoint" and "named_endpoint" are cascade-only pseudo-dimensions.
         if dimension not in ids and dimension not in {"form", "measurement", "timepoint", "reference", "named_endpoint"}:
             result.errors.append(f"{where}: cascade names unknown dimension `{dimension}`")
         for step in steps:
@@ -778,10 +709,7 @@ def _validate_matching(doc: dict, ids: dict[str, set[str]], result: ValidationRe
                     f"{where}: cascade[{dimension}] uses unknown match_method `{method}`"
                 )
         if steps and "fallback" not in steps[-1]:
-            result.errors.append(
-                f"{where}: cascade[{dimension}] must end in a `fallback` step, so an "
-                f"unmatched string has a defined destination rather than a null"
-            )
+            result.errors.append(f"{where}: cascade[{dimension}] must end in a `fallback` step")
 
     floors = (doc.get("provenance") or {}).get("confidence_floor") or {}
     for method in doc.get("provenance", {}).get("match_method") or []:
@@ -791,8 +719,7 @@ def _validate_matching(doc: dict, ids: dict[str, set[str]], result: ValidationRe
             result.errors.append(f"{where}: provenance.confidence_floor has no entry for `{method}`")
     if floors and floors.get("exact", 0) <= floors.get("syntactic_rule", 1):
         result.errors.append(
-            f"{where}: provenance.confidence_floor must rank exact above syntactic_rule -- "
-            f"a cascade hit from `description` is weaker evidence than the title saying it"
+            f"{where}: provenance.confidence_floor must rank exact above syntactic_rule"
         )
 
 
@@ -822,20 +749,11 @@ def _validate_ta_mesh_mapping(doc: dict, ids: dict[str, set[str]], result: Valid
         check_ta(ta_id, f"defaults[{key}]")
 
 
-# --------------------------------------------------------------- persistence
-
-
 def _validate_usdm_templates(
     doc: dict, forms_doc: dict, ids: dict[str, set[str]], result: ValidationResult
 ) -> None:
-    """Check usdm_templates.yaml: one template per form, valid grammar, tags in
-    the closed set, and a `{threshold}` wherever forms.yaml says the form
-    expects one.
-
-    A form with neither a template nor `verbatim: true` is an error rather than
-    a warning: it would silently start rendering as raw registry text, which is
-    exactly the kind of quiet degradation that is invisible downstream.
-    """
+    """One template (or `verbatim: true`) per form, valid grammar, tags in the
+    closed set, and a `{threshold}` wherever the form expects one."""
     from clinical_endpoints.usdm.templates import TemplateError, all_tags, parse_template, required_tags
 
     where = USDM_TEMPLATES_FILENAME
@@ -893,13 +811,8 @@ def _validate_usdm_templates(
         unknown = sorted(set(tags) - USDM_TAGS)
         if unknown:
             result.error(where, f"{form_id}: unknown tag(s) {unknown}, not in {sorted(USDM_TAGS)}")
-        # docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1: "definitional or
-        # dead" made mechanical. A fallback is legal only where the template
-        # actually renders {reference} AND forms.yaml says the form's own
-        # meaning entails a reference value -- never on corpus convention
-        # alone. This also covers the event spec's carried-over rule (no
-        # reference_fallback on time_to_event): that form is not
-        # reference_entailed, so it falls out of the same check.
+        # A reference_fallback is legal only where the template renders
+        # {reference} and the form's meaning entails a reference value.
         if fallback is not None and "reference" not in tags:
             result.error(
                 where,
@@ -925,10 +838,6 @@ def _validate_usdm_templates(
                 f"{form_id}: forms.yaml marks it expects_threshold, but the template has no "
                 "{threshold} tag",
             )
-        # docs/EVENT_SEMANTICS_SPEC.md phase C: {event} only makes sense where
-        # forms.yaml says there is an event to name, and -- now that phase C
-        # is enabled -- time_to_event must render it rather than falling back
-        # to naming the assessment in the event's place.
         if "event" in tags and not event_family.get(form_id):
             result.error(
                 where,
@@ -938,9 +847,7 @@ def _validate_usdm_templates(
         if form_id == "time_to_event" and "measurement" in tags:
             result.error(
                 where,
-                f"{form_id}: template still renders {{measurement}} -- phase C is enabled, so "
-                "this form must render {event} instead (the confident-and-wrong rendering "
-                "docs/EVENT_SEMANTICS_SPEC.md exists to kill)",
+                f"{form_id}: template renders {{measurement}} -- this form must render {{event}}",
             )
         if len(template) > 200:
             result.warn(where, f"{form_id}: template is {len(template)} characters")
@@ -1006,10 +913,7 @@ def _warn_missing_inline_labels(docs: dict[str, Any], result: ValidationResult) 
                 )
 
 
-#: A parenthetical that is a bare abbreviation -- "(PASI)", "(HbA1c)" -- reads
-#: fine inside a sentence and is how clinical prose introduces an instrument. One
-#: carrying a unit, a range or several words -- "(%)", "(0-1)", "(SD units)" --
-#: does not.
+# "(PASI)" reads fine inside a sentence; "(%)", "(0-1)", "(SD units)" do not.
 _BARE_ABBREVIATION = re.compile(r"^\([A-Za-z][A-Za-z0-9.\-]*\)$")
 
 
@@ -1026,12 +930,7 @@ _LONG_TABLES = (
     ("synonyms", "dimension VARCHAR, term_id VARCHAR, synonym VARCHAR, synonym_normalised VARCHAR"),
     ("patterns", "dimension VARCHAR, term_id VARCHAR, pattern VARCHAR, pattern_role VARCHAR, ordinal INTEGER"),
     ("term_precedence", "dimension VARCHAR, term_id VARCHAR, rank INTEGER"),
-    # Literal YAML file order, per term, per dimension -- matching.yaml's
-    # longest-match tie-break is "the earlier term in file order", which is NOT
-    # generally alphabetical by id (measurements.yaml is grouped by domain
-    # section, e.g. tumour_burden_recist appears well before disease_recurrence
-    # even though 'd' < 't'). This is the only reliable source for that order,
-    # since SQL row order is otherwise not guaranteed.
+    # YAML file order per term: matching.yaml's longest-match tie-break.
     ("term_order", "dimension VARCHAR, term_id VARCHAR, ordinal INTEGER"),
     ("form_typical_reference", "form_id VARCHAR, reference_id VARCHAR"),
     ("form_typical_scale", "form_id VARCHAR, scale_id VARCHAR"),
@@ -1040,23 +939,15 @@ _LONG_TABLES = (
     ("measurement_direction_by_ta", "measurement_id VARCHAR, ta_id VARCHAR, direction_id VARCHAR"),
     ("measurement_score_range", "measurement_id VARCHAR, score_min DOUBLE, score_max DOUBLE"),
     ("event_polarity_cues", "polarity VARCHAR, pattern VARCHAR"),
-    # events.yaml's list_references -- ascertained_by is documentation (which
-    # measurement(s) typically ascertain this event) and a validation target,
-    # not a matching input; components is the acyclic event_union expansion.
     ("event_ascertained_by", "event_id VARCHAR, measurement_id VARCHAR"),
     ("event_components", "event_id VARCHAR, component_event_id VARCHAR, ordinal INTEGER"),
-    # named_endpoints.yaml -- not a dimension, so its own table rather than one
-    # of the per-DimensionSpec ones above. Its synonyms/patterns/term_order
-    # still land in the generic vocab.synonyms/patterns/term_order tables
-    # below, tagged dimension='named_endpoint', so conform/matcher.py's
-    # TermMatcher works over it exactly as it does over any other dimension.
+    # named_endpoints.yaml's synonyms/patterns/term_order land in the generic
+    # tables under dimension='named_endpoint'.
     ("named_endpoints", "id VARCHAR, label VARCHAR, form_id VARCHAR, event_id VARCHAR, "
                         "reference_id VARCHAR, default_measurement_id VARCHAR, citation VARCHAR"),
     ("ta_mesh_term_overrides", "mesh_term VARCHAR, mesh_term_normalised VARCHAR, ta_id VARCHAR"),
     ("ta_mesh_tree_prefixes", "tree_prefix VARCHAR, ta_id VARCHAR, prefix_length INTEGER"),
     ("ta_mesh_term_patterns", "ta_id VARCHAR, pattern VARCHAR, applies_to VARCHAR, ordinal INTEGER"),
-    # drug_class_mesh_mapping.yaml -- one table per layer, each carrying the
-    # file order the resolver's first-hit-wins depends on (docs/DRUG_CLASS_SPEC.md).
     ("drug_class_control_rules", "drug_class_id VARCHAR, pattern VARCHAR, ordinal INTEGER"),
     ("drug_class_term_overrides", "mesh_term VARCHAR, mesh_term_normalised VARCHAR, drug_class_id VARCHAR"),
     ("drug_class_agent_names", "agent_name VARCHAR, agent_name_normalised VARCHAR, drug_class_id VARCHAR"),
@@ -1072,15 +963,10 @@ _LONG_TABLES = (
     ("timepoint_disambiguation", "ordinal INTEGER, between_forms VARCHAR[], prefer VARCHAR, otherwise VARCHAR, if_form_in VARCHAR[]"),
     ("form_disambiguation", "ordinal INTEGER, between_forms VARCHAR[], prefer VARCHAR, otherwise VARCHAR"),
     ("vocab_settings", "dimension VARCHAR, setting VARCHAR, value VARCHAR"),
-    # matching.yaml -- the matching CONTRACT, persisted so the conforming pipeline
-    # (build-order step 3) can read it from vocab.* like every other vocabulary
-    # file, rather than re-parsing matching.yaml directly.
     ("matching_normalisation", "ordinal INTEGER, step VARCHAR"),
     ("matching_settings", "key VARCHAR, value VARCHAR"),
     ("matching_cascade", "dimension VARCHAR, ordinal INTEGER, field VARCHAR, match_method VARCHAR, fallback_value VARCHAR"),
     ("matching_confidence_floor", "match_method VARCHAR, confidence DOUBLE"),
-    # usdm_templates.yaml -- one syntax template per form, plus the derived-text
-    # templates for the two USDM attributes a registry record never states.
     ("usdm_templates", "form_id VARCHAR, template VARCHAR, verbatim BOOLEAN, reference_fallback VARCHAR, required_tags VARCHAR[], all_tags VARCHAR[]"),
     ("usdm_purposes", "domain VARCHAR, purpose VARCHAR"),
     ("usdm_objective_templates", "level VARCHAR, template VARCHAR"),
@@ -1091,11 +977,7 @@ _LONG_TABLES = (
 def write_vocab_tables(
     con: duckdb.DuckDBPyConnection, docs: dict[str, Any], *, vocab_dir: Path | str
 ) -> dict[str, int]:
-    """Replace every `vocab.*` table from `docs`. Returns row counts per table.
-
-    Wholesale replacement, matching how `pull` refreshes `raw.*`: re-running
-    `vocab validate` is a refresh, not an append.
-    """
+    """Replace every `vocab.*` table from `docs`. Returns row counts per table."""
     vocab_dir = Path(vocab_dir)
     con.execute("CREATE SCHEMA IF NOT EXISTS vocab")
     counts: dict[str, int] = {}
@@ -1121,8 +1003,7 @@ def write_vocab_tables(
 
 _NUMERIC_COLUMNS = frozenset({"sign", "precedence", "priority", "factor_to_si", "mcid"})
 
-# Boolean term flags, with the value assumed when a term omits them. Written out
-# explicitly so `WHERE analysable = 'true'` works without a COALESCE.
+# Boolean term flags and the value assumed when a term omits them.
 _BOOLEAN_DEFAULTS = {
     "analysable": True, "expects_threshold": False, "composite": False, "event_family": False,
     "reference_entailed": False,
@@ -1177,13 +1058,10 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
             if key in doc:
                 settings.append((spec.dimension, key, _scalar(doc[key])))
 
-    # Timepoint order is `priority`, not a match_precedence list.
     for term in sorted(docs["timepoint_pattern"]["terms"], key=lambda t: t["priority"]):
         precedence.append(("timepoint_pattern", term["id"], term["priority"]))
-    # Therapeutic-area order is `precedence`.
     for term in sorted(docs["therapeutic_area"]["terms"], key=lambda t: t["precedence"]):
         precedence.append(("therapeutic_area", term["id"], term["precedence"]))
-    # ...and so is drug-class order.
     for term in sorted(docs["drug_class"]["terms"], key=lambda t: t["precedence"]):
         precedence.append(("drug_class", term["id"], term["precedence"]))
 
@@ -1260,9 +1138,6 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
 
     counts.update(_write_drug_class_mapping_tables(con, docs["drug_class_mesh_mapping"]))
 
-    # timepoint_patterns.yaml fields with no scalar column of their own: the
-    # preprocessing order, the abbreviation/typo expansion tables, and the
-    # disambiguation block (build-order step 3 must honour all three).
     tp_preprocessing = [(i, step) for i, step in enumerate(tp.get("preprocessing") or [])]
     tp_abbreviations = [(k, v) for k, v in (tp.get("abbreviations") or {}).items()]
     tp_typos = [(k, v) for k, v in (tp.get("common_typos") or {}).items()]
@@ -1278,9 +1153,6 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
     counts.update(timepoint_preprocessing=len(tp_preprocessing), timepoint_abbreviations=len(tp_abbreviations),
                   timepoint_common_typos=len(tp_typos), timepoint_disambiguation=len(tp_disambiguation))
 
-    # forms.yaml's disambiguation block -- e.g. responder_proportion vs
-    # incidence_proportion, decided by the matched measurement's event_polarity
-    # rather than by wording (see vocab/README.md decision #4).
     form_disambiguation = [
         (i, list(rule.get("between") or []), rule.get("prefer"), rule.get("otherwise"))
         for i, rule in enumerate(forms.get("disambiguation") or [])
@@ -1297,10 +1169,7 @@ def _write_long_tables(con: duckdb.DuckDBPyConnection, docs: dict[str, Any]) -> 
 
 
 def _as_class_list(value: Any) -> list[str]:
-    """A mapping value that is either one class id or several. A list is not an
-    edge case here: an agent can genuinely hold two classes (amivantamab is an
-    EGFR inhibitor and a bispecific engager), and forcing a choice would make
-    the vocabulary assert something false."""
+    """One class id or several (amivantamab is an EGFR inhibitor and a bispecific engager)."""
     if isinstance(value, list):
         return [v for v in value if isinstance(v, str)]
     return [value] if isinstance(value, str) else []
@@ -1309,12 +1178,8 @@ def _as_class_list(value: Any) -> list[str]:
 def _write_drug_class_mapping_tables(
     con: duckdb.DuckDBPyConnection, doc: dict[str, Any]
 ) -> dict[str, int]:
-    """Persist drug_class_mesh_mapping.yaml, one table per layer.
-
-    Every rule keeps its file position in `ordinal`: the resolver's first hit
-    wins per intervention, so the order rules were written in is load-bearing,
-    not incidental -- "-ciclib" has to be tried before the generic "-tinib".
-    """
+    """One table per layer. `ordinal` keeps file position: the resolver's
+    first hit wins, so "-ciclib" must be tried before "-tinib"."""
     control = [
         (rule["drug_class"], pattern, i)
         for rule in doc.get("control_rules") or []
@@ -1370,13 +1235,6 @@ def _write_drug_class_mapping_tables(
 
 
 def _write_named_endpoints_tables(con: duckdb.DuckDBPyConnection, doc: dict[str, Any]) -> dict[str, int]:
-    """Persist named_endpoints.yaml. Its scalar fields go to vocab.named_endpoints;
-    its synonyms/patterns/file-order go into the SAME generic
-    vocab.synonyms/patterns/term_order tables every dimension uses, tagged
-    dimension='named_endpoint' -- conform/matcher.py's TermMatcher then builds
-    over it via `build_matcher(con, "named_endpoint", "named_endpoints", ...)`
-    with no dimension-specific code, exactly like form/measurement/reference.
-    """
     rows: list[tuple] = []
     synonyms: list[tuple] = []
     patterns: list[tuple] = []
@@ -1407,12 +1265,7 @@ def _write_named_endpoints_tables(con: duckdb.DuckDBPyConnection, doc: dict[str,
 
 
 def _write_usdm_tables(con: duckdb.DuckDBPyConnection, doc: dict[str, Any]) -> dict[str, int]:
-    """Persist usdm_templates.yaml, with each template's tags pre-computed.
-
-    The parse happens once, here, rather than per request in the projection --
-    same reason matching.yaml is persisted rather than re-parsed: the warehouse
-    is the contract the downstream code reads.
-    """
+    """Persist usdm_templates.yaml with each template's tags pre-computed."""
     from clinical_endpoints.usdm.templates import all_tags, parse_template, required_tags
 
     templates: list[tuple] = []
@@ -1450,10 +1303,6 @@ def _write_usdm_tables(con: duckdb.DuckDBPyConnection, doc: dict[str, Any]) -> d
 
 
 def _write_matching_tables(con: duckdb.DuckDBPyConnection, matching: dict[str, Any]) -> dict[str, int]:
-    """Persist matching.yaml -- the contract for HOW every other vocab file is
-    matched -- into vocab.* tables, so the conforming pipeline reads it the same
-    way it reads every term file: from the warehouse, never by re-parsing YAML.
-    """
     normalisation = [(i, step) for i, step in enumerate(matching.get("normalisation") or [])]
 
     synonyms = matching.get("synonyms") or {}

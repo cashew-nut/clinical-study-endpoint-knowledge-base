@@ -1,21 +1,15 @@
 """The syntax-template grammar: parse the authored form, emit USDM's markup.
 
-Templates are authored in `vocab/usdm_templates.yaml` in a compact form and
-emitted in the markup CDISC's own published examples use:
-
     authored   Change from {reference} in {measurement}[ at {timepoint}]
     emitted    <p>Change from <usdm:tag name="reference"/> in
                <usdm:tag name="measurement"/> at <usdm:tag name="timepoint"/></p>
 
-Two things come out of one parse, and they have to agree or the document is
-malformed: the `text` (tags unresolved, for `SyntaxTemplate.text`) and the
-`label` (tags substituted, for the human reading). `render` returns both plus
-the tags actually used, which is what the dictionary's `parameterMaps` are
-built from -- so a tag can never appear in one and not the other.
+`render` returns the `text` (tags unresolved), the `label` (tags substituted)
+and the tags used, from one parse, so the dictionary's `parameterMaps` can
+never disagree with the text.
 
-This module is deliberately free of warehouse and vocabulary imports: the
-`vocab validate` path imports it to check templates at load time, and the
-projection imports it to render them.
+This module has no warehouse or vocabulary imports: `vocab validate` uses it
+to check templates at load time.
 """
 
 from __future__ import annotations
@@ -26,14 +20,12 @@ from dataclasses import dataclass
 
 TAG_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
-#: Rendered for each tag in `text`. The one place the emitted markup is decided.
 TAG_MARKUP = '<usdm:tag name="{name}"/>'
-#: SyntaxTemplate.text is an HTML fragment in every published example.
 TEXT_WRAPPER = "<p>{body}</p>"
 
 
 class TemplateError(ValueError):
-    """A template that cannot be parsed. Raised at validate time, not render time."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -59,7 +51,6 @@ _ESCAPABLE = frozenset("{}[]\\")
 
 
 def parse_template(template: str) -> tuple[Part, ...]:
-    """Parse the authored form into parts. Raises TemplateError on bad syntax."""
     parts: list[Part] = []
     group: list[Literal | Tag] | None = None
     buf: list[str] = []
@@ -128,8 +119,7 @@ def parse_template(template: str) -> tuple[Part, ...]:
 
 
 def required_tags(parts: tuple[Part, ...]) -> tuple[str, ...]:
-    """Tags outside any optional group. If one of these does not resolve, the
-    template does not apply at all."""
+    """Tags outside any optional group."""
     return tuple(p.name for p in parts if isinstance(p, Tag))
 
 
@@ -157,10 +147,7 @@ def _resolved(values: dict[str, str | None], name: str) -> bool:
 
 
 def render(parts: tuple[Part, ...], values: dict[str, str | None]) -> Rendered | None:
-    """Render to (text, label, tags used). Returns None when a required tag is
-    unresolved -- the caller then falls to a lower fidelity tier rather than
-    emitting a half-sentence.
-    """
+    """Returns None when a required tag is unresolved."""
     for name in required_tags(parts):
         if not _resolved(values, name):
             return None

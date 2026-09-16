@@ -1,35 +1,18 @@
-"""D5 + D6: conform the results section against the vocabulary, then normalise
-what it reported as spread into an estimated standard deviation.
+"""Conform the results section against the vocabulary and normalise reported
+spread into an estimated SD.
 
-Two tables, written together by `endpoints results conform` because the second
-is meaningless without the first:
+* `conformed.endpoint_results`: one row per reported outcome and per baseline
+  characteristic, conformed through `conform_row` with the reported title
+  standing in for `measure`, and linked to the planned endpoint where one can
+  be identified.
+* `conformed.endpoint_dispersion`: one row per arm-level measurement, with an
+  `sd_estimate` and the path that produced it.
 
-* `conformed.endpoint_results` -- one row per reported outcome and per baseline
-  characteristic, conformed through the *existing* engine and linked back to
-  the planned endpoint where one can be identified (D5).
-* `conformed.endpoint_dispersion` -- one row per arm-level measurement, with
-  an `sd_estimate` and the whole path that produced it (D6).
-
-**There is no second matcher.** A results-section title is the same kind of
-free text `conform/pipeline.py` already handles, so it goes through
-`conform_row` unchanged, with the results title standing in for `measure`.
-That is a standing constraint, not an implementation convenience: two matchers
-would mean the two halves of the warehouse stopped meaning the same thing.
-
-The link is recorded with its own provenance, exactly as every conformed
-dimension is:
-
-| `link_method`           | what it means                                              |
-|-------------------------|------------------------------------------------------------|
-| `exact_title`           | the reported title is, verbatim after normalisation, a planned `measure` in the same study |
-| `conformed_measurement` | different strings, same conformed measurement in the same study |
-| NULL                    | no planned counterpart -- kept, flagged, never force-joined |
-
-The third row is the point. Sponsors reword, split one planned outcome into
-several reported ones, and report outcomes that were never registered; an
-unlinked results row is a finding, not an error, so it lands in
-`conformed.results_review_queue` and stays queryable rather than being
-attached to whichever planned endpoint was closest.
+| `link_method`           | meaning                                                            |
+|-------------------------|--------------------------------------------------------------------|
+| `exact_title`           | the reported title is, after normalisation, a planned `measure`    |
+| `conformed_measurement` | different strings, same conformed measurement in the same study    |
+| NULL                    | no planned counterpart; queued in results_review_queue, not joined |
 """
 
 from __future__ import annotations
@@ -52,13 +35,9 @@ from clinical_endpoints.db import bulk_insert
 from clinical_endpoints.results import dispersion as dispersion_mod
 from clinical_endpoints.results.units import load_unit_rules, resolve_unit, to_si
 
-#: The dimension columns `conformed.endpoint_results` shares, name for name,
-#: with `conformed.endpoints` -- so every vocabulary join written against one
-#: table works unchanged against the other. `measure_raw` holds the *reported*
-#: outcome title rather than the planned `measure`; the name is kept anyway,
-#: because a query that has to be rewritten to move between the planned and
-#: reported halves of the warehouse is a query that will silently be wrong on
-#: one of them.
+# The dimension columns shared, name for name, with conformed.endpoints, so
+# vocabulary joins work unchanged against either table. `measure_raw` holds the
+# reported title.
 _SHARED_DIMENSION_COLUMNS: tuple[str, ...] = tuple(
     field for field in ConformedEndpoint.__dataclass_fields__ if field != "endpoint_id"
 )
@@ -135,13 +114,11 @@ _DISPERSION_COLUMNS: tuple[str, ...] = (
 
 
 class NoResults(RuntimeError):
-    """raw.outcome_* has not been landed in this warehouse."""
+    pass
 
 
 @dataclass(frozen=True)
 class _ResultRow:
-    """One thing to conform: a reported outcome, or a baseline characteristic."""
-
     result_kind: str
     source_id: str
     nct_id: str
@@ -179,8 +156,9 @@ def _read_result_rows(con: duckdb.DuckDBPyConnection) -> list[_ResultRow]:
         )
 
     if _table_exists(con, "raw", "baseline_measurements"):
-        # The characteristic grain, not the arm grain: one FEV1 baseline
-        # characteristic conforms once however many arms reported it.
+        # Characteristic grain: one baseline characteristic conforms once
+        # however many arms reported it. time_frame stays NULL rather than
+        # "Baseline", which the registry never wrote.
         for source_id, nct_id, title, description, population in con.execute(
             """
             SELECT baseline_id, any_value(nct_id), any_value(title), any_value(description),
@@ -190,20 +168,13 @@ def _read_result_rows(con: duckdb.DuckDBPyConnection) -> list[_ResultRow]:
             """
         ).fetchall():
             rows.append(
-                # `time_frame` is left NULL rather than filled with "Baseline".
-                # A baseline characteristic is measured at baseline by
-                # construction, and writing that into the text the conformance
-                # engine reads would be this pipeline asserting a timepoint the
-                # registry never wrote -- exactly the unannounced default
-                # docs/USDM_PROJECTION_INTEGRITY_SPEC.md exists to prevent.
                 _ResultRow("baseline", source_id, nct_id, None, title, description, None, population)
             )
     return rows
 
 
 def _planned_index(con: duckdb.DuckDBPyConnection, steps: list[str]):
-    """Two lookups into the planned half of the warehouse, per study:
-    normalised `measure` -> endpoint_id, and measurement_id -> endpoint_id."""
+    """Per study: normalised `measure` -> endpoint, and measurement_id -> endpoint."""
     by_title: dict[tuple[str, str], tuple[str, Optional[str]]] = {}
     by_measurement: dict[tuple[str, str], tuple[str, Optional[str]]] = {}
     if not _table_exists(con, "conformed", "endpoints"):
@@ -220,10 +191,9 @@ def _planned_index(con: duckdb.DuckDBPyConnection, steps: list[str]):
 
 
 def _unconformed_planned_titles(con: duckdb.DuckDBPyConnection, steps: list[str]):
-    """Planned `measure` strings that exist in raw.design_outcomes but did not
-    conform. A results row matching one of these is still an exact title match
-    -- there is just no conformed planned endpoint to point at -- and saying
-    so is more honest than calling it unlinked."""
+    """Planned `measure` strings in raw.design_outcomes that did not conform.
+    A results row matching one is still an exact title match with no
+    conformed endpoint to point at."""
     titles: set[tuple[str, str]] = set()
     if not _table_exists(con, "raw", "design_outcomes"):
         return titles
@@ -243,10 +213,7 @@ def run_results_conform(
 ) -> dict:
     """Conform every results row, link it to the planned endpoint where one
     exists, then normalise every arm-level dispersion into an SD estimate.
-
-    A wholesale replace of the three tables it writes, like `conform` and
-    `vocab validate` -- a refresh, never an append.
-    """
+    Replaces the three tables wholesale."""
     if not _table_exists(con, "raw", "outcome_measures"):
         raise NoResults(
             "raw.outcome_measures is empty -- run `endpoints pull` (without --no-results) first"
@@ -282,8 +249,6 @@ def run_results_conform(
         outcome = conform_row(
             rules,
             {
-                # The reported title stands in for `measure`: it is the same
-                # kind of string, read by the same cascade.
                 "nct_id": row.nct_id,
                 "outcome_type": row.outcome_type or "other",
                 "measure": row.title,
@@ -317,8 +282,6 @@ def run_results_conform(
                 link_method = "exact_title"
                 planned_endpoint_id, planned_form_id = planned
             elif title_key and (row.nct_id, title_key) in unconformed_titles:
-                # The planned row exists and simply did not conform; the link
-                # is real, the target is not there to point at.
                 link_method = "exact_title"
             else:
                 planned = by_measurement.get((row.nct_id, outcome.measurement_id))
@@ -337,10 +300,7 @@ def run_results_conform(
         )
         measurement_by_result[result_id] = (outcome.measurement_id, outcome.form_id)
 
-        # A reported outcome with no planned counterpart at all is a finding --
-        # a sponsor reported something it never registered, or reworded it past
-        # recognition. Queued rather than force-joined. Baseline characteristics
-        # are unlinked by construction and are never queued for it.
+        # Baseline characteristics are unlinked by construction and never queued for it.
         if row.result_kind == "outcome" and link_method is None:
             review_rows.append(
                 (
@@ -396,19 +356,12 @@ def run_results_conform(
 def _write_dispersion(
     con: duckdb.DuckDBPyConnection, unit_rules, now: dt.datetime
 ) -> dict:
-    """conformed.endpoint_dispersion: one row per arm-level measurement.
-
-    Every arm-level row lands, including the ones no SD could be derived from
-    -- `sd_estimate IS NULL` with an `sd_skip_reason` naming why. That is the
-    denominator every aggregate downstream reports against, and it is only
-    correct because nothing is filtered out here.
-    """
+    """One row per arm-level measurement, including the ones no SD could be
+    derived from; those are the denominator."""
     con.execute(_ENDPOINT_DISPERSION_DDL)
 
-    # Arm `n` comes from the measurement row when the source carried one there
-    # (the API's class-level denominator), else from the outcome's own arm
-    # denominator. Recorded either way: an SE-to-SD conversion is only as good
-    # as the n behind it.
+    # Arm n from the measurement row when the source carried one, else from
+    # the outcome's arm denominator.
     outcome_rows = con.execute(
         """
         SELECT
@@ -457,9 +410,7 @@ def _write_dispersion(
             )
             unit = resolve_unit(unit_raw, unit_rules)
             sd_si, si_scale_id = to_si(unit.scale_id, estimate.value, unit_rules)
-            # A log-scale SD is not convertible by a unit factor: the factor
-            # applies to the quantity, and taking logs turns a multiplication
-            # into an addition. Left NULL rather than silently wrong.
+            # A log-scale SD is not convertible by a unit factor.
             if estimate.scale != "arithmetic":
                 sd_si, si_scale_id = None, None
             result_id = _result_id(result_kind, source_id)
@@ -486,9 +437,7 @@ def _write_dispersion(
             )
 
     if rows:
-        # A study reporting the same characteristic twice under one id would
-        # otherwise violate the primary key; keep the last, the same rule
-        # `upsert_rows` applies.
+        # Keep the last row per id, as `upsert_rows` does.
         deduped = {row[0]: row for row in rows}
         bulk_insert(
             con, "conformed.endpoint_dispersion", list(_DISPERSION_COLUMNS), list(deduped.values())

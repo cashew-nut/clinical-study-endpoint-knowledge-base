@@ -1,10 +1,10 @@
 # Query cheat sheet
 
-One page of copy-pasteable SQL for `warehouse.duckdb` once you've run the
-pipeline. Everything here is read-only, ad hoc querying. (`endpoints query` and
-`endpoints export` are declared but not implemented -- see
-[`USAGE.md`](USAGE.md#not-implemented); the `duckdb` CLI below is what works
-today.)
+One page of copy-pasteable SQL for `warehouse.duckdb` once you have run the
+pipeline. Everything here is read-only, ad hoc querying. `endpoints query` and
+`endpoints export` are declared but not implemented, as
+[`USAGE.md`](USAGE.md#not-implemented) notes, so the `duckdb` CLI below is what
+works today.
 
 ## Run the pipeline first
 
@@ -29,11 +29,11 @@ uv run endpoints pull --phase 3 --limit 500 --ta oncology
 uv run endpoints conform
 ```
 
-(`--ta` filters against the MeSH->TA mapping in `vocab.*`, not the YAML -- but
-`pull` will load that mapping for you if the warehouse has none.)
+`--ta` filters against the MeSH to therapeutic-area mapping in `vocab.*` rather
+than the YAML, and `pull` loads that mapping for you if the warehouse has none.
 
-Or just one sponsor's studies -- `--org` filters to the *lead* sponsor, and
-touches the vocabulary not at all:
+Or just one sponsor's studies. `--org` filters to the lead sponsor and does not
+touch the vocabulary:
 
 ```bash
 uv run endpoints pull --phase 3 --limit 500 --org "Pfizer"
@@ -42,10 +42,11 @@ select nct_id, brief_title, organization from raw.studies order by start_date de
 
 ## Open the warehouse from the command line
 
-`warehouse.duckdb` is a plain DuckDB file -- no server, no separate client.
-If you don't have the `duckdb` CLI, `brew install duckdb` / see
-[duckdb.org/docs/installation](https://duckdb.org/docs/installation), or just
-run SQL through the project's own connection:
+`warehouse.duckdb` is a plain DuckDB file, with no server and no separate
+client. If you do not have the `duckdb` CLI, install it with `brew install
+duckdb` or see
+[duckdb.org/docs/installation](https://duckdb.org/docs/installation). You can
+also run SQL through the project's own connection:
 
 ```bash
 duckdb warehouse.duckdb                             # interactive shell
@@ -79,13 +80,13 @@ SELECT round(100.0 * (SELECT count(*) FROM conformed.endpoints) /
 -- why rows landed in the review queue
 SELECT reason, count(*) FROM conformed.review_queue GROUP BY 1 ORDER BY 2 DESC;
 
--- match strength per dimension -- exact (from `measure`) vs syntactic_rule
--- (inferred from `description`/`time_frame`) vs semantic (fuzzy fallback)
+-- match strength per dimension: exact (from `measure`) vs syntactic_rule
+-- (inferred from `description` or `time_frame`) vs semantic (fuzzy fallback)
 SELECT form_match_method, measurement_match_method, count(*)
 FROM conformed.endpoints GROUP BY 1, 2 ORDER BY 3 DESC;
 ```
 
-**The review queue -- what a human should look at first**
+**The review queue: what a human should look at first**
 
 ```sql
 -- best semantic near-miss for each queued row, worst (lowest-confidence) first
@@ -123,9 +124,9 @@ GROUP BY 1, 2, 3 ORDER BY 4 DESC;
 
 **The parameterized endpoint text**
 
-`usdm_text` is the USDM `SyntaxTemplate.text` for each row -- tags unresolved,
-e.g. `<p>Time to <usdm:tag name="event"/> <usdm:tag name="timepoint"/></p>` --
-rendered by `conform` itself
+`usdm_text` is the USDM `SyntaxTemplate.text` for each row, with tags
+unresolved, for example `<p>Time to <usdm:tag name="event"/> <usdm:tag
+name="timepoint"/></p>`. It is rendered by `conform` itself
 ([`USDM_ENDPOINTS_API_SPEC.md`](USDM_ENDPOINTS_API_SPEC.md#which-attribute-carries-what)),
 so it doesn't require calling `endpoints usdm show` to inspect:
 
@@ -134,18 +135,17 @@ SELECT nct_id, measure_raw, usdm_text FROM conformed.endpoints
 WHERE nct_id = 'NCT04162249' ORDER BY outcome_type;
 
 -- endpoints still stuck at verbatim tier within conformed.endpoints (no
--- <usdm:tag> markup at all) -- usually a form with no template (`descriptive`)
--- or an event-family row whose event didn't resolve
+-- <usdm:tag> markup at all), usually a form with no template (`descriptive`)
+-- or an event-family row whose event did not resolve
 SELECT nct_id, form_id, measure_raw FROM conformed.endpoints
 WHERE usdm_text NOT LIKE '%<usdm:tag%' LIMIT 20;
 ```
 
 ## Cross-study comparability
 
-The reason the warehouse exists: which studies measured the same thing a
-different way. Every one of these is a join on `conformed.endpoints` and its
-foreign keys -- which is why they live here as SQL rather than as a separate
-node/edge encoding of the same facts. See
+Which studies measured the same thing a different way. Every one of these is a
+join on `conformed.endpoints` and its foreign keys, which is why they live here
+as SQL rather than as a separate node and edge encoding of the same facts. See
 [`COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) for the one
 relation in this domain that recursion *would* serve better, and why it is not
 built.
@@ -155,10 +155,10 @@ which is a biased subset.
 
 **Same measurement, different form**
 
-Same underlying quantity, different kind of number derived from it -- overall
-survival as a survival distribution vs. a 2-year landmark rate vs. 30-day
-mortality. The first query finds the measurements worth looking at; the second
-opens one up.
+Same underlying quantity, different kind of number derived from it: overall
+survival as a survival distribution, as a 2-year landmark rate, or as 30-day
+mortality. The first query finds the measurements worth looking at, and the
+second opens one up.
 
 ```sql
 -- which measurements were expressed as more than one form, in more than one study
@@ -231,7 +231,7 @@ LIMIT 50;
 **Thresholds: convention or one-off**
 
 A `>= 30%` decrease that recurs identically across many oncology studies, every
-one an `exact` match, is RECIST -- a convention. A threshold appearing in one
+one an `exact` match, is RECIST, a convention. A threshold appearing in one
 study behind a `semantic` match is not. `measurement_match_method` is what
 separates them.
 
@@ -250,10 +250,10 @@ LIMIT 25;
 
 **The caveat: what these comparisons cannot see**
 
-A row whose measurement doesn't resolve goes to `conformed.review_queue` and
+A row whose measurement does not resolve goes to `conformed.review_queue` and
 never becomes comparable to anything. Round-two measurement coverage was 64.5%,
-and 77% of `measure` strings occur exactly once -- so the queries above are
-weighted toward the head of the corpus (OS, PFS, ORR, adverse events), and an
+and 77% of `measure` strings occur exactly once, so the queries above are
+weighted toward the head of the corpus (OS, PFS, ORR, adverse events). An
 unusual instrument used in two trials is disproportionately likely to be missing
 altogether. Absence of a link is not evidence that no link exists. Check the
 denominator before drawing a conclusion from any of the above:
@@ -419,7 +419,7 @@ ORDER BY arms_with_sd DESC LIMIT 20;
 
 **The SD distribution for one endpoint, pooled only within a unit**
 
-`coalesce(si_scale_id, scale_id)` is the pooling unit -- the converted one where
+`coalesce(si_scale_id, scale_id)` is the pooling unit: the converted one where
 `scales.yaml` declares a conversion, the reported one where it does not. Never
 group on `scale_id` alone unless you want litres and millilitres in one median.
 
@@ -438,8 +438,8 @@ WHERE r.measurement_id = 'fev1' AND r.result_kind = 'outcome'
 GROUP BY 1, 2 ORDER BY arms DESC;
 ```
 
-**How each SD was arrived at** -- a library built mostly out of range-derived
-estimates is a different object from one built out of reported SDs
+**How each SD was arrived at.** A library built mostly out of range-derived
+estimates is a different object from one built out of reported SDs.
 
 ```sql
 SELECT sd_method, sd_is_derived, sd_is_approximate, count(*)
@@ -447,14 +447,14 @@ FROM conformed.endpoint_dispersion WHERE sd_estimate IS NOT NULL
 GROUP BY 1, 2, 3 ORDER BY 4 DESC;
 ```
 
-**Where the dispersion went** -- the denominator, by reason
+**Where the dispersion went**, as the denominator by reason
 
 ```sql
 SELECT sd_skip_reason, count(*) FROM conformed.endpoint_dispersion
 WHERE sd_estimate IS NULL GROUP BY 1 ORDER BY 2 DESC;
 ```
 
-**Reported outcomes that were never registered** -- the queue, as a finding
+**Reported outcomes that were never registered**, the queue read as a finding
 
 ```sql
 SELECT nct_id, title_raw, measurement_id FROM conformed.results_review_queue
@@ -474,8 +474,8 @@ WHERE a.non_inferiority AND r.measurement_id = 'fev1';
 (`endpoints stats --analyses` parses the margin out of that description where
 it can, and shows the description where it cannot.)
 
-**Baseline variability, which is a different quantity** -- never substitute it
-for a change-score SD without saying so
+**Baseline variability, which is a different quantity.** Never substitute it
+for a change-score SD without saying so.
 
 ```sql
 SELECT r.measurement_id, coalesce(d.si_scale_id, d.scale_id) AS unit,
@@ -501,6 +501,6 @@ Three biases stack, and the aggregate is over their intersection:
 are what [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md#the-statistics-honestly)
 and [`../vocab/README.md`](../vocab/README.md) are for. And `population` is not
 a structured axis on either side of the warehouse, so none of these can narrow
-to a per-protocol or enrichment population -- an SD pooled across a
+to a per-protocol or enrichment population. An SD pooled across a
 severe-disease enrichment population and a broad one is pooled across a real
 difference.

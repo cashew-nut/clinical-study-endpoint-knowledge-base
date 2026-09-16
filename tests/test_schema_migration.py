@@ -1,11 +1,10 @@
-"""raw.* tables outlive the code that created them.
+"""Migration of `raw.*` tables built by earlier code.
 
-Two schema generations have already shipped -- the pre-upsert
-`CREATE OR REPLACE TABLE ... AS SELECT` (no PRIMARY KEY, whatever columns the
-upstream query happened to return) and the declared DDL with a PRIMARY KEY --
-and raw.studies then gained eleven design/eligibility columns. A warehouse
-built by any of them has to keep working, so every generation is exercised here
-against the DDL the current code declares.
+Two schema generations have shipped: the pre-upsert
+`CREATE OR REPLACE TABLE ... AS SELECT`, with no PRIMARY KEY and whatever
+columns the upstream query returned, and the declared DDL with a PRIMARY KEY.
+raw.studies then gained design and eligibility columns. Each generation is
+exercised here against the DDL the current code declares.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from clinical_endpoints.ingest.upsert import (
     upsert_rows,
 )
 
-#: raw.studies exactly as the pre-upsert backend left it: eight columns, no
+#: raw.studies as the pre-upsert backend left it: eight columns, no
 #: constraints, types inferred by the CTAS.
 GENERATION_1_DDL = """
     CREATE TABLE raw.studies AS
@@ -103,7 +102,7 @@ def test_pre_upsert_table_gains_key_and_columns_keeping_its_rows(raw_con):
 
 
 def test_migrated_table_accepts_the_upsert_that_used_to_fail(raw_con):
-    """The reported failure: ON CONFLICT against a table with no PRIMARY KEY."""
+    """ON CONFLICT against a table with no PRIMARY KEY."""
     raw_con.execute(GENERATION_1_DDL)
     with pytest.raises(duckdb.BinderException):
         upsert_rows(raw_con, "studies", list(STUDY_COLUMNS), ["nct_id"], [a_study_row()])
@@ -141,8 +140,8 @@ def test_post_upsert_table_gains_only_the_design_columns(raw_con):
 
 
 def test_duplicate_and_null_keys_are_dropped_not_fatal(raw_con):
-    """A table that never carried the key may hold rows that violate it. Losing
-    those beats losing the table."""
+    """A table that never carried the key may hold rows that violate it. Those
+    rows are dropped rather than failing the migration."""
     raw_con.execute(GENERATION_1_DDL)
     raw_con.execute(
         "INSERT INTO raw.studies VALUES "
@@ -163,7 +162,7 @@ def test_duplicate_and_null_keys_are_dropped_not_fatal(raw_con):
 
 def test_columns_the_ddl_no_longer_declares_are_dropped(raw_con):
     """AACT's design_outcomes leads with its own `id`, which the pre-upsert
-    `SELECT outcomes.*` carried into raw.*."""
+    `SELECT outcomes.*` carried into `raw.*`."""
     raw_con.execute(
         "CREATE TABLE raw.design_outcomes AS SELECT 7 AS id, 'NCT001' AS nct_id, "
         "'primary' AS outcome_type, 'm' AS measure, 't' AS time_frame, "
@@ -206,8 +205,8 @@ def test_impossible_cast_leaves_the_table_untouched(raw_con):
 
 
 def test_rows_with_no_key_column_at_all_are_refused(raw_con):
-    """Nothing sensible can key these rows, and which of them to lose is the
-    operator's call, not this function's."""
+    """Nothing can key these rows, so the migration refuses rather than
+    choosing which to lose."""
     raw_con.execute("CREATE TABLE raw.studies AS SELECT 'brief' AS brief_title")
 
     with pytest.raises(SchemaMigrationError, match="no nct_id column"):
@@ -239,9 +238,8 @@ def test_reconciler_collects_only_the_tables_it_changed(raw_con):
 
 
 def test_replace_empties_a_table_already_on_the_current_schema(raw_con):
-    """`replace=True` isn't just "skip if already correct" -- even a table that
-    already matches `ddl` and holds rows gets emptied, because the whole point
-    is discarding whatever an earlier pull landed."""
+    """`replace=True` empties a table even when it already matches `ddl`,
+    discarding whatever an earlier pull landed."""
     ensure_table(raw_con, "studies", STUDIES_DDL)
     upsert_rows(raw_con, "studies", list(STUDY_COLUMNS), ["nct_id"], [a_study_row()])
     assert raw_con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 1
@@ -254,9 +252,8 @@ def test_replace_empties_a_table_already_on_the_current_schema(raw_con):
 
 
 def test_replace_discards_a_shape_mismatch_instead_of_migrating_it(raw_con):
-    """A table replace would otherwise have had to migrate (generation 1: no
-    key, eight columns) is instead just dropped -- no SchemaChange, no
-    rows_kept/rows_dropped bookkeeping, because nothing was carried across."""
+    """A generation-1 table, which would otherwise be migrated, is dropped
+    instead. Nothing is carried across, so there is no SchemaChange."""
     raw_con.execute(GENERATION_1_DDL)
     assert raw_con.execute("SELECT count(*) FROM raw.studies").fetchone()[0] == 2
 

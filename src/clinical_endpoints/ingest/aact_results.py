@@ -1,22 +1,9 @@
-"""The AACT half of D4: `ctgov.outcomes` and friends -> the same raw.outcome_*
-shape `ingest/results.py` defines and `ingest/ctgov_api.py` lands from the API
-payload.
+"""AACT's `ctgov.outcomes` and friends -> the raw.outcome_* shape
+`ingest/results.py` defines.
 
-AACT's results tables are the same data as the API's `resultsSection`, arrived
-at from the other side: one relational table per level of the same nesting.
-`run_pull` has been reading `ctgov.design_outcomes` and ignoring
-`ctgov.outcomes`, `ctgov.outcome_measurements`, `ctgov.outcome_analyses` and
-`ctgov.baseline_measurements`, all of which sit in the database it has already
-attached, so nothing here costs another connection.
-
-**Every column name below is introspected, not assumed.** This project's build
-environment cannot reach AACT (`ingest/aact.py`'s `_pull_mesh_terms` already
-degrades the same way, and for the same reason), so a hardcoded column list
-would turn a single upstream rename into a failed pull with a binder error.
-Instead `_available` reads `information_schema.columns` and substitutes NULL
-for anything absent, and a table missing entirely is reported rather than
-raised: results are an enrichment, and a pull that lands the protocol section
-successfully should not fail because the upstream renamed a results column.
+Column names are introspected, not assumed: `_available` substitutes NULL for
+anything absent, and a missing table is reported rather than raised, since
+results are an enrichment of a pull that has already landed the protocol.
 """
 
 from __future__ import annotations
@@ -31,9 +18,6 @@ from clinical_endpoints.ingest.results import (
     outcome_id_sql,
 )
 
-#: The AACT tables this reads. `outcomes` and `outcome_measurements` are
-#: required (without them there is nothing to land); the rest each contribute
-#: one of the five raw tables and are skipped individually when absent.
 REQUIRED_TABLES = ("outcomes", "outcome_measurements")
 OPTIONAL_TABLES = (
     "result_groups",
@@ -45,12 +29,7 @@ OPTIONAL_TABLES = (
 
 
 class ResultsUnavailable(RuntimeError):
-    """AACT does not expose the results tables this needs, in the shape it needs.
-
-    Carried back to the caller as a warning rather than raised out of `pull`:
-    the protocol half of the pull has already succeeded by the time results
-    are attempted.
-    """
+    """Carried back as a warning rather than raised out of `pull`."""
 
 
 def _columns(con: duckdb.DuckDBPyConnection, table: str) -> set[str]:
@@ -69,15 +48,9 @@ def _columns(con: duckdb.DuckDBPyConnection, table: str) -> set[str]:
 def _available(
     present: set[str], wanted: str, *, alias: Optional[str] = None, qualifier: str = ""
 ) -> str:
-    """`wanted` if the upstream table carries it, else NULL -- aliased either
-    way, so the SELECT list is positionally stable whatever AACT is missing.
-
-    `qualifier` is the table alias the column belongs to. Always pass it where
-    the query joins more than one table: several of these column names
-    (`param_type`, `dispersion_type`, `title`) exist on both sides of these
-    joins, and an unqualified reference is a binder error rather than a
-    silently wrong column -- but only at pull time, against the real AACT.
-    """
+    """`wanted` if the upstream table carries it, else NULL, aliased either
+    way. Pass `qualifier` wherever the query joins more than one table;
+    several of these column names exist on both sides."""
     name = alias or wanted
     source = f"{qualifier}.{wanted}" if qualifier else wanted
     return f"{source} AS {name}" if wanted in present else f"NULL AS {name}"
@@ -92,14 +65,8 @@ def results_available(con: duckdb.DuckDBPyConnection) -> bool:
 
 
 def pull_results(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-    """Land the results section for the studies in `_pulled_studies` (the temp
-    table `ingest/aact.py`'s `run_pull` has already built), replacing whatever
-    those studies previously had. Returns per-table row counts.
-
-    Assumes the caller has already `ensure`d the five raw tables against
-    `RESULTS_TABLES`; it writes into them and never creates them, so the
-    schema reconciliation stays in one place.
-    """
+    """Land the results section for the studies in `_pulled_studies`. The
+    caller has already `ensure`d the raw tables."""
     if not results_available(con):
         raise ResultsUnavailable(
             "AACT does not expose ctgov."
@@ -112,12 +79,8 @@ def pull_results(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
     counts: dict[str, int] = {}
     outcomes = _columns(con, "outcomes")
 
-    # One id per reported outcome, computed the same way ingest/results.py's
-    # `outcome_id` computes it in Python -- see `outcome_id_sql`. The
-    # duplicate ordinal is a row_number over the four key fields, ordered by
-    # AACT's own surrogate id so it is at least stable within one AACT
-    # snapshot; it is 0 for every outcome that isn't a duplicate, which is
-    # almost all of them.
+    # `duplicate_ordinal` is a row_number over the four key fields, ordered by
+    # AACT's surrogate id; 0 for every outcome that is not a duplicate.
     key_sql = outcome_id_sql(
         "o.nct_id", "o.outcome_type", "o.title", "o.time_frame", "o.duplicate_ordinal"
     )
@@ -185,18 +148,10 @@ def _clear(con: duckdb.DuckDBPyConnection, table: str) -> None:
 def _pull_outcome_groups(con: duckdb.DuckDBPyConnection) -> int:
     """One row per (reported outcome, arm), with the arm's `n` for that outcome.
 
-    The pairs are taken from `ctgov.outcome_counts` where AACT carries it (the
-    table that states, per outcome, how many participants each arm
-    contributed) and otherwise from the arms that actually appear in
-    `ctgov.outcome_measurements` for that outcome. Deliberately not a
-    cross-join of the study's arms against its outcomes: an outcome analysed
-    in two of four arms has two arms, and inventing the other two would put a
-    denominator under `endpoints stats` that no trial reported.
-
-    `group_key` is AACT's `ctgov_group_code`, which plays the same role as the
-    API's `groupId` ("OG000") -- a per-study handle the measurement rows join
-    back on. AACT's own `result_group_id` surrogate is used only to reach the
-    arm's title, never landed.
+    Pairs come from `ctgov.outcome_counts` where present, else from the arms
+    that appear in `ctgov.outcome_measurements`; never a cross-join of arms
+    against outcomes. `group_key` is AACT's `ctgov_group_code`, the
+    counterpart of the API's `groupId`.
     """
     _clear(con, "outcome_groups")
     measurements = _columns(con, "outcome_measurements")
@@ -205,9 +160,7 @@ def _pull_outcome_groups(con: duckdb.DuckDBPyConnection) -> int:
 
     has_counts = {"outcome_id", "result_group_id", "count", "ctgov_group_code"} <= counts
     if has_counts:
-        # One count per (outcome, arm): the measure-scoped, participant-unit
-        # one where the table distinguishes them, for the same reason
-        # ingest/results.py's `_denominator_counts` prefers it.
+        # Prefer the measure-scoped, participant-unit count per (outcome, arm).
         scope_order = (
             "CASE WHEN lower(coalesce(scope, '')) = 'measure' THEN 0 ELSE 1 END, "
             if "scope" in counts
@@ -320,9 +273,8 @@ def _pull_outcome_analyses(con: duckdb.DuckDBPyConnection) -> int:
         return 0
     analyses = _columns(con, "outcome_analyses")
 
-    # AACT splits the compared arms into their own table; the API carries them
-    # as a `groupIds` array on the analysis. Landing a JSON array from both
-    # keeps one column rather than a sixth table for a two-element list.
+    # AACT splits the compared arms into their own table; the API carries a
+    # `groupIds` array. Both land as a JSON array.
     groups_select = "NULL AS group_keys"
     groups_join = ""
     if _table_present(con, "outcome_analysis_groups"):
@@ -369,12 +321,8 @@ def _pull_outcome_analyses(con: duckdb.DuckDBPyConnection) -> int:
         """
     )
 
-    # The p-value is reassembled from AACT's split (modifier, value) pair and
-    # re-parsed exactly as the API's single string is, so both backends land
-    # the same three columns. `p_value_num` is only the number when the row
-    # states no comparator or states '='; '<0.001' keeps its verbatim string
-    # and its modifier, and a distribution over p_value_num can then include
-    # or exclude the censored rows on purpose.
+    # The p-value is reassembled from AACT's (modifier, value) pair to match
+    # the three columns ingest/results.py's `split_p_value` produces.
     con.execute(
         f"""
         INSERT INTO raw.outcome_analyses (
@@ -406,10 +354,7 @@ def _pull_outcome_analyses(con: duckdb.DuckDBPyConnection) -> int:
             TRY_CAST(ci_percent AS DOUBLE), CAST(ci_n_sides AS VARCHAR),
             TRY_CAST(ci_lower_limit AS DOUBLE), TRY_CAST(ci_upper_limit AS DOUBLE),
             method, method_description,
-            -- ingest/results.py's `is_non_inferiority`, in SQL: AACT states
-            -- only the type string, so the string decides, and a type this
-            -- list has never seen reads as "not a non-inferiority analysis"
-            -- rather than as one.
+            -- ingest/results.py's `is_non_inferiority`, in SQL
             CASE
                 WHEN non_inferiority_type IS NULL THEN NULL
                 WHEN lower(non_inferiority_type) LIKE '%non-inferiority%'

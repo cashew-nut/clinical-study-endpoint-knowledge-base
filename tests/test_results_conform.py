@@ -1,8 +1,8 @@
-"""D5 + D6 end to end: results rows conformed through the existing engine,
-linked to the planned endpoints, and their dispersions normalised.
+"""Results rows conformed through the existing engine, linked to the planned
+endpoints, and their dispersions normalised.
 
-Runs against the `results_warehouse_path` fixture, whose two studies are built
-to hit every branch at once -- see tests/conftest.py.
+Runs against the `results_warehouse_path` fixture in tests/conftest.py, whose
+two studies hit every branch.
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ def _one(con, sql, *params):
     return row[0] if row else None
 
 
-# ------------------------------------------------------------ D5: the link
+# ---------------------------------------------------------------- the link
 
 
 def test_results_rows_conform_through_the_existing_engine(results_con):
-    """No second matcher: a results title resolves to the same vocabulary the
-    planned half resolves to, by the same cascade."""
+    """A results title resolves to the same vocabulary as the planned half, by
+    the same cascade."""
     row = results_con.execute(
         """
         SELECT measurement_id, form_id, measurement_match_method, timepoint_pattern
@@ -40,9 +40,8 @@ def test_results_rows_conform_through_the_existing_engine(results_con):
 
 
 def test_endpoint_results_shares_its_dimension_columns_with_endpoints(results_con):
-    """A query written against the planned half has to work unchanged against
-    the reported half -- otherwise moving between them silently means
-    rewriting, and a rewrite is where a comparison goes wrong."""
+    """A query written against the planned half works unchanged against the
+    reported half."""
     planned = {
         d[0] for d in results_con.execute("SELECT * FROM conformed.endpoints LIMIT 0").description
     }
@@ -68,8 +67,7 @@ def test_an_identical_title_links_by_exact_title(results_con):
 
 def test_a_reworded_title_links_by_the_conformed_measurement(results_con):
     """"Time from randomisation to death from any cause" and "Overall
-    Survival" share no words. They share a `measurement_id`, which is the
-    whole reason the vocabulary is a join key."""
+    Survival" share no words, only a `measurement_id`."""
     row = results_con.execute(
         """
         SELECT r.link_method, r.measurement_id, e.measure_raw
@@ -82,9 +80,9 @@ def test_a_reworded_title_links_by_the_conformed_measurement(results_con):
 
 
 def test_an_outcome_that_was_never_registered_is_kept_and_flagged(results_con):
-    """Sponsors report outcomes they never registered. Force-joining one to
-    the nearest planned endpoint would be the single most damaging thing this
-    pipeline could do, so it is kept unlinked and queued."""
+    """Sponsors report outcomes they never registered. Such a row is kept
+    unlinked and queued rather than force-joined to the nearest planned
+    endpoint."""
     assert (
         _one(results_con, "SELECT link_method FROM conformed.endpoint_results WHERE source_id = 'OM4'")
         is None
@@ -111,9 +109,9 @@ def test_a_results_title_that_conforms_nowhere_goes_to_the_results_review_queue(
 
 
 def test_the_results_review_queue_is_its_own_table(results_con):
-    """`conform` wholesale-replaces conformed.review_queue. Results rows kept
-    there would be silently deleted by the next protocol-side run, so they
-    have their own queue with its own lifecycle."""
+    """`conform` wholesale-replaces conformed.review_queue, so results rows
+    get their own queue rather than being deleted by the next protocol-side
+    run."""
     planned_reasons = {
         row[0] for row in results_con.execute(
             "SELECT DISTINCT reason FROM conformed.review_queue"
@@ -129,9 +127,8 @@ def test_the_results_review_queue_is_its_own_table(results_con):
 
 
 def test_baseline_characteristics_conform_but_are_never_queued_as_unlinked(results_con):
-    """A baseline characteristic has no planned counterpart by construction.
-    Queueing it as "unlinked" would bury the reported outcomes that genuinely
-    are."""
+    """A baseline characteristic has no planned counterpart by construction,
+    so queueing it as unlinked would bury the outcomes that genuinely are."""
     kinds = dict(
         results_con.execute(
             "SELECT result_kind, count(*) FROM conformed.endpoint_results GROUP BY 1"
@@ -153,8 +150,8 @@ def test_a_baseline_characteristic_conforms_once_however_many_arms_reported_it(r
 
 def test_baseline_rows_are_not_given_a_timepoint_the_registry_never_wrote(results_con):
     """A baseline characteristic is measured at baseline by construction, but
-    writing "Baseline" into the text the conformance engine reads would be the
-    pipeline asserting a timepoint the trial did not state."""
+    writing "Baseline" into the text the conformance engine reads would assert
+    a timepoint the trial never stated."""
     assert (
         _one(
             results_con,
@@ -164,12 +161,12 @@ def test_baseline_rows_are_not_given_a_timepoint_the_registry_never_wrote(result
     )
 
 
-# ---------------------------------------------------- D6: the dispersion table
+# -------------------------------------------------------- the dispersion table
 
 
 def test_every_arm_level_measurement_lands_including_the_unusable_ones(results_con):
-    """The denominator every aggregate reports against is only correct because
-    nothing is filtered out here."""
+    """Nothing is filtered out, so the denominator every aggregate reports
+    against is complete."""
     landed = _one(results_con, "SELECT count(*) FROM conformed.endpoint_dispersion")
     raw = _one(results_con, "SELECT count(*) FROM raw.outcome_measurements") + _one(
         results_con, "SELECT count(*) FROM raw.baseline_measurements"
@@ -226,10 +223,9 @@ def test_the_inputs_of_every_derived_estimate_are_stored(results_con):
 
 
 def test_litres_and_millilitres_pool_only_after_conversion(results_con):
-    """Two trials reporting the same endpoint in different units. `sd_estimate`
-    keeps each trial's own unit; `sd_estimate_si` is what makes them
-    comparable, and it is a separate column precisely so pooling is a
-    decision rather than an accident."""
+    """Two trials reporting the same endpoint in different units.
+    `sd_estimate` keeps each trial's own unit and `sd_estimate_si` is the
+    comparable one, in a separate column so pooling stays a decision."""
     rows = dict(
         results_con.execute(
             """
@@ -259,7 +255,7 @@ def test_litres_and_millilitres_pool_only_after_conversion(results_con):
 def test_the_unit_field_resolves_a_bare_symbol_the_prose_matcher_will_not(results_con):
     """matching.yaml sets `min_synonym_length: 2`, so the generic matcher
     never matches "L" inside a sentence. As the entire content of
-    `unit_of_measure`, "L" is unambiguous, and results/units.py says so."""
+    `unit_of_measure` it is unambiguous, which results/units.py handles."""
     assert results_con.execute(
         """
         SELECT scale_id, scale_match_method FROM conformed.endpoint_dispersion
@@ -284,8 +280,8 @@ def test_every_refusal_names_its_reason(results_con):
 
 
 def test_an_unrecognised_dispersion_type_keeps_its_raw_string(results_con):
-    """So `results coverage` can list the exact spellings the vocabulary is
-    missing, which is the only way the enumeration ever gets closed."""
+    """`results coverage` lists the exact spellings the vocabulary is
+    missing."""
     assert results_con.execute(
         """
         SELECT dispersion_type_raw, dispersion_kind FROM conformed.endpoint_dispersion

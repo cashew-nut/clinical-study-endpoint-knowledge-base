@@ -1,7 +1,4 @@
-"""`endpoints` CLI (plan §7). Only `pull` is implemented in build-order step 1;
-the rest of the interface is stubbed so `--help` reflects the full intended
-shape, and each stub names the step that implements it.
-"""
+"""The `endpoints` CLI."""
 
 from __future__ import annotations
 
@@ -98,16 +95,11 @@ app.add_typer(results_app, name="results")
 
 USDM_ENVELOPES = ("module", "wrapper")
 
-#: What `stats --by` accepts. One entry today; the option exists rather than a
-#: bare `--by-drug-class` flag because the *next* stratifier (phase, TA, calendar
-#: era) is the same shape and should not need a new flag.
 STATS_STRATIFIERS = ("drug-class",)
 
 
 def _determinate_progress() -> Progress:
-    """A progress bar for work with a known total (row/step counts). Disabled
-    outright when stdout isn't a terminal (e.g. under the test runner), so it
-    never litters captured output with redraws."""
+    """Disabled when stdout is not a terminal."""
     return Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -123,8 +115,6 @@ def _determinate_progress() -> Progress:
 
 
 def _indeterminate_progress() -> Progress:
-    """A progress bar for work with no knowable total up front (paginating an
-    API until it stops handing back pages)."""
     return Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -153,10 +143,6 @@ def _table_exists(con, schema: str, table: str) -> bool:
 
 
 def _vocab_drug_class_tables_ready(con) -> bool:
-    """Whether `vocab validate` has loaded the drug-class mapping into this
-    warehouse. Checked separately from the TA tables because a warehouse
-    validated by an older release has the TA tables and not these, and the pull
-    should degrade to skipping drug classes rather than failing."""
     return all(
         _table_exists(con, "vocab", table)
         for table in ("drug_classes", "drug_class_agent_names", "drug_class_name_patterns")
@@ -164,9 +150,6 @@ def _vocab_drug_class_tables_ready(con) -> bool:
 
 
 def _vocab_ta_tables_ready(con) -> bool:
-    """Whether `vocab validate` has already loaded the TA mapping into this
-    warehouse -- the TA resolver reads vocab.ta_mesh_* tables, not the YAML
-    directly (except for the two `defaults`, which aren't persisted at all)."""
     return _table_exists(con, "vocab", "ta_mesh_term_overrides") and _table_exists(
         con, "vocab", "therapeutic_areas"
     )
@@ -175,47 +158,23 @@ def _vocab_ta_tables_ready(con) -> bool:
 def _ensure_vocab_loaded(
     con, *, vocab_dir: Optional[str] = None
 ) -> tuple[Optional[str], Optional[str]]:
-    """Load `vocab/*.yaml` into this warehouse if it does not already hold a
-    vocabulary the resolvers can read. Returns `(message, warning)`, at most one
-    of which is set; never raises, and never aborts the pull.
-
-    Therapeutic-area and drug-class resolution live inside `pull` because both
-    are functions of what the pull just landed. They read `vocab.*` tables, so a
-    warehouse pulled into *before* `vocab validate` ran used to land the raw
-    conditions and interventions and then skip both derived tables -- and
-    because resolution runs nowhere else, the only way to fill them in
-    afterwards was **another network pull**. The data had already arrived; only
-    the classification of it was missing. Loading the vocabulary here costs no
-    network and makes a single `endpoints pull` on an empty directory produce a
-    complete warehouse whatever order the operator ran things in.
-
-    Narrow on purpose: it fires only when an axis's tables are *absent*, so a
-    complete snapshot pinned by an earlier `vocab validate` (or by `--vocab-dir`
-    against an edited copy) is left exactly as it is, and an edit under `vocab/`
-    still does not take effect until you re-validate. The one case where it
-    rewrites rather than adds is a warehouse whose vocabulary predates an axis
-    entirely -- there the held snapshot has no answer to give, and the message
-    says the reload happened. The project's "every run is against a validated
-    snapshot" contract is kept rather than bypassed: what this writes is
-    validated by exactly the checks `vocab validate` runs, and refuses to write
-    anything if they fail.
+    """Load `vocab/*.yaml` into this warehouse if it holds no vocabulary the
+    resolvers can read, so a first `pull` into an empty directory is complete
+    on its own. Fires only when an axis's tables are absent; a held snapshot
+    is left as it is. Returns `(message, warning)`, at most one set.
     """
     ta_ready = _vocab_ta_tables_ready(con)
     class_ready = _vocab_drug_class_tables_ready(con)
     if ta_ready and class_ready:
         return None, None
-    # A warehouse validated by a release older than an axis has some of the
-    # vocabulary and not the tables that axis needs. Reloading is right there --
-    # the held snapshot cannot answer the question being asked of it -- but it
-    # is a rewrite, not an addition, so the message below says which happened.
+    # A warehouse validated by an older release has some vocabulary and not
+    # the tables a newer axis needs; reloading is a rewrite, and the message says so.
     stale = ta_ready or class_ready
 
     try:
         resolved = Path(vocab_dir) if vocab_dir else default_vocab_dir()
         docs = load_vocab(resolved)
     except VocabError as exc:
-        # No `vocab/` on disk (an installed wheel that does not package it, say).
-        # The pull is unaffected; it just cannot classify what it landed.
         return None, (
             f"Could not load a vocabulary to resolve this pull against ({exc}). "
             "The studies landed; run `endpoints vocab validate --vocab-dir <path>` "
@@ -260,39 +219,32 @@ def pull(
         None,
         "--ta",
         help="Therapeutic-area filter (comma-separated ids from therapeutic_areas.yaml, "
-        "e.g. oncology,respiratory). Filters against the mapping loaded into vocab.*; "
-        "if this warehouse holds none, `pull` loads one first.",
+        "e.g. oncology,respiratory). Applied client-side before --limit.",
     ),
     drug_class: Optional[str] = typer.Option(
         None,
         "--drug-class",
         help="Drug-class filter (comma-separated ids from drug_classes.yaml, e.g. "
-        "glp1_receptor_agonist,sglt2_inhibitor). Applied client-side before --limit, "
-        "same as --ta -- neither backend can express it server-side. NOT needed to get "
-        "drug classes: every pull resolves them for whatever it lands.",
+        "glp1_receptor_agonist,sglt2_inhibitor). Applied client-side before --limit. "
+        "Not needed to get drug classes: every pull resolves them for what it lands.",
     ),
     org: Optional[str] = typer.Option(
         None,
         "--org",
-        help="Organisation filter (comma-separated name fragments, matched case-insensitively "
-        'against the *lead* sponsor only, e.g. "Pfizer" or "Pfizer,AbbVie"). Applied '
-        "server-side before --limit, same as --phase/--since; no `vocab validate` precondition.",
+        help="Lead-sponsor filter (comma-separated name fragments, case-insensitive, "
+        'e.g. "Pfizer" or "Pfizer,AbbVie"). Applied server-side before --limit.',
     ),
     results: bool = typer.Option(
         True,
         "--results/--no-results",
-        help="Land the results section (raw.outcome_measures / outcome_groups / "
-        "outcome_measurements / outcome_analyses / baseline_measurements) for studies "
-        "that posted one. On by default: the CT.gov API returns it in the payload the "
-        "pull already fetches, so --no-results saves warehouse size, never network.",
+        help="Land the results section (raw.outcome_*) for studies that posted one. "
+        "--no-results saves warehouse size, not network.",
     ),
     replace: bool = typer.Option(
         False,
         "--replace",
-        help="Replace raw.* with just this pull's results instead of upserting -- discards "
-        "studies landed by any earlier pull, including ones with different filters or a "
-        "different --source. Default is to upsert (accumulate); use this to make the "
-        "warehouse mirror exactly this pull.",
+        help="Replace raw.* with just this pull instead of upserting; discards studies "
+        "landed by any earlier pull.",
     ),
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
@@ -300,21 +252,14 @@ def pull(
     source: str = typer.Option(
         "ctgov_api",
         "--source",
-        help='Ingestion backend: "ctgov_api" (public API, default -- AACT access is '
-        'currently broken) or "aact" (requires .env credentials).',
+        help='Ingestion backend: "ctgov_api" (public API, default) or "aact" '
+        "(requires .env credentials).",
     ),
 ) -> None:
-    """Pull filtered studies + design_outcomes/conditions/interventions into raw.*,
-    log the pull, and resolve therapeutic areas into
-    conformed.study_therapeutic_area and drug classes into
-    conformed.study_drug_class / arm_drug_class -- filtering down to `--ta`,
-    `--drug-class` and/or `--org` if given.
-
-    One pull, one wave: everything a study contributes is in the payload this
-    already fetches, so there is no second pull per axis. A warehouse holding no
-    vocabulary gets one loaded first, so a first `pull` into an empty directory
-    is complete on its own. Upserts by default; `--replace` discards everything
-    raw.* already held instead."""
+    """Pull filtered studies into raw.*, log the pull, and resolve therapeutic
+    areas and drug classes for what was landed. Loads the vocabulary first if
+    the warehouse holds none. Upserts by default; `--replace` discards what
+    raw.* already held."""
     if source not in SOURCES:
         console.print(f"[red]--source must be one of {SOURCES}, got {source!r}[/red]")
         raise typer.Exit(code=1)
@@ -347,10 +292,6 @@ def pull(
 
     con = connect(warehouse)
     try:
-        # Before anything else, so that a first `pull` into an empty directory
-        # resolves what it lands instead of leaving the derived tables for a
-        # second, network-costing pull -- and so --ta/--drug-class below are
-        # answerable on a warehouse that has never been validated into.
         vocab_message, vocab_warning = _ensure_vocab_loaded(con)
         if vocab_message:
             console.print(f"[green]{vocab_message}[/green]")
@@ -439,15 +380,12 @@ def pull(
                     ).fetchall()
                 }
                 result["row_counts"] = filter_raw_tables_by_nct_ids(con, set(result["nct_ids"]), keep)
-                ta_summary = run_ta_resolution(con)  # re-derive the distribution for the kept studies only
+                ta_summary = run_ta_resolution(con)
 
         drug_class_summary = None
         if _vocab_drug_class_tables_ready(con):
             drug_class_summary = run_drug_class_resolution(con)
             if class_ids:
-                # The same post-filter shape `--ta` uses: the backends filter
-                # while scanning, and this catches anything their (necessarily
-                # partial, on AACT) view of a candidate missed.
                 keep = {
                     row[0]
                     for row in con.execute(
@@ -469,23 +407,16 @@ def pull(
     finally:
         con.close()
 
-    # --replace discards rather than migrates, so it bypasses the reconciler's
-    # migration path entirely (see ingest/upsert.py's `ensure_table`) -- report
-    # it here, once, the way a migration is reported per table below.
     if replace:
         console.print(
             "[yellow]--replace: raw.* tables were replaced, not upserted -- studies from any "
             "earlier pull (different filters, different --source) are gone.[/yellow]"
         )
 
-    # A migration rewrites tables the operator already had; say so rather than
-    # letting rows quietly change shape underneath them.
     migrations = result.get("migrations", [])
     for change in migrations:
         console.print(f"[yellow]Migrated {change.describe()}[/yellow]")
     if any(change.added and change.rows_kept for change in migrations):
-        # Migration backfills NULL, not data: the new columns are only populated
-        # for studies this pull actually touched.
         console.print(
             "[yellow]New columns are NULL for studies landed by earlier pulls -- "
             "re-run `pull` covering them to fill in.[/yellow]"
@@ -602,9 +533,8 @@ def vocab_sample(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
 ) -> None:
-    """Export design_outcomes vocabulary for human review: a per-field frequency
-    table with coverage reporting (default), or a joinable row-level sample
-    (--format rows)."""
+    """Export design_outcomes vocabulary for review: a per-field frequency
+    table with coverage (default), or a row-level sample (--format rows)."""
     if fmt not in ("frequency", "rows"):
         console.print(f"[red]--format must be 'frequency' or 'rows', got {fmt!r}[/red]")
         raise typer.Exit(code=1)
@@ -726,10 +656,8 @@ def ta_diff_tree(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
 ) -> None:
-    """Run the tree-prefix layer alone and the regex layer alone over every
-    pulled study's conditions, and report every disagreement, most frequent first --
-    each one is either a wrong tree prefix or a wrong regex in ta_mesh_mapping.yaml.
-    Requires `pull` and `vocab validate` to have already been run against this warehouse."""
+    """Report every disagreement between the tree-prefix layer and the regex
+    layer over every pulled study's conditions, most frequent first."""
     con = connect(warehouse)
     try:
         if not _vocab_ta_tables_ready(con):
@@ -772,24 +700,19 @@ def drug_class_distribution(
     kind: Optional[str] = typer.Option(
         None,
         "--kind",
-        help="Only classes of this kind: mechanism, pharmacologic, modality or control. "
-        "Mixing kinds in one list compares a mechanism against a modality as if they "
-        "were alternatives, so this is usually what you want.",
+        help="Only classes of this kind: mechanism, pharmacologic, modality or control.",
     ),
     primary_only: bool = typer.Option(
         False,
         "--primary-only",
-        help="Count each study once, under its primary class, instead of counting every "
-        "class it matched. Combination therapy is the norm, so the two differ a lot.",
+        help="Count each study once, under its primary class, instead of under every class it matched.",
     ),
     top: int = typer.Option(30, "--top", help="How many classes to list; 0 = all."),
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
 ) -> None:
-    """What the pulled corpus is made of, by drug class.
-
-    Requires `pull` and `vocab validate` to have been run against this warehouse."""
+    """The pulled corpus by drug class."""
     con = connect(warehouse)
     try:
         if not _table_exists(con, "conformed", "study_drug_class"):
@@ -836,8 +759,6 @@ def drug_class_distribution(
         table.add_row(class_id, class_kind, f"{studies:,}", f"{primary_studies:,}")
     console.print(table)
 
-    # The denominator, always: a class list without it is a machine for making a
-    # thin axis look complete (docs/DRUG_CLASS_SPEC.md).
     console.print(
         f"{coverage['classified_studies']:,} of {coverage['studies']:,} studies carry at least "
         f"one named class ({_pct(coverage['classified_studies'], coverage['studies'])}); "
@@ -864,10 +785,7 @@ def drug_class_coverage_cmd(
     ),
     top: int = typer.Option(20, "--top", help="How many unclassified agents to list."),
 ) -> None:
-    """How much of the corpus the drug-class axis actually covers, and what it missed.
-
-    The honest half of `distribution`: the review queue is the input to the next
-    vocabulary round, exactly as `endpoints review list` is on the endpoint side."""
+    """How much of the corpus the drug-class axis covers, and what it missed."""
     con = connect(warehouse)
     try:
         coverage = drug_class_coverage_summary(con)
@@ -919,9 +837,7 @@ def drug_class_coverage_cmd(
             queue.add_row(name or "(no name)", f"{n:,}")
         console.print(queue)
         console.print(
-            "These are the input to the next vocabulary round. Add the ones that recur to "
-            "vocab/drug_class_mesh_mapping.yaml's `agent_names`; do not loosen a pattern to "
-            "absorb them."
+            "Add the ones that recur to vocab/drug_class_mesh_mapping.yaml's `agent_names`."
         )
 
 
@@ -932,13 +848,8 @@ def drug_class_diff_ancestors(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
 ) -> None:
-    """Run the curated layers alone and NLM's MeSH ancestry alone over every
-    pulled study's interventions, and report every disagreement, most frequent
-    first -- each one is either a wrong `agent_names`/`name_patterns` entry or a
-    wrong `ancestor_rules` entry in drug_class_mesh_mapping.yaml.
-
-    It reports; it does not reconcile. Editing the YAML until the diff is empty
-    destroys the only external check this axis has."""
+    """Report every disagreement between the curated layers and NLM's MeSH
+    ancestry over every pulled study's interventions, most frequent first."""
     con = connect(warehouse)
     try:
         if not _vocab_drug_class_tables_ready(con):
@@ -989,15 +900,11 @@ def conform(
         0,
         "--jobs",
         "-j",
-        help="Worker processes for the row-conforming step. 0 (default) = auto: parallelize "
-        "across all CPUs once there's enough work to be worth it, serial otherwise. "
-        "1 forces serial.",
+        help="Worker processes. 0 (default) = auto; 1 forces serial.",
     ),
 ) -> None:
-    """Normalize -> syntactic rules -> semantic fallback -> review queue.
-    Reads raw.design_outcomes + vocab.*, writes conformed.endpoints and
-    conformed.review_queue. Requires `endpoints vocab validate` and `endpoints
-    pull` to have already been run against this warehouse."""
+    """Conform raw.design_outcomes against vocab.*, writing conformed.endpoints
+    and conformed.review_queue."""
     con = connect(warehouse)
     try:
         try:
@@ -1039,12 +946,7 @@ def usdm_show(
     out: Optional[str] = typer.Option(None, "--out", "-o", help="Write JSON here instead of stdout."),
     warehouse: str = typer.Option("warehouse.duckdb", "--warehouse"),
 ) -> None:
-    """A USDM 4.0 representation of every endpoint in one trial.
-
-    Each endpoint's `text` is a syntax template whose tags resolve through its
-    `SyntaxTemplateDictionary` into the controlled vocabularies; the registry
-    string is kept verbatim in `description`, so the projection is auditable.
-    """
+    """A USDM 4.0 representation of every endpoint in one trial."""
     if envelope not in USDM_ENVELOPES:
         console.print(f"[red]--envelope must be one of {', '.join(USDM_ENVELOPES)}[/red]")
         raise typer.Exit(code=2)
@@ -1095,14 +997,8 @@ def usdm_coverage(
     warehouse: str = typer.Option("warehouse.duckdb", "--warehouse"),
     limit: int = typer.Option(0, "--limit", help="Only the first N trials; 0 = all."),
 ) -> None:
-    """The fidelity-tier mix across every conformed trial.
-
-    The tiers are the honest measure of what the templates buy: `templated` is a
-    fully parameterized endpoint, `partial` dropped an optional group, and
-    `verbatim` is the registry string passed through because no template
-    applied. Per-dimension vocabulary coverage does not compose into this --
-    the tiers depend on joint resolution -- so it has to be counted.
-    """
+    """The fidelity-tier mix across every conformed trial: `templated`,
+    `partial` (an optional group dropped), or `verbatim` (no template applied)."""
     con = connect(warehouse)
     try:
         rules = load_projection_rules(con)
@@ -1140,9 +1036,6 @@ def usdm_coverage(
     table.add_row("[bold]total", f"[bold]{grand}", "")
     console.print(table)
 
-    # docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1: how much of the
-    # templated tier is standing on an announced default, not a resolved
-    # value -- a subset of "templated", never hidden inside it.
     if defaulted_totals:
         templated = totals.get("templated", 0) or 1
         parts = ", ".join(
@@ -1158,18 +1051,9 @@ def results_conform(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
 ) -> None:
-    """Conform the results section and normalise its dispersions.
-
-    Reads raw.outcome_* and vocab.*, writes conformed.endpoint_results (one row
-    per reported outcome and baseline characteristic, linked back to the
-    planned endpoint where one can be identified),
-    conformed.endpoint_dispersion (one row per arm-level measurement, with an
-    `sd_estimate` and how it was derived) and conformed.results_review_queue.
-
-    Requires `endpoints vocab validate` and `endpoints pull` (without
-    --no-results); run `endpoints conform` first so results rows can be linked
-    to their planned endpoints.
-    """
+    """Conform the results section and normalise its dispersions into SD
+    estimates. Run `endpoints conform` first so results rows can be linked to
+    their planned endpoints."""
     con = connect(warehouse)
     try:
         try:
@@ -1215,14 +1099,9 @@ def results_coverage_cmd(
     ),
     top: int = typer.Option(20, "--top", help="How many distinct values to list per field."),
 ) -> None:
-    """The four numbers the results tier was gated on, measured against this warehouse.
-
-    What share of conformed studies posted results; what share of reported
-    outcome titles match a planned one; the exact value sets `param_type` and
-    `dispersion_type` use here, and which of them the vocabulary does not yet
-    recognise; and what share of `unit_of_measure` strings normalise against
-    scales.yaml. See docs/ENDPOINT_RESULTS_SPEC.md, "The gate".
-    """
+    """Results coverage: what share of studies posted results, what share of
+    reported titles match a planned one, the `param_type` and
+    `dispersion_type` value sets, and what share of units resolve."""
     con = connect(warehouse)
     try:
         try:
@@ -1322,9 +1201,8 @@ def stats(
     source: str = typer.Option(
         "outcome",
         "--source",
-        help='"outcome" (reported outcome measures, the default) or "baseline" (baseline '
-        "characteristics -- a larger denominator, and a different quantity: see "
-        "docs/ENDPOINT_RESULTS_SPEC.md, D8).",
+        help='"outcome" (reported outcome measures, the default) or "baseline" '
+        "(baseline characteristics).",
     ),
     analyses: bool = typer.Option(
         False,
@@ -1338,22 +1216,17 @@ def stats(
     no_approximate: bool = typer.Option(
         False,
         "--no-approximate",
-        help="Exclude the Wan et al. IQR/range estimates, which are approximations rather "
-        "than conversions.",
+        help="Exclude the Wan et al. IQR/range estimates.",
     ),
     drug_class: Optional[str] = typer.Option(
         None,
         "--drug-class",
-        help="Only studies whose interventions resolved to this drug class. The STUDY tier: "
-        "it narrows to trials that used the class, and does not claim the SD came from an "
-        "arm that received it.",
+        help="Only studies whose interventions resolved to this drug class (study tier).",
     ),
     by: Optional[str] = typer.Option(
         None,
         "--by",
-        help="Stratify instead of filtering. Only 'drug-class' is supported. On the SD side "
-        "this is a homogeneity check; on --analyses it is the point, because pooling effect "
-        "sizes across mechanisms has no referent.",
+        help="Stratify instead of filtering. Only 'drug-class' is supported.",
     ),
     by_kind: str = typer.Option(
         "mechanism",
@@ -1366,22 +1239,14 @@ def stats(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
 ) -> None:
-    """The empirical distribution of arm-level variability for an endpoint.
-
-    Grouped by form and unit, because the SD of a change from baseline is not
-    the SD of a raw value and the SD in litres is not the SD in millilitres,
-    and reported with the coverage line that says how many of the conformed
-    studies actually contributed. Requires `endpoints results conform`.
-    """
+    """The distribution of arm-level variability for an endpoint, grouped by
+    form and unit, with coverage. Requires `endpoints results conform`."""
     if by is not None and by not in STATS_STRATIFIERS:
         console.print(f"[red]--by must be one of {STATS_STRATIFIERS}, got {by!r}[/red]")
         raise typer.Exit(code=1)
     if by == "drug-class" and drug_class:
-        # The stratifier sets `drug_class` per stratum, so accepting both would
-        # silently ignore the one the caller typed.
         console.print(
-            "[red]--drug-class and --by drug-class are mutually exclusive: one filters to a "
-            "single class, the other reports every class side by side. Pick one.[/red]"
+            "[red]--drug-class and --by drug-class are mutually exclusive.[/red]"
         )
         raise typer.Exit(code=1)
 
@@ -1617,11 +1482,7 @@ def serve(
     port: int = typer.Option(8000, "--port"),
     warehouse: str = typer.Option("warehouse.duckdb", "--warehouse"),
 ) -> None:
-    """Serve the read-only USDM 4.0 endpoints API.
-
-    `GET /v4/studies/{nctId}/endpoints` is the one call this exists for.
-    Requires the `serve` extra (`uv sync --extra serve`).
-    """
+    """Serve the read-only USDM 4.0 endpoints API. Requires `uv sync --extra serve`."""
     try:
         import uvicorn
 

@@ -1,5 +1,4 @@
-"""Read matching.yaml's per-dimension cascade + provenance confidence floors
-from vocab.* (never from the YAML directly -- see conform/__init__.py)."""
+"""matching.yaml's per-dimension cascade and confidence floors, read from vocab.*."""
 
 from __future__ import annotations
 

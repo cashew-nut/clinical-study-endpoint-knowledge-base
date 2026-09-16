@@ -1,13 +1,12 @@
-"""Tests for the vocab loader/validator, and for the vocabularies themselves.
+"""The vocab loader and validator, and the shipped vocabularies themselves.
 
-Two kinds of test here, deliberately mixed:
+Two kinds of test:
 
-* structural tests that the validator catches a broken vocab file (mutate a good
-  vocabulary, assert the specific error), and
-* content tests that the shipped vocabularies conform the endpoints from the
-  implementation plan's reference table -- PFS, ORR, FEV1-CFB, HbA1c-CFB, ACR20.
-  Those are the acceptance fixtures for build-order step 3, so failing them here
-  means step 3 cannot pass either.
+* structural tests that the validator catches a broken vocab file, by mutating
+  a good vocabulary and asserting the specific error, and
+* content tests that the shipped vocabularies conform a set of reference
+  endpoints: PFS, ORR, FEV1 change from baseline, HbA1c change from baseline
+  and ACR20.
 """
 
 from __future__ import annotations
@@ -47,13 +46,10 @@ def test_shipped_vocabulary_validates_clean(docs):
     assert result.errors == [], "shipped vocabulary has validation errors"
 
 
-#: docs/EVENT_SEMANTICS_SPEC.md's own worked example of why `event_family` is
-#: an explicit forms.yaml flag rather than derived from `direction_rule`:
-#: shift_from_baseline is `inherit_event_polarity` (its direction depends on
-#: an event's polarity) yet names no event, so it deliberately stays outside
-#: `event_family`. That is precisely the case the validator's warning exists
-#: to flag, so it is expected on the shipped vocabulary rather than a defect
-#: to clear -- unlike every other warning, which this test still catches.
+#: shift_from_baseline is `inherit_event_polarity`, so its direction depends
+#: on an event's polarity, yet it names no event and so stays outside
+#: `event_family`. The validator's warning exists to flag that case, so it is
+#: expected on the shipped vocabulary. Every other warning is still caught.
 _EXPECTED_SHIPPED_WARNINGS = [
     "forms.yaml: shift_from_baseline: direction_rule 'inherit_event_polarity' "
     "implies an event but `event_family` is not true -- the two properties "
@@ -156,7 +152,7 @@ def test_ta_mesh_mapping_to_unknown_area_is_an_error(docs):
     assert any("unknown therapeutic area" in e for e in validate_vocab(broken).errors)
 
 
-# ------------------------------------- event semantics (docs/EVENT_SEMANTICS_SPEC.md)
+# ---------------------------------------------------------- event semantics
 
 
 def test_event_duplicate_term_id_is_an_error(docs):
@@ -256,9 +252,8 @@ def test_named_endpoint_tte_definition_with_reference_needs_a_citation(docs):
 
 
 def test_synonym_claimed_by_both_measurement_and_event_is_an_error(docs):
-    """docs/EVENT_SEMANTICS_SPEC.md: the ambiguous-synonym rule extends across
-    measurement/event/named_endpoint, so the endpoint-name migration cannot
-    silently regrow."""
+    """The ambiguous-synonym rule extends across measurement, event and
+    named_endpoint."""
     broken = copy.deepcopy(docs)
     measurement_term = next(t for t in broken["measurement"]["terms"] if t.get("synonyms"))
     event_term = next(t for t in broken["event"]["terms"] if t.get("synonyms"))
@@ -420,11 +415,10 @@ def _matcher(doc, order_key="match_precedence", terms_key="terms"):
 
 
 def _match_measurement_with_named_endpoint_fallback(docs, normalised):
-    """Simulates conform_row step 0 + step 1 for this file's plain fixture
-    checks: a direct measurement match wins; failing that, a named-endpoint
-    hit's `default_measurement` fills the silence -- docs/EVENT_SEMANTICS_SPEC.md's
-    "PFS/OS/TTR" case, since their endpoint-NAME synonyms moved out of
-    measurements.yaml and into named_endpoints.yaml."""
+    """Simulates the first two steps of `conform_row`: a direct measurement
+    match wins, and failing that a named-endpoint hit's `default_measurement`
+    is used. This is how PFS, OS and TTR resolve, since their endpoint-name
+    synonyms live in named_endpoints.yaml rather than measurements.yaml."""
     measurements = _matcher(docs["measurement"], order_key="_none")
     direct = _match(measurements, normalised)
     if direct:
@@ -445,8 +439,9 @@ def _match(compiled, text):
 
 
 def _match_longest(compiled, text):
-    """matching.yaml's `strategy_when_unordered: longest_match_wins`. The span is
-    taken across ALL of a term's synonyms and patterns, not the first that hits."""
+    """matching.yaml's `strategy_when_unordered: longest_match_wins`. The span
+    is taken across all of a term's synonyms and patterns, not the first
+    that hits."""
     best_span, best_id = 0, None
     for term_id, patterns, synonyms in compiled:
         for expression in (*patterns, *synonyms):
@@ -525,13 +520,11 @@ def test_reference_table_fixtures_conform(docs, text, form_id, measurement_id, d
 TIMEPOINT_FIXTURES = [
     ("Event-driven, trial is estimated to be up to 4.5 years", "event_driven"),
     ("Baseline, Week 24", "baseline_to_timepoint"),
-    # Round two reversed this one. It read cumulative_window on the argument that
-    # "through" describes a window; the joined export says otherwise -- of 21 rows
-    # whose time_frame is "baseline ... through ... <horizon>", 9 pair with a
-    # change-family form and 8 with a cumulative one, and for "up to" it is 19 to
-    # 5. See timepoint_patterns.yaml's connective_evidence. The connective does not
-    # carry the distinction; the form does, which is what the `disambiguation`
-    # block at the foot of that file now says.
+    # The connective does not carry the change/cumulative distinction, the
+    # form does. Of 21 rows whose time_frame is "baseline ... through ...
+    # <horizon>", 9 pair with a change-family form and 8 with a cumulative
+    # one; for "up to" it is 19 to 5. See timepoint_patterns.yaml's
+    # connective_evidence and its `disambiguation` block.
     ("Baseline through Week 52", "baseline_to_timepoint"),
     ("Baseline up to Week 24", "baseline_to_timepoint"),
     ("Through Week 24", "cumulative_window"),
@@ -607,7 +600,7 @@ def test_bare_duration_is_not_read_as_a_fixed_timepoint(docs):
     assert _classify_timepoint(docs, "Week 6") == "single_fixed"
 
 
-# ------------------------------- projection integrity (docs/USDM_PROJECTION_INTEGRITY_SPEC.md)
+# ----------------------------------------------------- projection integrity
 
 
 def _template_for(doc: dict, form_id: str) -> dict:
@@ -627,9 +620,9 @@ def test_timepoint_pattern_role_outside_closed_set_is_an_error(docs):
 
 
 def test_reference_fallback_on_a_template_with_no_reference_tag_is_an_error(docs):
-    """change_from_baseline is reference_entailed and carries a fallback in the
-    shipped vocabulary -- strip {reference} from its own template and the
-    fallback becomes illegal: nothing left for it to fill."""
+    """change_from_baseline is reference_entailed and carries a fallback in
+    the shipped vocabulary. Strip {reference} from its template and the
+    fallback has nothing left to fill."""
     broken = copy.deepcopy(docs)
     entry = _template_for(broken, "change_from_baseline")
     assert entry.get("reference_fallback")
@@ -639,9 +632,8 @@ def test_reference_fallback_on_a_template_with_no_reference_tag_is_an_error(docs
 
 
 def test_reference_fallback_on_a_form_outside_the_change_family_is_an_error(docs):
-    """value_at_timepoint is not reference_entailed -- a fallback there is
-    corpus convention, not something the form's own meaning supplies, exactly
-    the "definitional or dead" test the validator now makes mechanical."""
+    """value_at_timepoint is not reference_entailed, so a fallback there is
+    corpus convention rather than something the form's meaning supplies."""
     broken = copy.deepcopy(docs)
     entry = _template_for(broken, "value_at_timepoint")
     entry["template"] = "{measurement}[ {reference}][ {timepoint}][ ({scale})]"
@@ -651,11 +643,9 @@ def test_reference_fallback_on_a_form_outside_the_change_family_is_an_error(docs
 
 
 def test_reference_fallback_on_time_to_event_is_an_error(docs):
-    """Carried over from docs/EVENT_SEMANTICS_SPEC.md: time_to_event entails
-    SOME time origin, not any particular one -- a form-keyed fallback there
-    produced the wrong answer for duration-of-response rows. Not a special
-    case any more: time_to_event is simply not reference_entailed, so this
-    falls out of the same general rule."""
+    """time_to_event entails some time origin, not any particular one, so a
+    form-keyed fallback gets duration-of-response rows wrong. It is not
+    reference_entailed, so this falls out of the general rule."""
     broken = copy.deepcopy(docs)
     entry = _template_for(broken, "time_to_event")
     entry["reference_fallback"] = "randomisation"
@@ -664,9 +654,8 @@ def test_reference_fallback_on_time_to_event_is_an_error(docs):
 
 
 def test_shipped_reference_fallbacks_are_all_definitional(docs):
-    """Positive check: every fallback the shipped file actually carries sits
-    on a reference_entailed form whose template renders {reference} -- the
-    bar docs/USDM_PROJECTION_INTEGRITY_SPEC.md change 1 sets."""
+    """Every fallback the shipped file carries sits on a reference_entailed
+    form whose template renders {reference}."""
     entailed = {t["id"] for t in docs["form"]["terms"] if t.get("reference_entailed")}
     fallback_forms = {
         t["form"] for t in docs["usdm_templates"]["templates"] if t.get("reference_fallback")

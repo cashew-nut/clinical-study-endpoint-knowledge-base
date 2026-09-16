@@ -1,1 +1,1 @@
-"""Vocabulary sampling / validation (build order step 2)."""
+"""Vocabulary schema, validation, loading and sampling."""

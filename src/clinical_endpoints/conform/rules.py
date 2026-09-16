@@ -1,5 +1,4 @@
-"""Load every vocab.* table the conforming pipeline needs, once per `conform`
-run -- mirrors ta/resolver.py's `TaMapping` / `load_ta_mapping`."""
+"""Load every vocab.* table the conforming pipeline needs, once per run."""
 
 from __future__ import annotations
 
@@ -12,7 +11,6 @@ from clinical_endpoints.conform.cascade import Cascade, load_cascade, load_confi
 from clinical_endpoints.conform.direction import DirectionRules, load_direction_rules
 from clinical_endpoints.conform.matcher import MatchSettings, TermMatcher
 
-# dimension -> the vocab.* table holding its scalar columns (DimensionSpec.table).
 _DIMENSION_TABLE = {
     "form": "forms",
     "measurement": "measurements",
@@ -31,10 +29,8 @@ class FormDisambiguationRule:
 
 @dataclass(frozen=True)
 class NamedEndpointDefinition:
-    """One named_endpoints.yaml definition: what a literature name (PFS, OS,
-    DFS...) resolves to. A field is None where the definition does not pin
-    it -- `event_id` is None for `efs`, for instance -- and conform_row must
-    treat that exactly as if the definition were silent on that field."""
+    """One named_endpoints.yaml definition. A None field means the definition
+    does not pin that dimension."""
 
     id: str
     form_id: str | None

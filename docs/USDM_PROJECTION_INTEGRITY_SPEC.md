@@ -6,10 +6,9 @@
 
 Companion to `docs/EVENT_SEMANTICS_SPEC.md`, written from the same first live
 validation of the USDM projection (NCT01777919, 2026-08-20) and the external
-USDM review of that payload. The event spec fixes
-what the time-to-event sentences *say*; this one fixes how the projection
-*accounts for what it says* — defaults, provenance flags, the extension
-layout, and the envelope boundary.
+USDM review of that payload. The event spec fixes what the time-to-event
+sentences say. This one fixes how the projection accounts for what it says:
+defaults, provenance flags, the extension layout, and the envelope boundary.
 
 Read alongside:
 
@@ -25,7 +24,7 @@ Read alongside:
 
 The wrapper envelope already states the governing principle: **"a placeholder
 that is not announced is a fabricated clinical fact."** The validation showed
-the endpoint level does not yet live by it.
+the endpoint level did not yet follow it.
 
 ### 1. A rendered default the document nowhere admits
 
@@ -42,20 +41,20 @@ NCT01777919's primary endpoint carries, in one payload:
 The conforming pipeline honestly recorded that the source states no time
 origin. The template layer then applied `reference_fallback: randomisation`
 (`usdm_templates.yaml`), minted a `tag:reference` host carrying
-"randomisation", rendered it into `label` — and flagged nothing. The external
-reviewer read this as "the pipeline failed to extract a stated value"; the
-truth is worse in one way (the value was *asserted*, not extracted) and better
-in another (the decomposition never lied). Three concrete failures:
+"randomisation", rendered it into `label`, and flagged nothing. The external
+reviewer read this as the pipeline failing to extract a stated value. In fact
+the value was asserted rather than extracted, and the decomposition stayed
+correct. Three concrete failures:
 
 * **Unannounced synthesis.** The endpoint's own extensions flag `derived:
-  purpose` but not the derived reference — so a consumer auditing the payload
+  purpose` but not the derived reference, so a consumer auditing the payload
   finds one synthesized attribute and misses the other.
 * **A contradiction with no arbiter.** Host says randomisation, decomposition
   says not_stated, and nothing in the document or the docs states which
   representation is authoritative or why they may differ.
-* **Tier inflation.** The fallback-filled endpoint counts as `templated` —
-  "every required tag resolved" — so `endpoints usdm coverage` cannot see how
-  much of the templated tier is standing on defaults.
+* **Tier inflation.** The fallback-filled endpoint counts as `templated`,
+  since every required tag resolved, so `endpoints usdm coverage` cannot see
+  how much of the templated tier stands on defaults.
 
 The form-keyed fallback is also simply wrong for part of its range: every
 `time_to_event` row got randomisation, including duration-of-response rows
@@ -71,8 +70,8 @@ default must use.
 and `derived: objective` to every objective. As a contract it is too thin to
 audit against: it cannot name a second derived attribute (see above), it
 cannot distinguish "derived from the measurement's domain" from "fell through
-to `_default`", and an external reviewer misread it — which is evidence about
-the flag, not just the reviewer.
+to `_default`", and an external reviewer misread it, which is evidence about
+the flag rather than only about the reviewer.
 
 ### 3. The timepoint dimension is projected below its own semantics
 
@@ -80,59 +79,58 @@ the flag, not just the reviewer.
 observation period of that length … NOT an assessment at that timepoint"*,
 and that an event-driven duration is *"an administrative estimate … not the
 endpoint's timepoint."* The projection flattens all eleven categories to
-`timepointPattern`/`timepointRaw` and a rendered phrase — so a consumer must
-re-derive from the pattern id what the vocabulary already states, and the
-extracted structure (`{"value": 6, "unit": "month"}`, sitting in
-`conformed.endpoints.timepoint_extracted`) is not projected at all. The
-external review's "observation window" point is right, and the fix is mostly
-to stop discarding information the pipeline already has.
+`timepointPattern`, `timepointRaw` and a rendered phrase, so a consumer must
+re-derive from the pattern id what the vocabulary already states. The extracted
+structure, `{"value": 6, "unit": "month"}` sitting in
+`conformed.endpoints.timepoint_extracted`, is not projected at all. The
+external review's observation-window point is right, and the fix is mostly to
+stop discarding information the pipeline already has.
 
 ### 4. The module envelope does not identify its own boundary
 
-`envelope=module` deliberately serves USDM class instances inside a
-non-USDM shape — that was a documented design decision, and `envelope=wrapper`
-exists precisely for consumers who need a schema-valid `Wrapper`. But the
-module payload itself says nothing machine-readable about which of its keys
-are USDM and which are platform envelope; `systemName` is the only hint. The
-external reviewer concluded the top level was pretending to be USDM. Half of
-that critique misfires — `usdmVersion` and `systemName` are fields *of the
-USDM Wrapper itself*, borrowed knowingly — but a boundary that a competent
-reviewer cannot find from the artefact alone is underdocumented by
-definition.
+`envelope=module` serves USDM class instances inside a non-USDM shape by
+design, and `envelope=wrapper` exists for consumers who need a schema-valid
+`Wrapper`. But the module payload says nothing machine-readable about which of
+its keys are USDM and which are platform envelope, with `systemName` the only
+hint. The external reviewer concluded the top level was pretending to be USDM.
+Half of that critique misfires, since `usdmVersion` and `systemName` are fields
+of the USDM Wrapper itself and are borrowed knowingly. The other half stands: a
+boundary a competent reviewer cannot find from the artefact alone is
+underdocumented.
 
 ### 5. Hosts and decomposition have no stated contract
 
 The `tag:*` extension attributes exist because `ParameterMap.reference` must
-point at a real instance attribute inside the document (the API spec's
-`usdm:ref` constraint) — they are rendering hosts, not a second copy of the
-decomposition. But nothing states that: the reviewer read `tag:reference` /
-`tag:timepoint` as duplicated source data, and defect 1 shows the two layers
-*can* silently disagree, which is exactly what an unstated contract permits.
+point at a real instance attribute inside the document, the API spec's
+`usdm:ref` constraint. They are rendering hosts rather than a second copy of
+the decomposition, and nothing states that. The reviewer read `tag:reference`
+and `tag:timepoint` as duplicated source data, and defect 1 shows the two
+layers can disagree, which is what an unstated contract permits.
 
 ## The changes
 
 ### 1. Fallback policy: definitional or dead, and always announced
 
 A template may declare a fallback only where the **form itself entails the
-value** — where the sentence frame's meaning, not corpus convention, supplies
-it. That test keeps exactly the change-family `reference_fallback:
-patient_baseline` ("Change from baseline in X" whose registry wording omitted
-the word "baseline" still *means* change from the participant's own baseline;
-the form was matched from that meaning). It kills the deleted time-to-event
-fallback for good (`time_to_event` entails *some* origin, not any particular
-one — which is why it produced wrong answers for DoR), and it is the bar any
-future fallback proposal must argue past.
+value**, meaning the sentence frame supplies it rather than corpus convention.
+That test keeps the change-family `reference_fallback: patient_baseline`,
+because "Change from baseline in X" whose registry wording omitted the word
+"baseline" still means change from the participant's own baseline, and the form
+was matched from that meaning. It rules out the deleted time-to-event fallback,
+because `time_to_event` entails some origin rather than any particular one,
+which is why it produced wrong answers for DoR. It is the bar any future
+fallback proposal must argue past.
 
-Every applied fallback is announced on the endpoint (next section), and the
-consistency invariant below makes an unannounced one a test failure rather
-than a code-review hope.
+Every applied fallback is announced on the endpoint, as the next section
+describes, and the consistency invariant below makes an unannounced one a test
+failure.
 
-Tier accounting: a definitional fallback keeps `templated` — the value is a
-resolved decision of the vocabulary, announced — but `endpoints usdm
+Tier accounting: a definitional fallback keeps `templated`, since the value is
+a resolved decision of the vocabulary and is announced. `endpoints usdm
 coverage` gains a per-tag defaulted count (`templated: 7, of which reference
-defaulted: 3`), so the tier can no longer hide its scaffolding. If a future
+defaulted: 3`), so the tier cannot hide its scaffolding. If a future
 measurement shows the defaulted share dominating, that is the trigger to
-revisit the tier definition, with data.
+revisit the tier definition.
 
 ### 2. `derived` becomes a per-attribute record
 
@@ -143,26 +141,26 @@ Contract, replacing the current constant:
   checks: `purpose`, `reference`, `objective` today; the set grows only by
   spec change.
 * Emitted **only when synthesis actually happened**: `purpose` on every
-  endpoint (it is always derived from the domain — current behaviour, now
-  stated), `reference` only on endpoints whose reference host came from a
+  endpoint, since it is always derived from the domain, which is current
+  behaviour now stated, `reference` only on endpoints whose reference host came from a
   fallback, `objective` on every synthesized objective (all of them, today).
 * The decomposition remains the conforming pipeline's truth and is never
   edited to match a rendering: `reference: not_stated` stays in the
   decomposition of a fallback-filled endpoint, the host carries the rendered
   default, and the `derived: reference` flag is the arbiter that says which is
-  which. This resolves defect 1's contradiction by *declaring* the
-  relationship rather than papering over it.
+  which. This resolves defect 1's contradiction by declaring the relationship
+  rather than hiding it.
 
 The external review proposed a richer `derivation` class (method,
 confidence). The method and confidence of every matched dimension already
 exist in `conformed.endpoints`; they are projected by the profile change
-below, where they describe *matching*. `derived` stays a flat flag describing
-*synthesis* — two different questions, kept apart on purpose.
+below, where they describe matching. `derived` stays a flat flag describing
+synthesis, which is a separate question.
 
 ### 3. Timepoint role and structure in the decomposition
 
 `timepoint_patterns.yaml` gains a `role` field per pattern, closed set,
-validator-checked — vocabulary-owned because the semantics are already
+validator-checked and vocabulary-owned, because the semantics are already
 written there in prose:
 
 | role | patterns |
@@ -176,25 +174,25 @@ The decomposition then carries `timepointRole` alongside
 `timepointPattern`/`timepointRaw`, plus the extracted fields the pipeline
 already parsed and the projection currently drops: `timepointValue`,
 `timepointUnit`, and the pattern-specific extras (`timepointValueEnd`,
-`timepointWindowPm`, `timepointAnchor`, …) when present — uniform
-`valueString`, the same one-shape rule the API spec already defended for tag
-hosts. This is the external review's "structured duration" adopted without a
-new duration class: `{"value": 6, "unit": "month"}` was parsed months ago;
-it just never left the warehouse.
+`timepointWindowPm`, `timepointAnchor` and so on) when present, as uniform
+`valueString`, the same one-shape rule the API spec already defends for tag
+hosts. This adopts the external review's structured duration without a new
+duration class: `{"value": 6, "unit": "month"}` was parsed months ago and never
+left the warehouse.
 
-Rendering is unchanged in this spec — "over 6 months" is defensible English
-for an observation window, and the event spec already touches the
-time-to-event sentence. A later refinement ("…, assessed over 6 months" for
+Rendering is unchanged in this spec. "Over 6 months" is defensible English for
+an observation window, and the event spec already touches the time-to-event
+sentence. A later refinement ("…, assessed over 6 months" for
 `observation_window` under event-family forms) becomes a one-line rule in
 `render_timepoint` once real payloads justify it.
 
 ### 4. Extension profile v2: two classes, one contract
 
-The single `decomposition` block currently mixes three kinds of fact:
-what the endpoint *means*, how the pipeline *decided* that, and bookkeeping.
-With the event spec adding fields (`event`, `namedEndpoint`,
-`eventMatchMethod`) this is the moment to regroup once, under a bumped
-namespace — `urn:x-endpoints-kb:usdm:ext:v2:*` — rather than twice:
+The single `decomposition` block currently mixes three kinds of fact: what the
+endpoint means, how the pipeline decided that, and bookkeeping. With the event
+spec adding `event`, `namedEndpoint` and `eventMatchMethod`, this is the moment
+to regroup once under a bumped namespace, `urn:x-endpoints-kb:usdm:ext:v2:*`,
+rather than twice:
 
 | extension | carries |
 |---|---|
@@ -203,10 +201,9 @@ namespace — `urn:x-endpoints-kb:usdm:ext:v2:*` — rather than twice:
 | `derived` (n×) | synthesis flags, per attribute (change 2) |
 | `tag:*` (n×) | rendering hosts (contract below) |
 
-Confidences join the payload for the first time — they were always in
-`conformed.endpoints`, and "which of these decompositions were semantic-
-fallback matches" is a question a knowledge-base consumer legitimately asks
-of the document itself.
+Confidences join the payload for the first time. They were always in
+`conformed.endpoints`, and which decompositions were semantic-fallback matches
+is a question a knowledge-base consumer asks of the document itself.
 
 Mapping to the external review's proposed five groups, so the disposition is
 explicit: its `decomposition` ≈ `decomposition`; `normalisation` and
@@ -220,36 +217,35 @@ containers.
 
 **The host contract, stated at last:** a `tag:<name>` extension exists so a
 `ParameterMap` has an in-document attribute to reference; its `valueString`
-is the *rendered sentence fragment* (an inline label, a rendered phrase),
-while the decomposition carries the *vocabulary id*. The two are different
+is the rendered sentence fragment, an inline label or a rendered phrase, while
+the decomposition carries the vocabulary id. The two are different
 representations of the same resolved decision, and the invariant is:
 
 > For every tag host on an endpoint, the host value equals the rendering of
-> the corresponding decomposition field — unless a `derived` flag names that
+> the corresponding decomposition field, unless a `derived` flag names that
 > tag, in which case the host carries the announced default.
 
-That invariant is a projection test, run over every fixture payload. It is
-what makes defect 1 structurally unrepeatable: a fallback that forgets its
-flag now fails CI instead of shipping a quiet contradiction.
+That invariant is a projection test, run over every fixture payload, so a
+fallback that forgets its flag fails CI rather than shipping a contradiction.
 
 ### 5. The envelope names its boundary
 
-`envelope=module` keeps its shape — the split between a small module payload
-and a schema-valid `Wrapper` is working as designed, and nesting the module's
-content under a `studyDefinition` key (the review's proposal) would break
+`envelope=module` keeps its shape. The split between a small module payload
+and a schema-valid `Wrapper` works as designed, and nesting the module's
+content under a `studyDefinition` key, as the review proposed, would break
 every consumer of the flat shape to duplicate what `envelope=wrapper` already
 provides. Three additions make the boundary auditable instead of implied:
 
 * The module payload gains `"profile": "urn:x-endpoints-kb:usdm:module:v2"`
-  as its first key — a machine-readable statement that this envelope is the
-  knowledge-base module shape, not a USDM class. The wrapper envelope carries
+  as its first key, a machine-readable statement that this envelope is the
+  knowledge-base module shape rather than a USDM class. The wrapper envelope carries
   no profile key; it is the standard's own shape.
 * The OpenAPI description and README state the boundary in one sentence each:
   *module = USDM class instances (`objectives[]`, `dictionaries[]`,
   `bcSurrogates[]`, `analysisPopulations[]`) inside a knowledge-base
   envelope (`profile`, `study`, `provenance`); wrapper = canonical USDM.*
-  `usdmVersion` and `systemName` are retained in the module deliberately —
-  they are the USDM `Wrapper`'s own header fields, and dropping them would
+  `usdmVersion` and `systemName` are retained in the module because they are
+  the USDM `Wrapper`'s own header fields, and dropping them would
   make the module less standard-adjacent, not more.
 * `provenance` is documented as envelope metadata in both envelopes (it
   already sits outside `study` in the wrapper), and gains the per-tag
@@ -261,20 +257,20 @@ Point by point, so nothing is silently dropped:
 
 | review point | verdict | where |
 |---|---|---|
-| PFS/OS decompositions clinically wrong; event vs assessment | **accepted** — the priority defect | event spec |
-| `tag:*` extensions duplicate the decomposition | **reframed** — they are rendering hosts required by the `usdm:ref` constraint; the real defect was the unstated contract and the silent divergence | change 4/5 here |
-| `not_stated` while the label says "randomisation" | **accepted, recaused** — the source genuinely states nothing; the label was an unannounced fallback | event spec deletes it; changes 1–2 govern survivors |
-| "over 6 months" is a window, not a timepoint | **accepted** — the vocabulary already says so; project the role and the parsed structure | change 3 |
-| replace generic `derived` with contentOrigin/derivation | **adapted** — per-attribute `derived` flags; match method/confidence projected separately in `conformance` | changes 2, 4 |
-| envelope: separate USDM payload from platform metadata | **adapted** — boundary made explicit via `profile` + docs; nesting rejected because `envelope=wrapper` already serves that need; `usdmVersion`/`systemName` defended as Wrapper fields | change 5 |
-| five-group extension profile | **adapted** — collapsed to `decomposition` + `conformance` + flags + hosts | change 4 |
+| PFS/OS decompositions clinically wrong; event vs assessment | **accepted**, the priority defect | event spec |
+| `tag:*` extensions duplicate the decomposition | **reframed**: they are rendering hosts required by the `usdm:ref` constraint, and the defect was the unstated contract and the silent divergence | change 4/5 here |
+| `not_stated` while the label says "randomisation" | **accepted, recaused**: the source states nothing, and the label was an unannounced fallback | event spec deletes it; changes 1–2 govern survivors |
+| "over 6 months" is a window, not a timepoint | **accepted**: the vocabulary already says so, so project the role and the parsed structure | change 3 |
+| replace generic `derived` with contentOrigin/derivation | **adapted**: per-attribute `derived` flags, with match method and confidence projected separately in `conformance` | changes 2, 4 |
+| envelope: separate USDM payload from platform metadata | **adapted**: boundary made explicit via `profile` and docs; nesting rejected because `envelope=wrapper` already serves that need; `usdmVersion` and `systemName` retained as Wrapper fields | change 5 |
+| five-group extension profile | **adapted**: collapsed to `decomposition`, `conformance`, flags and hosts | change 4 |
 
 ## Compatibility
 
 One flag day, before any external consumer exists: the extension namespace
 moves `v1 → v2` wholesale (decomposition, conformance, derived, `tag:*`, the
-wrapper's `masking`/`ageRangeSource`), the module envelope gains `profile`,
-and the ETag changes — which it does on any payload change, by design.
+wrapper's `masking` and `ageRangeSource`), the module envelope gains
+`profile`, and the ETag changes, as it does on any payload change.
 Determinism, id ordering, and the ETag's exclusion of `projectedAt` are
 untouched. `vocab.usdm_templates` drops the `reference_fallback` column for
 `time_to_event` only if the event spec lands first; the two specs share the
@@ -287,8 +283,8 @@ flag-day release either way.
 * a `timepoint_patterns.yaml` pattern with no `role`, or a `role` outside the
   closed set;
 * a `reference_fallback` on a form whose template does not render
-  `{reference}`, or on a form outside the change-from-a-reference family —
-  the "definitional or dead" test, made mechanical;
+  `{reference}`, or on a form outside the change-from-a-reference family,
+  which makes the "definitional or dead" test mechanical;
 * (carried from the event spec) `reference_fallback` on `time_to_event`.
 
 ## Tests
@@ -306,23 +302,22 @@ flag-day release either way.
   module's own documented shape.
 * `endpoints usdm coverage` reports defaulted-tag counts, and the sum of
   tiers still equals the raw row count.
-* Schema conformance, tag bijection, reference resolvability, determinism —
-  the standing suite — green under v2 URNs.
+* Schema conformance, tag bijection, reference resolvability and determinism,
+  the standing suite, green under v2 URNs.
 
 ## Standing constraints
 
 * **Do not edit the decomposition to agree with a rendering.** The
-  decomposition is the pipeline's sworn testimony; renderings that go beyond
+  decomposition is what the pipeline resolved, and renderings that go beyond
   it carry flags.
 * **Do not add a fallback that the form's own meaning does not entail.**
   Corpus convention ("TTE endpoints usually start at randomisation") is the
   named-endpoint layer's job, where it is per-definition, cited, and
   conditioned on the study being randomised.
 * **Do not silence the defaulted counts to keep `templated` looking high.**
-  The count exists to be looked at; the tier definition changes only on
-  evidence, by spec.
-* **Do not nest the module under a `studyDefinition` key.** Consumers who
-  need canonical USDM have `envelope=wrapper`; two half-canonical envelopes
-  would be worse than one honest module and one standard Wrapper.
+  The tier definition changes only on evidence, by spec.
+* **Do not nest the module under a `studyDefinition` key.** Consumers who need
+  canonical USDM have `envelope=wrapper`, and two half-canonical envelopes
+  would be worse than one module and one standard Wrapper.
 * **Do not bump the extension namespace piecemeal.** v2 lands once, with both
   specs, or not yet.

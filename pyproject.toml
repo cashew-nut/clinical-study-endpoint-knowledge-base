@@ -11,19 +11,13 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "requests>=2.31.0",
     "pyyaml>=6.0",
-    # Bulk-loading raw/conformed rows through an Arrow table instead of
-    # DuckDB's scalar parameter binding (db.py's `bulk_insert`) -- with
-    # neither pyarrow nor pandas installed, DuckDB's Python client re-probes
-    # for them on every bound value, and a failed `import` isn't cached by
-    # CPython, so that probe re-walks the whole of sys.path per value. That
-    # made executemany-based inserts the dominant cost of both `pull` and
-    # `conform` on any real-sized warehouse.
+    # Bulk inserts go through Arrow (db.py `bulk_insert`); DuckDB's scalar
+    # parameter binding is very slow without pyarrow or pandas installed.
     "pyarrow>=15.0.0",
 ]
 
 [project.optional-dependencies]
-# The USDM API only. Kept optional so the pipeline installs without a web stack;
-# `endpoints serve` tells you to add it when it is missing.
+# `endpoints serve` only.
 serve = [
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
