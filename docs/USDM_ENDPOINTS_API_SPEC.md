@@ -46,18 +46,16 @@ is misleading:
   header row and **nothing else**. No class, attribute, relationship or CT term
   changed between 3.13.0 and 4.0.0.
 
-So "implement USDM 4.0" is, for the endpoints module, a commitment to three
-things and no more: the `/v4` route prefix, `usdmVersion: "4.0.0"` in the
-payload, and conformance to the 3.13.0-era class shapes. That is good news —
-it means the model surface below is stable and small — but it should be said
-out loud so nobody goes looking for 4.0-specific endpoint semantics that do
-not exist.
+So for the endpoints module, implementing USDM 4.0 commits to three things and
+no more: the `/v4` route prefix, `usdmVersion: "4.0.0"` in the payload, and
+conformance to the 3.13.0-era class shapes. The model surface below is
+therefore stable and small, and there are no 4.0-specific endpoint semantics to
+look for.
 
-Two constants come from the published example documents rather than from
-guesswork, and both are used verbatim by all three: `codeSystem` is
-`"http://www.cdisc.org"` and `codeSystemVersion` is `"2024-09-27"`. They stay
-configuration in `usdm/codes.py`, but the defaults are now sourced, not
-invented.
+Two constants come from the published example documents and are used verbatim
+by all three: `codeSystem` is `"http://www.cdisc.org"` and `codeSystemVersion`
+is `"2024-09-27"`. They stay configuration in `usdm/codes.py`, with sourced
+defaults.
 
 Both source repos are permissively licensed for what this needs, with one
 wrinkle: `usdm_api` `main` is MIT (relicensed under issue #23), but the
@@ -82,10 +80,10 @@ USDM's endpoint-related classes, with their required attributes (from
 In scope: `Objective`, `Endpoint`, `SyntaxTemplate`, `SyntaxTemplateDictionary`,
 `ParameterMap`, `Code`, `ExtensionAttribute`.
 
-Out of scope for phase 1: `Estimand`, `AnalysisPopulation`, `IntercurrentEvent`.
-They are the natural phase 3 (see [Phasing](#phasing)) — an estimand needs an
-analysis population, intervention ids and intercurrent-event handling, none of
-which a registry record states.
+Out of scope for phase 1: `Estimand`, `AnalysisPopulation` and
+`IntercurrentEvent`. They are phase 3, as [Phasing](#phasing) records, because
+an estimand needs an analysis population, intervention ids and
+intercurrent-event handling, none of which a registry record states.
 
 Explicitly **not** in scope: the write half of the USDM API. `POST`/`PUT
 /v4/studyDefinitions` make this a study definitions repository. This is a
@@ -94,13 +92,12 @@ read-only projection of registry data and should never pretend otherwise.
 ## The central idea: form is the sentence, the rest are tags
 
 `forms.yaml` opens by stating that form answers "what kind of number is this
-endpoint?", never "what was measured?" — and that keeping form orthogonal to
-measurement is the point of the whole dimension. Read that one step further and
-it says something stronger:
+endpoint?" and never "what was measured?", and that keeping form orthogonal to
+measurement is what the dimension is for. One step further:
 
-> **A form *is* a sentence frame.** "Change from baseline in X at T" and
+> **A form is a sentence frame.** "Change from baseline in X at T" and
 > "Proportion of participants achieving θ in X at T" are not descriptions of
-> forms; they are the forms, written out.
+> forms, they are the forms written out.
 
 Which gives the mapping the entire spec rests on:
 
@@ -113,15 +110,15 @@ direction                  ->  neither: metadata (see below)
 ```
 
 `conformed.endpoints` already carries every one of those as a typed column with
-a match method and a confidence. The USDM projection is therefore not an
-inference step — it is a *rendering* step over decisions the conforming
-pipeline already made and recorded. Nothing in this spec re-parses registry
-text. If a dimension did not resolve during `conform`, its tag does not resolve
-here either, and the template degrades in a defined way rather than guessing.
+a match method and a confidence. The USDM projection is therefore a rendering
+step over decisions the conforming pipeline already made and recorded, not an
+inference step. Nothing in this spec re-parses registry text. If a dimension
+did not resolve during `conform`, its tag does not resolve here either, and the
+template degrades in a defined way rather than guessing.
 
 **Direction is not a tag.** It is derived, never matched (`directions.yaml`),
 and it is a property of the endpoint's interpretation, not a constituent of its
-name — "decrease is better" belongs in no endpoint sentence. It rides in
+name, and "decrease is better" belongs in no endpoint sentence. It rides in
 `extensionAttributes` instead. Putting it in the text would also make two
 identical endpoints render differently in two therapeutic areas, because
 `direction_by_ta` exists.
@@ -174,9 +171,9 @@ emits
 <p>Change from <usdm:tag name="reference"/> in <usdm:tag name="measurement"/> at <usdm:tag name="timepoint"/></p>
 ```
 
-and the corresponding `ParameterMap.tag` values are the bare names —
-`reference`, `measurement`, `timepoint` — not the markup. Literal text is
-HTML-escaped on emission; the tag elements are not.
+and the corresponding `ParameterMap.tag` values are the bare names
+`reference`, `measurement` and `timepoint`, not the markup. Literal text is
+HTML-escaped on emission and the tag elements are not.
 
 ## `vocab/usdm_templates.yaml` (new file)
 
@@ -241,15 +238,15 @@ One per form id in `forms.yaml`. Required tags are outside brackets.
 | `not_stated` | `{measurement}[ at {timepoint}]` |
 | `descriptive` | *(none — always verbatim tier)* |
 
-Two of these deserve a flag rather than a quiet fudge:
+Two of these carry a flag rather than an approximation:
 
-* **`correlation` is under-modelled.** A correlation endpoint has two variables;
-  `conformed.endpoints` has one `measurement_id`. The template says "involving"
-  because the honest alternative — borrowing `{reference}` for the second
-  variable — would misuse a dimension whose `kind` values are `time_origin`,
-  `value_reference` and `external_standard`, none of which is "the other thing
-  we correlated against". Correlation endpoints render partially by design, and
-  fixing it means a schema change, not a template change.
+* **`correlation` is under-modelled.** A correlation endpoint has two variables
+  and `conformed.endpoints` has one `measurement_id`. The template says
+  "involving" because the alternative, borrowing `{reference}` for the second
+  variable, would misuse a dimension whose `kind` values are `time_origin`,
+  `value_reference` and `external_standard`, none of which means the other
+  thing correlated against. Correlation endpoints render partially by design,
+  and fixing it means a schema change rather than a template change.
 * **`descriptive` has no template on purpose.** `forms.yaml` uses it for rows
   that are not a computable statistic, and `analysable: false` already marks
   them. Generating a confident sentence for registry boilerplate is worse than
@@ -285,22 +282,22 @@ projection has to give every tag value a real USDM home:
 
 Six, not the seven an earlier draft listed. **The per-outcome analysis
 population is not a tag**, because it has no good position in an endpoint
-sentence — "…at Week 16 in Safety population" — and its real USDM home is
+sentence, as "…at Week 16 in Safety population" shows, and its USDM home is
 `Estimand.analysisPopulationId`, which needs the estimand work. It is still
 projected: each distinct `population` string becomes an `AnalysisPopulation` on
-the study design, linked from the endpoint's decomposition extension. Carried,
-not rendered.
+the study design, linked from the endpoint's decomposition extension. Carried
+rather than rendered.
 
-Three decisions inside that table are worth defending.
+Three decisions inside that table need stating.
 
 **Measurements become `BiomedicalConceptSurrogate`s, not `BiomedicalConcept`s.**
 A `BiomedicalConcept` requires `code: AliasCode` and a `reference` into the
 CDISC Library (`/mdr/bc/packages/2025-04-01/biomedicalconcepts/C28421` in the
 pilot). `pasi` and `hba1c` are this project's vocabulary, not CDISC Library
-concepts, and minting fake C-codes for them would be a fabrication that
-survives into every downstream consumer. `BiomedicalConceptSurrogate` is the
-class USDM provides for exactly this case — `name`, `label`, `description`, and
-an optional free `reference` — and the pilot uses it the same way (`"reference":
+concepts, and minting C-codes for them would be a fabrication that survives
+into every downstream consumer. `BiomedicalConceptSurrogate` is the class USDM
+provides for this case, with `name`, `label`, `description` and an optional
+free `reference`, and the pilot uses it the same way (`"reference":
 "None set"`). Ours carries the vocabulary URI instead of "None set", which is
 strictly more information than the reference implementation ships.
 
@@ -319,8 +316,8 @@ means one code path in both the projector and any consumer.
 
 ### Labels are not sentence fragments
 
-The obvious rendering rule — "the tag renders as the term's `label`" — breaks
-on inspection of `references.yaml`:
+The obvious rendering rule, that a tag renders as the term's `label`, breaks on
+inspection of `references.yaml`:
 
 ```
 'First dose / start of treatment'      'Nadir (smallest value on study)'
@@ -328,13 +325,13 @@ on inspection of `references.yaml`:
 'Pre-dose value (same day)'            'Reference not determinable'
 ```
 
-These are *display* labels for a review table, and several are unusable inside
-a sentence: "Time from First dose / start of treatment to death" is not
-English, and "Change from No reference (absolute quantity) in FEV1" is worse
-than no rendering at all.
+These are display labels for a review table, and several are unusable inside a
+sentence: "Time from First dose / start of treatment to death" is not English,
+and "Change from No reference (absolute quantity) in FEV1" is worse than no
+rendering at all.
 
-So every term that can fill a tag needs an **`inline_label`** — the
-sentence-fragment form — with `label` as the fallback only where the two
+So every term that can fill a tag needs an **`inline_label`**, the
+sentence-fragment form, with `label` as the fallback only where the two
 coincide (`Randomisation`, `Screening value`). Two places it could live:
 
 | | in `vocab/*.yaml` per term | in `usdm_templates.yaml` as an override table |
@@ -344,22 +341,22 @@ coincide (`Randomisation`, `Screening value`). Two places it could live:
 | reuse | any future renderer gets it free | USDM-specific |
 
 Put it **in the vocabulary files**. An inline form of a term is a fact about
-the term, not about USDM, and the alternative is a second parallel term list
-that drifts — exactly the failure mode `matching.yaml` exists to prevent.
+the term rather than about USDM, and the alternative is a second parallel term
+list that drifts, the failure mode `matching.yaml` exists to prevent.
 `vocab validate` then warns (not errors) on any term reachable by a tag whose
 `inline_label` is absent and whose `label` contains `/`, `(`, or a leading
 capital that is not a proper noun.
 
-Terms whose inline form is *nothing* — `references.yaml`'s `none` and
-`not_stated` — declare `inline_label: null`, which makes the tag unresolved and
-drops its optional group. That is the correct reading: "no reference" is the
-absence of a reference, not a phrase to print.
+Terms whose inline form is nothing, `references.yaml`'s `none` and
+`not_stated`, declare `inline_label: null`, which makes the tag unresolved and
+drops its optional group. "No reference" is the absence of a reference rather
+than a phrase to print.
 
 ### Rendering `{timepoint}`
 
 `timepoint_patterns.yaml` already declares, per pattern, the named capture
-groups a parser should populate (`extract:`) — it calls itself the parser spec,
-not just a classifier. That makes the rendering table mechanical:
+groups a parser should populate (`extract:`), calling itself the parser spec
+rather than only a classifier. That makes the rendering table mechanical:
 
 | pattern | extracted | rendered |
 |---|---|---|
@@ -373,7 +370,7 @@ not just a classifier. That makes the rendering table mechanical:
 | `event_driven` | `estimated_max_value`, `estimated_max_unit` | `until the required number of events (up to 36 months)` |
 | `event_relative` | `anchor` | `relative to disease progression` |
 | `baseline_only` | — | `baseline` |
-| `unspecified` | — | **unresolved** — optional group drops |
+| `unspecified` | — | **unresolved**, so the optional group drops |
 
 **The rendered phrase carries its own preposition**, and templates therefore
 write a bare `[ {timepoint}]`. Putting the preposition in the template instead
@@ -391,7 +388,7 @@ to the source string.
 
 Note the interaction `timepoint_patterns.yaml` already warns about: where the
 resolved form disagrees with the timepoint category, **trust the form**. The
-renderer inherits that rule rather than restating it — `baseline_to_timepoint`
+renderer inherits that rule rather than restating it, so `baseline_to_timepoint`
 under a `change_from_baseline` form renders the horizon only, because the
 baseline is already carried by `{reference}`.
 
@@ -404,7 +401,7 @@ has two dictionaries, `IE_Dict` (3 parameter maps, shared by four
 `EligibilityCriterionItem`s) and `AS_Dict` (2 maps).
 
 That example also shows exactly why the shared route does not generalise to
-endpoints. `AS_Dict`'s tags are named `Activity1` and `Activity2` — **numbered,
+endpoints. `AS_Dict`'s tags are named `Activity1` and `Activity2`, **numbered
 because one shared namespace cannot hold two different values under one tag
 name.** With four to six tags per endpoint and ten to thirty endpoints per
 trial, a shared dictionary means `measurement_1 … measurement_30`, and adding a
@@ -430,8 +427,8 @@ which is what every endpoint in all three CDISC examples does today.
 | attribute | content | why |
 |---|---|---|
 | `text` | **the template, tags unresolved**, as an HTML fragment | what CDISC's own examples do |
-| `label` | the fully rendered sentence | CT: *"the short descriptive designation"* — the human reading |
-| `description` | **the registry string, verbatim** | CT: *"a narrative representation"* — and it makes the projection auditable |
+| `label` | the fully rendered sentence | CT: *"the short descriptive designation"*, the human reading |
+| `description` | **the registry string, verbatim** | CT: *"a narrative representation"*, and it makes the projection auditable |
 | `name` | `END1`, `END2`, … | required, non-empty, must be stable; the examples' own convention |
 | `purpose` | from `purpose_by_domain` | required by USDM, absent from registry data, so derived and flagged |
 | `level` | CT `Code`, below | |
@@ -458,8 +455,8 @@ published examples settle it: `text` carries tags.** No inference needed.
 Two smaller conventions come from the same examples and are worth matching
 rather than inventing around:
 
-* `name` is a short mnemonic code — `END1`/`OBJ1` for endpoints and objectives,
-  `IN01` for inclusion criteria — not a slug of the text.
+* `name` is a short mnemonic code, `END1` or `OBJ1` for endpoints and
+  objectives and `IN01` for inclusion criteria, rather than a slug of the text.
 * Unpopulated string attributes are `""`, not `null`, throughout the pilot
   (`"label": ""`, `"purpose": ""`). This projection populates `label` and
   `purpose` on every endpoint, so it never has to choose; but any attribute it
@@ -467,14 +464,14 @@ rather than inventing around:
 
 ## Fidelity tiers: every raw row becomes exactly one Endpoint
 
-The invariant that makes "all endpoints in a trial" honest:
+The invariant behind "all endpoints in a trial":
 
 > **Every row in `raw.design_outcomes` for that NCT ID becomes exactly one USDM
 > `Endpoint`.** Never fewer. A trial whose endpoints did not conform is a trial
-> whose endpoints render less richly — not a trial that appears to have fewer
+> whose endpoints render less richly, not a trial that appears to have fewer
 > endpoints.
 
-This matters because `conform` deliberately routes unresolved rows to
+This matters because `conform` routes unresolved rows to
 `conformed.review_queue` rather than conforming them at low confidence. Serving
 only `conformed.endpoints` would silently drop those rows from the API, and a
 consumer counting primary endpoints would get a wrong answer with no signal.
@@ -491,13 +488,13 @@ The tier is carried per endpoint in `extensionAttributes`, and aggregated by a
 new `endpoints usdm coverage` command. It should be *measured*, not guessed:
 round-two vocabulary coverage is form 76.0%, measurement 64.5%, timepoint
 90.8%, population-weighted over the corpus, but those are per-dimension figures
-over the vocabulary sample and do not compose into a tier mix — the tiers
+over the vocabulary sample and do not compose into a tier mix. The tiers
 depend on joint resolution over the conformed corpus, which no one has counted.
 Ship the counter with phase 1 and quote real numbers afterwards.
 
 ## Levels: the CT mapping
 
-From `USDM_CT.xlsx` at DDF-RA `v4.0.0` — endpoint levels are codelist C188726,
+From `USDM_CT.xlsx` at DDF-RA `v4.0.0`: endpoint levels are codelist C188726,
 objective levels C188725:
 
 | registry `outcome_type` | backend | USDM `Endpoint.level` |
@@ -513,8 +510,8 @@ objective levels C188725:
 **The two backends do not agree on this vocabulary and nothing currently
 normalises it.** `ctgov_api.py` writes lowercase `primary`/`secondary`/`other`;
 `aact.py` runs `SELECT outcomes.*` and passes AACT's title-case values through
-untouched. Any consumer of `raw.design_outcomes.outcome_type` — this API
-included — has to normalise, so the mapping above is a case-insensitive lookup
+untouched. Any consumer of `raw.design_outcomes.outcome_type`, this API
+included, has to normalise, so the mapping above is a case-insensitive lookup
 with an explicit unknown-value error, not a `.lower()` and a prefix match. This
 is a latent defect in the warehouse, not just an API concern: it is worth
 fixing at the ingestion boundary regardless of whether this spec is built.
@@ -532,8 +529,8 @@ they are the two fields most likely to be silently wrong.
 ## Objectives: synthesized, and flagged as such
 
 USDM hangs endpoints off objectives. **Registry records contain no objectives.**
-There is no honest way to source them, so they are synthesized — one per level
-present in the trial — and every synthesized object carries
+There is no way to source them, so they are synthesized, one per level present
+in the trial, and every synthesized object carries
 `urn:x-endpoints-kb:usdm:ext:v2:derived = "objective"` in its extensions.
 
 The objective's text is templated on level and filled from the distinct
@@ -551,7 +548,7 @@ objective_templates:
 carries no dictionary.** `{concept_list}` names several concepts and a
 `ParameterMap` references exactly one instance, so there is nothing for a tag
 to point at. Emitting the tag anyway would leave a `<usdm:tag>` in the text
-with no matching parameter map — a malformed document. All three CDISC
+with no matching parameter map, which is a malformed document. All three CDISC
 examples carry plain prose in `Objective.text` for what is presumably the same
 reason.
 
@@ -561,9 +558,9 @@ level resolved a measurement, the objective falls back to `_unresolved`.
 
 ## Identity: deterministic ids
 
-CDISC's examples use readable sequential ids — `Endpoint_1`, `Objective_2`,
-`Code_622`, `SyntaxTemplateDictionary_1`, `ParameterMap_3` — and this
-projection matches that convention rather than emitting UUIDs, which no
+CDISC's examples use readable sequential ids such as `Endpoint_1`,
+`Objective_2`, `Code_622`, `SyntaxTemplateDictionary_1` and `ParameterMap_3`.
+This projection matches that convention rather than emitting UUIDs, which no
 published USDM document does.
 
 Sequential ids are only as stable as their ordering, so the ordering is fixed
@@ -571,27 +568,27 @@ and content-derived:
 
 | object | ordering key |
 |---|---|
-| `Endpoint_N` | `(level rank, conformed endpoint_id)` — the content hash, ascending |
+| `Endpoint_N` | `(level rank, conformed endpoint_id)`, the content hash ascending |
 | `Objective_N` | level rank: primary, secondary, exploratory |
 | `SyntaxTemplateDictionary_N`, `ParameterMap_N` | their endpoint's ordinal, then tag order in the template |
 | `BiomedicalConceptSurrogate_N` | distinct measurement id, ascending |
 | `Code_N` | first use, in document order |
 
-`conform` already refuses random ids — `_row_id` is a content hash so that
+`conform` already refuses random ids: `_row_id` is a content hash, so
 re-running on unchanged input yields the same `endpoint_id`. This inherits
-that: same warehouse state ⇒ byte-identical response, diffable across pulls,
-cacheable behind an ETag, safe as a golden fixture.
+that, so the same warehouse state gives a byte-identical response, diffable
+across pulls, cacheable behind an ETag and safe as a golden fixture.
 
-The one thing sequential ids cannot do is survive a *changed* endpoint set:
-registering one new outcome shifts every ordinal after it. So the durable
-identity — the `endpoint_id` content hash — travels in the endpoint's
-extensions, and consumers who need to track an endpoint across pulls are
-pointed at that, not at `Endpoint_7`.
+Sequential ids cannot survive a changed endpoint set, since registering one new
+outcome shifts every ordinal after it. So the durable identity, the
+`endpoint_id` content hash, travels in the endpoint's extensions, and consumers
+tracking an endpoint across pulls are pointed at that rather than at
+`Endpoint_7`.
 
 ## Extension attributes: the decomposition rides along
 
-`ExtensionAttribute` is USDM's sanctioned escape hatch, and it is exactly the
-right vehicle: a standards-only consumer ignores it, while a consumer of *this*
+`ExtensionAttribute` is USDM's sanctioned escape hatch, and it is the right
+vehicle: a standards-only consumer ignores it, while a consumer of this
 warehouse gets the full decomposition without a second call.
 
 **Amended by `docs/USDM_PROJECTION_INTEGRITY_SPEC.md`, now implemented.** The
@@ -602,13 +599,13 @@ whatever structured fields the pattern parsed, `threshold*`, `analysable`,
 `analysisPopulationId`); `conformance` carries how confidently and by what
 method each dimension was decided (`formMatchMethod`/`Confidence`,
 `measurementMatchMethod`/`Confidence`, `referenceMatchMethod`/`Confidence`,
-`eventMatchMethod`/`Confidence`, `fidelity`, `reviewReason`, `sourceRowId`) --
-two different questions, kept in two extension classes rather than one. A
+`eventMatchMethod`/`Confidence`, `fidelity`, `reviewReason`, `sourceRowId`).
+Two different questions, kept in two extension classes rather than one. A
 `derived` flag rides alongside, once per synthesized or defaulted attribute
 (`purpose`, `reference`, `objective`), not a single blanket flag per endpoint.
 `threshold` is rendered as a plain string (`"≥75%"`) on both the `tag:threshold`
-host and nowhere else in `decomposition` beyond its comparator/value/unit
-fields -- there is no `valueQuantity` in the shipped implementation, unlike the
+host and nowhere else in `decomposition` beyond its comparator, value and unit
+fields. There is no `valueQuantity` in the shipped implementation, unlike the
 sketch below.
 
 ```json
@@ -674,16 +671,16 @@ listing of valid parameter names and values"* (C207597). Every
 the same service.
 
 Responses carry `X-USDM-Version: 4.0.0` and an ETag over the payload hash. The
-ETag excludes `provenance.projectedAt` — that is when the response was built,
+ETag excludes `provenance.projectedAt`, which is when the response was built,
 not what it says, and hashing it would make every request a cache miss.
 
 Errors distinguish three states that consumers confuse constantly:
 
 | status | condition |
 |---|---|
-| 404 | NCT id not in `raw.studies` — never pulled |
+| 404 | NCT id not in `raw.studies`, never pulled |
 | 200 + empty `objectives` | pulled, but the trial registered no outcomes |
-| 409 | pulled, but `conform` has not run — `conformed.*` is empty or stale |
+| 409 | pulled, but `conform` has not run, so `conformed.*` is empty or stale |
 
 The 409 matters: silently serving every endpoint at verbatim tier because the
 pipeline was not run would look like catastrophic vocabulary coverage rather
@@ -691,8 +688,8 @@ than a missing build step.
 
 **On keying by NCT id.** USDM's own route is
 `GET /v4/studyDefinitions/{studyId}`, where `studyId` identifies a study *in a
-definitions repository*. This project has no such repository — it has a
-registry mirror, and the identifier its users hold is an NCT id — so the route
+definitions repository*. This project has no such repository. It has a
+registry mirror, and the identifier its users hold is an NCT id, so the route
 keys on that, and the deviation is stated in the OpenAPI description rather
 than hidden. A client holding a USDM study UUID from elsewhere will not find it
 here.
@@ -707,22 +704,22 @@ required attributes are clinical assertions that the original eight columns of
 * `InterventionalStudyDesign.model: Code` — required.
 
 Rather than fill those with placeholders, **the ingestion was extended to
-source them** — see [Where the ingestion had to
-grow](#where-the-ingestion-had-to-grow). Both are published fields on both
-backends, and CDISC's own `ct-gov_mapping.xlsx` states the mapping, so this was
-a data-collection gap rather than a modelling one.
+source them**, as [Where the ingestion had to
+grow](#where-the-ingestion-had-to-grow) describes. Both are published fields on
+both backends, and CDISC's own `ct-gov_mapping.xlsx` states the mapping, so
+this was a data-collection gap rather than a modelling one.
 
-That leaves two envelopes with an honest split:
+That leaves two envelopes, split as follows:
 
-**`envelope=module`** (default) — the endpoints module and nothing else. Small,
+**`envelope=module`** (default) is the endpoints module and nothing else. Small,
 fast, and the right answer for "give me this trial's endpoints": USDM class
 instances (`objectives[]`, `dictionaries[]`, `bcSurrogates[]`,
 `analysisPopulations[]`) inside a knowledge-base envelope (`profile`, `study`,
 `provenance`). Amended by `docs/USDM_PROJECTION_INTEGRITY_SPEC.md`: `profile`
 is the first key, stating that boundary machine-readably rather than leaving
 it implied by `systemName`, and `provenance` gains `defaulted` alongside
-`tiers` -- the per-tag count of endpoints whose value is an announced default,
-not something the source actually stated.
+`tiers`, the per-tag count of endpoints whose value is an announced default
+rather than something the source stated.
 
 ```json
 {
@@ -742,11 +739,11 @@ not something the source actually stated.
 }
 ```
 
-**`envelope=wrapper`** — a full USDM `Wrapper`, valid against the 4.0.0 schema,
+**`envelope=wrapper`** is a full USDM `Wrapper`, valid against the 4.0.0 schema,
 carrying a real `StudyVersion` and `InterventionalStudyDesign` built from the
 extended `raw.*`. Canonical USDM: no `profile` key, because it is the
 standard's own shape and needs no disclaimer. Anything still unsourceable
-(`StudyVersion.rationale`, for one — a registry record has no protocol
+(`StudyVersion.rationale`, for one, since a registry record has no protocol
 rationale) is emitted as `""` and named in `provenance.synthesized[]` and in a
 `CommentAnnotation` on the study version. **A placeholder that is not
 announced is a fabricated clinical fact**, and that rule does not relax just
@@ -754,7 +751,7 @@ because the wrapper now has less to fake.
 
 The NCT ID has a legal USDM home in either envelope:
 `StudyIdentifier(text="NCT04162249", scopeId=<org>)` with an `Organization` for
-ClinicalTrials.gov — both required attributes are sourceable, so this is not a
+ClinicalTrials.gov. Both required attributes are sourceable, so this is not a
 placeholder.
 
 ## Worked example
@@ -830,26 +827,26 @@ and the surrogate it points at, shared by every PASI endpoint in the trial:
 }
 ```
 
-The payoff is that surrogate. Every trial in the warehouse that measured PASI —
-as a mean change, as PASI75, as PASI90 — emits a surrogate with the same `name`
-and the same `reference`, because `measurements.yaml` deliberately keeps
-PASI75/90/100 as *one measurement under a threshold* rather than three terms.
+That surrogate is the payoff. Every trial in the warehouse that measured PASI,
+whether as a mean change, as PASI75 or as PASI90, emits a surrogate with the
+same `name` and the same `reference`, because `measurements.yaml` keeps PASI75,
+90 and 100 as one measurement under a threshold rather than three terms.
 Cross-study comparison becomes a join on a reference inside a
-standards-conformant document, which is the whole point of putting the
-vocabulary in the dictionary rather than in a sidecar.
+standards-conformant document, which is why the vocabulary goes in the
+dictionary rather than in a sidecar.
 
 ## Where the ingestion had to grow
 
-**Built** — both backends now land the columns below; this section records the
-mapping they follow.
+**Built.** Both backends now land the columns below, and this section records
+the mapping they follow.
 
 Everything above needs one thing the warehouse originally did not have:
-study-level design and eligibility facts. `raw.studies` held eight columns —
+study-level design and eligibility facts. `raw.studies` held eight columns,
 `nct_id`, `phase`, `overall_status`, `study_type`, `start_date`,
-`primary_completion_date`, `brief_title`, `official_title` — because the
+`primary_completion_date`, `brief_title` and `official_title`, because the
 conforming pipeline never needed more.
 
-CDISC publishes the mapping to follow, so this is not a design exercise:
+CDISC publishes the mapping to follow:
 `DDF-RA/Documents/Mappings/ct-gov_mapping.xlsx` maps ClinicalTrials.gov fields
 to USDM 4.0.0 paths, with per-field notes. The rows this needs:
 
@@ -873,14 +870,14 @@ Concretely:
   `allocation`, `masking`, `enrollment_count`, `enrollment_type`,
   `healthy_volunteers`, `gender`, `minimum_age`, `maximum_age`,
   `population_description`.
-* **`raw.design_groups` is new** — `nct_id`, `group_type`, `title`,
-  `description` — one row per arm.
+* **`raw.design_groups` is new**, carrying `nct_id`, `group_type`, `title` and
+  `description`, one row per arm.
 * Both backends fill both: `ctgov_api` from `protocolSection.designModule`,
   `.eligibilityModule` and `.armsInterventionsModule`; `aact` from
   `ctgov.designs`, `ctgov.eligibilities`, `ctgov.studies.enrollment` and
   `ctgov.design_groups`.
 
-Two things fall out of doing this that are worth having regardless of USDM:
+Two things fall out of this that are useful regardless of USDM:
 
 * **`outcome_type` finally gets normalised.** The two backends disagree today
   (lowercase `primary`/`secondary`/`other` versus AACT's `Primary`/`Secondary`/
@@ -925,7 +922,8 @@ tests/
 `vocab/loader.py` gained a `usdm_templates` load path alongside
 `matching.yaml`'s, writing `vocab.usdm_templates` / `usdm_purposes` /
 `usdm_objective_templates` / `usdm_settings` with each template's tags
-pre-computed — the parse happens once, at validate time, not per request.
+pre-computed, so the parse happens once at validate time rather than per
+request.
 
 CLI: `endpoints usdm show <NCT_ID> [--envelope|--flatten|--level|--tier|-o]`,
 `endpoints usdm coverage`, `endpoints serve --port 8000`.
@@ -940,13 +938,12 @@ stack and `endpoints serve` says so when it is missing.
 `vocab/loader.py::_validate_usdm_templates`):
 
 * a `form` in `usdm_templates.yaml` that does not exist in `forms.yaml`
-* a form in `forms.yaml` with no template and no explicit
-  `verbatim: true` — silent omission is how a form starts rendering as raw text
-  without anyone noticing
+* a form in `forms.yaml` with no template and no explicit `verbatim: true`,
+  since silent omission is how a form starts rendering as raw text unnoticed
 * a tag not in the closed catalogue (`vocab/schema.py::USDM_TAGS`)
 * a malformed template: unbalanced `{}` or `[]`, nested optional groups, an
   empty or tagless optional group, a tag name outside `[a-z][a-z0-9_]*`
-* a template with **no** required tag — it would render identically for every
+* a template with **no** required tag, which would render identically for every
   endpoint of that form
 * `THRESHOLD` absent from a template whose form declares `expects_threshold: true`
 * a `purpose_by_domain` key outside `MEASUREMENT_DOMAINS`, or a missing `_default`
@@ -959,8 +956,8 @@ Warnings (not errors): a template longer than 200 characters; a
 `purpose_by_domain` with no entry for some measurement domain; a tag-reachable
 term with no `inline_label` whose `label` is not sentence-safe.
 
-That last warning is the one that earned its keep. It fires on a `label`
-containing a slash, or a parenthetical that is not a bare abbreviation — so
+That last warning is the useful one. It fires on a `label` containing a slash,
+or a parenthetical that is not a bare abbreviation, so
 `Glycated haemoglobin (HbA1c)` passes and `First dose / start of treatment`,
 `Percentage of participants (%)` and `Ratio (dimensionless)` do not. It found
 50 terms whose display labels would have rendered as broken sentences; all 50
@@ -968,22 +965,23 @@ now carry an `inline_label`, and the vocabulary is clean at zero warnings.
 
 ## Tests
 
-`uv run pytest` — 254 passing, of which 56 cover this work.
+`uv run pytest`: 254 passing, of which 56 cover this work.
 
 * **Schema conformance.** Every projected object validates against the vendored
   `USDM_API.json` (`Objective-Output`, `SyntaxTemplateDictionary-Output`,
   `BiomedicalConceptSurrogate-Output`, `AnalysisPopulation-Output`), and the
   wrapper envelope against `Wrapper-Output`. Validated against the JSON Schema,
-  not by importing `usdm_api`'s pydantic classes — see [Licensing](#licensing).
+  not by importing `usdm_api`'s pydantic classes; see [Licensing](#licensing).
 * **Tag bijection.** For every endpoint: every tag in `text` has exactly one
   `ParameterMap`, and every `ParameterMap` has exactly one tag in `text`. This
   single property catches most renderer bugs.
 * **Reference resolvability.** Every `usdm:ref` in every dictionary names an id
-  that exists somewhere in the same document — no dangling pointers. Every
+  that exists somewhere in the same document, so there are no dangling
+  pointers. Every
   surrogate's `reference` is fetched over HTTP and must return 200.
 * **No residue.** `label` contains no `<` or `{` after rendering.
 * **Row conservation.** For every trial, the endpoint count equals
-  `count(raw.design_outcomes)` — the invariant that makes "all endpoints" true.
+  `count(raw.design_outcomes)`, the invariant that makes "all endpoints" true.
 * **Determinism.** Two projections of unchanged state are byte-identical.
 * **Level normalisation.** Both backends' `outcome_type` vocabularies map, and
   an unknown value raises rather than defaulting to exploratory.
@@ -1009,8 +1007,8 @@ rather than placeholders wherever the registry states them.
 **Phase 3 — estimands. Not built.** `Estimand`, `AnalysisPopulation` as a
 variable-of-interest target, `IntercurrentEvent`. `AnalysisPopulation`
 instances are already projected, so the missing pieces are the estimand itself
-and its intercurrent-event strategy — which a registry record does not state,
-making this the point where the honest answer may be "not from this source".
+and its intercurrent-event strategy, which a registry record does not state,
+so the answer may be that it cannot come from this source.
 
 **Phase 4 — composite decomposition. Not built.**
 `docs/COMPOSITE_ENDPOINTS_SPEC.md` introduces component endpoints; once it
@@ -1037,7 +1035,7 @@ the fix is the vocabulary, not looser tiers.
   relicense. Importing that branch's pydantic classes as a runtime dependency
   would put this repo's licensing in play. Since the 4.0.0 model classes are
   byte-identical to 3.13.0's, there is no technical reason to reach for the
-  GPL branch — validate against the DDF-RA JSON Schema instead, and read the
+  GPL branch. Validate against the DDF-RA JSON Schema instead, and read the
   branch only as documentation.
 
 ## Open questions
@@ -1045,7 +1043,7 @@ the fix is the vocabulary, not looser tiers.
 Two of the four questions in this spec's first draft were answered by reading
 CDISC's published example documents rather than by deciding:
 
-* ~~Does `text` carry tags or values?~~ **Tags** — `CDISC_Pilot_Study.json`
+* ~~Does `text` carry tags or values?~~ **Tags.** `CDISC_Pilot_Study.json`
   shows `<usdm:tag name="min_age"/>` inside `EligibilityCriterionItem.text`.
 * ~~What format is `ParameterMap.reference`?~~ **A `usdm:ref` element** naming
   klass, instance id and attribute. The URN scheme proposed in the first draft
@@ -1055,20 +1053,19 @@ What is still open:
 
 1. **Is `BiomedicalConceptSurrogate` the right home for a vocabulary
    measurement?** It is the closest fit USDM offers, and the pilot uses it for
-   concepts with no library definition. The alternative — minting
-   `BiomedicalConcept`s with invented C-codes — is worse. But a CDISC reviewer
-   may have a third answer, and this is the first design decision to put to
-   them.
+   concepts with no library definition. The alternative, minting
+   `BiomedicalConcept`s with invented C-codes, is worse. A CDISC reviewer may
+   have a third answer, and this is the first design decision to put to them.
 2. **Is `<usdm:ref klass="ExtensionAttribute" …>` acceptable?** Four of the
    seven tags have no USDM class to point at, so they are hosted as extension
    attributes on their endpoint. Every published reference points at a
    first-class instance instead. This is the spec's one genuine extension of
    the convention.
 3. **Nobody has templated an endpoint before.** In all three CDISC examples,
-   `dictionaryId` is populated only on `EligibilityCriterionItem` — every
+   `dictionaryId` is populated only on `EligibilityCriterionItem`, and every
    `Endpoint` and `Objective` has `dictionaryId: null`. The mechanism is
-   established; applying it to endpoints is not. That is the opportunity and
-   also the risk: there is no reference implementation to match.
+   established, and applying it to endpoints is not. There is no reference
+   implementation to match.
 4. **Is a synthesized objective better than no objective?** This spec says yes
    with a flag, because USDM requires the containment. A reviewer could
    reasonably prefer `?objectives=none` as the default.
@@ -1080,18 +1077,17 @@ What is still open:
   second, subtly different parser inside the projection would be invisible and
   would drift.
 * **Do not drop review-queue rows from the response.** A trial with unresolved
-  endpoints has those endpoints. Rendering them verbatim is the honest
-  degradation; omitting them makes the API quietly wrong about how many
-  endpoints a trial has.
+  endpoints has those endpoints. Rendering them verbatim degrades correctly,
+  and omitting them makes the API wrong about how many endpoints a trial has.
 * **Do not synthesize `purpose`, objectives, or wrapper placeholders without
   the `derived` flag.** Unflagged synthesis in a standards-conformant document
   is indistinguishable from sourced fact to every downstream consumer.
 * **Do not put `{direction}` in a template.** Direction is derived, can vary by
   therapeutic area, and is not part of an endpoint's name.
-* **Do not add vocabulary terms to raise the `templated` share.** Same rule as
-  `vocab/README.md`: terms come from a human review round against real misses,
-  never from chasing a percentage — and a template that renders confidently
-  from a wrong measurement is worse than one that renders verbatim.
+* **Do not add vocabulary terms to raise the `templated` share.** As in
+  `vocab/README.md`, terms come from a human review round against real misses,
+  never from chasing a percentage. A template that renders confidently from a
+  wrong measurement is worse than one that renders verbatim.
 * **Do not implement the write half of the USDM API.** This is a projection of
   public registry data. `POST /v4/studyDefinitions` would imply this repo is a
   study definitions repository of record, which it is not.

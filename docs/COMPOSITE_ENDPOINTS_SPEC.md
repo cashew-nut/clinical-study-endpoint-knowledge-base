@@ -3,12 +3,12 @@
 > **Status: not implemented.** Nothing here exists in code: there is no
 > `vocab/composites.yaml`, no `conformed.endpoint_composite`, no variant
 > resolution in `conform`. This is a proposal to schedule or decide against,
-> and its first phase is gated on a measurement that needs a live pull — see
+> and its first phase is gated on a measurement that needs a live pull; see
 > [Phasing, with a gate](#phasing-with-a-gate).
 
-Written after reviewing whether a generic node/edge layer over the conformed
-endpoints was worth building; it is not, and this is the one relation in the
-domain that would have justified it (see below).
+Written after reviewing whether a generic node and edge layer over the
+conformed endpoints was worth building. It is not, and the composite relation
+is the one in this domain that would have justified it.
 
 Read alongside:
 
@@ -32,15 +32,16 @@ question answerable, and it costs:
   (31% of rows name a measurement and no form). Untargeted traversal degenerates
   into a table scan.
 * **Quadratic materialisation.** `SAME_MEASUREMENT_DIFFERENT_FORM` as a stored
-  endpoint↔endpoint edge is a self-join inside each measurement group — order
+  endpoint-to-endpoint edge is a self-join inside each measurement group: order
   10⁵ edges even under a uniform distribution, far worse under the real
-  power-law skew, encoding what a `GROUP BY measurement_id` expresses in ~234
-  rows.
+  power-law skew, encoding what a `GROUP BY measurement_id` expresses in about
+  234 rows.
 * **Type loss.** `WHERE threshold_value >= 30` becomes
   `WHERE CAST(json_extract_string(properties,'$.threshold_value') AS DOUBLE) >= 30`.
 
-Every path in the star schema is length ≤ 3 and statically known — no cycles, no
-variable depth. That is the test a node/edge layer has to pass, and it fails it.
+Every path in the star schema is length ≤ 3 and statically known, with no
+cycles and no variable depth. That is the test a node and edge layer has to
+pass, and it fails.
 
 **The composite→component relation passes it.** A composite endpoint contains
 component endpoints, a component can itself be a composite, and the depth is not
@@ -48,13 +49,13 @@ known at query time. It is the one structure in this domain a star schema
 handles badly, and it is currently not modelled at all: `measurements.yaml`
 carries `composite: true` on five terms with no components anywhere.
 
-It is also a *small* graph — hundreds of edges over a few dozen variants, not
-10⁵ over 8,700 endpoints — so the traversal machinery is proportionate to what
-it buys.
+It is also a small graph, hundreds of edges over a few dozen variants rather
+than 10⁵ over 8,700 endpoints, so the traversal machinery is proportionate to
+what it buys.
 
 ## Composites are three different things
 
-This is the modelling decision everything else depends on, and `measurements.yaml`
+Everything else depends on this modelling decision, and `measurements.yaml`
 already half-encodes it in `method`. Folding these into one "composite" flag
 would produce queries that are arithmetically fine and clinically wrong.
 
@@ -68,12 +69,12 @@ The distinction decides which queries are sound:
 
 * **Event unions are comparable by component overlap.** A 3-point MACE and a
   5-point MACE differ by two components, and that difference is the single
-  largest comparability trap in cardiovascular trials — an effect on 5-point
+  largest comparability trap in cardiovascular trials. An effect on 5-point
   MACE can be driven entirely by revascularisation, a component the 3-point
   version does not contain.
 * **Scored indices are not.** DAS28-CRP and DAS28-ESR share every component and
-  are still different scores; component overlap says "identical" and the answer
-  is no. For these, decomposition is documentation — useful for reading an
+  are still different scores. Component overlap says identical and the answer
+  is no. For these, decomposition is documentation: useful for reading an
   endpoint, invalid as a comparability metric.
 * **Criteria panels sit between**: overlap is meaningful, but so is the
   `required` / *n*-of-*m* rule, so the component set alone underdetermines them.
@@ -86,31 +87,29 @@ makes `kind` mandatory so the filter is possible.
 None of these are answerable today, at any coverage.
 
 1. **"Which trials' primary endpoint includes all-cause mortality as a
-   component?"** — regardless of whether the title says so. Today a MACE
-   endpoint's mortality component is invisible; the endpoint reads as one
+   component?"**, regardless of whether the title says so. Today a MACE
+   endpoint's mortality component is invisible and the endpoint reads as one
    opaque `major_adverse_cardiovascular_event`.
-2. **"Are these two trials' composites comparable?"** — leaf-component overlap
-   between two event unions, with the asymmetric difference spelled out (what's
-   in A and not B). This is the query a meta-analyst actually needs.
-3. **"3-point vs 4-point vs 5-point MACE"** — today all three collapse to one
-   measurement id, so the warehouse asserts they are the same endpoint. They are
-   not.
-4. **"Which composites transitively contain component X, and at what depth?"** —
-   the genuinely recursive one.
-5. **"Which components recur across composites?"** — `myocardial_infarction`
-   appearing in every CV composite is a fact about how the field builds
-   endpoints, and it falls out of the same table.
+2. **"Are these two trials' composites comparable?"**, as leaf-component
+   overlap between two event unions, with the asymmetric difference spelled out
+   as what is in A and not B. This is the query a meta-analyst needs.
+3. **"3-point vs 4-point vs 5-point MACE"**. Today all three collapse to one
+   measurement id, so the warehouse asserts they are the same endpoint.
+4. **"Which composites transitively contain component X, and at what depth?"**,
+   the recursive one.
+5. **"Which components recur across composites?"**. `myocardial_infarction`
+   appearing in every cardiovascular composite is a fact about how the field
+   builds endpoints, and it falls out of the same table.
 
-## Where recursion actually arises
+## Where recursion arises
 
-Being honest about this, because it is the whole justification: most composites
-are depth 1. The real depth comes from a small set of nesting patterns, and it
-is enough.
+Most composites are depth 1. The depth that exists comes from a small set of
+nesting patterns.
 
 * **MACE laddering.** 4-point MACE is 3-point plus heart-failure
   hospitalisation; 5-point is 4-point plus coronary revascularisation. Defining
-  each variant against the one below it rather than restating leaf lists is both
-  how the literature describes them and how you avoid four hand-maintained lists
+  each variant against the one below it rather than restating leaf lists is how
+  the literature describes them, and it keeps four hand-maintained lists from
   drifting apart.
 * **Net clinical benefit** = an efficacy composite + a safety composite. A
   composite whose components are composites, by construction.
@@ -123,7 +122,7 @@ rather than assuming.
 
 ### `vocab/composites.yaml` (new file)
 
-The variant layer is additive — `measurements.yaml` is untouched. A composite
+The variant layer is additive and `measurements.yaml` is untouched. A composite
 measurement keeps its existing id as the concept-level anchor
 (`major_adverse_cardiovascular_event`), and variants hang off it with their own
 synonyms and patterns. This follows the precedent already set by `concept`:
@@ -205,12 +204,12 @@ variant does not resolve must be representable as *absent* rather than as a
 default.
 
 **An unresolved variant must not fall back to `is_default`.** `is_default`
-records which variant the literature means by the bare term, for reading — not a
-licence to assert it. "MACE" with no point count in the registry text is
-genuinely unspecified, and asserting 3-point would fabricate the exact fact
-these queries exist to check. This is the same rule `measurements.yaml` already
-applies with `on_unmatched: review_queue`, and it matters more here: a wrong
-component set doesn't look wrong, it looks like an answer.
+records which variant the literature means by the bare term, for reading,
+rather than a licence to assert it. "MACE" with no point count in the registry
+text is unspecified, and asserting 3-point would fabricate the fact these
+queries exist to check. This is the rule `measurements.yaml` already applies
+with `on_unmatched: review_queue`, and it matters more here, because a wrong
+component set looks like an answer.
 
 ## The traversal
 
@@ -268,8 +267,8 @@ FROM leaves a JOIN leaves b ON b.variant_id > a.variant_id
 ORDER BY jaccard DESC;
 ```
 
-`only_in_a` / `only_in_b` matter more than the Jaccard number. "0.8 similar" is
-not an analytic finding; "identical except that B includes coronary
+`only_in_a` and `only_in_b` matter more than the Jaccard number. "0.8 similar"
+is not an analytic finding, while "identical except that B includes coronary
 revascularisation" is.
 
 ## The dependency this needs before anything else
@@ -285,46 +284,45 @@ The components mostly **do not exist as measurement terms yet.** Checked against
 | `myocardial_infarction` | no |
 | `stroke` | no |
 | `coronary_revascularisation` | no |
-| `tender_joint_count` / `swollen_joint_count` | no — folded into `acr_response_composite`'s synonyms |
-| `major_bleeding` | no — only `annualised_bleeding_rate` |
+| `tender_joint_count` / `swollen_joint_count` | no, folded into `acr_response_composite`'s synonyms |
+| `major_bleeding` | no, only `annualised_bleeding_rate` |
 
-So decomposition is not "add a components list to five terms". It is **add the
-component terms first**, then point at them. That is the bulk of Phase A below, and it
-is why the estimate there is vocabulary work rather than code.
+So decomposition is not adding a components list to five terms. It is **adding
+the component terms first**, then pointing at them. That is the bulk of Phase A
+below, and why the estimate there is vocabulary work rather than code.
 
-Two consequences worth deciding before starting:
+Two consequences to decide before starting:
 
 * **It is the right change independently.** A trial can and does use "time to
   first myocardial infarction" as an endpoint in its own right, and today that
   either lands on a coarser term or goes to the review queue. The component
-  terms are missing measurements, not scaffolding for this spec.
+  terms are missing measurements rather than scaffolding for this spec.
 * **It will move existing conform results.** Adding `stroke`,
   `myocardial_infarction` and friends as matchable terms changes what already-
-  conformed rows resolve to — `acr_response_composite` currently claims "tender
+  conformed rows resolve to. `acr_response_composite` currently claims "tender
   joint count" and "swollen joint count" as synonyms, and promoting those to
-  their own terms takes rows off it under longest-match. So the Phase A gate
-  must be measured **twice**, before and after the component terms land, and the
-  delta reported. A coverage change here is a real change in what the warehouse
-  says, not a metric moving.
+  their own terms takes rows off it under longest-match. So the Phase A gate is
+  measured **twice**, before and after the component terms land, and the delta
+  reported. A coverage change here is a change in what the warehouse says.
 
 ## Phasing, with a gate
 
 **Phase A — vocabulary and measurement only. No pipeline code.**
 
-Add the missing component terms to `measurements.yaml` (see the section
-above), write `composites.yaml` for the eight composite-method terms, then
-measure against a real pull: of the endpoints resolving to a composite measurement, what
-fraction name a variant specifically enough to resolve one?
+Add the missing component terms to `measurements.yaml`, as the section above
+describes, write `composites.yaml` for the eight composite-method terms, then
+measure against a real pull: of the endpoints resolving to a composite
+measurement, what fraction name a variant specifically enough to resolve one?
 
-**This is a gate, not a milestone.** If under ~20% of composite endpoints
-specify a variant, stop and record the finding — the registry text does not
-carry the information, and the components would be a vocabulary asserting facts
-about trials rather than a warehouse recording them. Phase A is roughly a day of
-vocabulary work and answers the only question that matters.
+**This is a gate rather than a milestone.** If under about 20% of composite
+endpoints specify a variant, stop and record the finding: the registry text
+does not carry the information, and the components would be a vocabulary
+asserting facts about trials rather than a warehouse recording them. Phase A is
+roughly a day of vocabulary work.
 
-Prior expectation is that this fails on `measure` alone and passes on the
-cascade into `description`, where protocols spell composites out. That is a
-guess, and the gate exists because it is a guess.
+The expectation is that this fails on `measure` alone and passes on the cascade
+into `description`, where protocols spell composites out. That is a guess, and
+the gate exists because it is a guess.
 
 **Phase B — resolver and tables**, only if Phase A clears. `composites.yaml`
 into `vocab.*`, variant resolution after measurement resolution in the conform
@@ -336,26 +334,26 @@ with the same discipline as measurements.
 
 ## Vocabulary defects to fix first
 
-Found while writing this; all in `measurements.yaml`, all cheap now.
+Found while writing this, all in `measurements.yaml`.
 
-* **Three composite-method terms lack `composite: true`** —
+* **Three composite-method terms lack `composite: true`**:
   `haematologic_response` and `elf_score` (`laboratory_composite`) and
   `nutritional_status` (`composite_assessment`). Five terms carry the flag,
   eight carry a composite method.
 * **`cognitive_composite` is a composite by name, label, and its own `notes`**
   ("a composite is scored across a battery") with neither the flag nor a
-  composite method — its method is `computerised_cognitive_battery`.
+  composite method. Its method is `computerised_cognitive_battery`.
 * **Nothing validates the flag against the method.** `method` is an open
   vocabulary of 59 values with no closed set, so this drifted silently.
 
 Recommendation: **replace the `composite: true` boolean with a
 `composite_kind` field** over the closed set `event_union | scored_index |
 criteria_panel`, and have `vocab validate` enforce that `composite_kind` is
-present iff the term is referenced as a composite. A boolean that says
-"something composite is going on" is exactly the conflation this spec argues
+present if and only if the term is referenced as a composite. A boolean that
+says something composite is going on is the conflation this spec argues
 against, and the three kinds are already latent in `method`.
 
-That change is worth making whether or not this spec is ever built.
+That change is worth making whether or not this spec is built.
 
 ## Validator requirements (Phase B)
 
@@ -369,30 +367,30 @@ That change is worth making whether or not this spec is ever built.
 * more than one `is_default` per `measurement_id`
 * a `kind` outside the closed set
 * a variant whose `measurement_id` has no `composite_kind` (after the fix above)
-* a synonym claimed by two variants — the existing rule, applied to this file
+* a synonym claimed by two variants, the existing rule applied to this file
 
 ## Prerequisite
 
 Phase A's gate needs a real pull, and **neither backend has been reachable from
-the build sandbox** (AACT port 5432 closed, `clinicaltrials.gov` unreachable);
-`vocab/README.md`'s "Known gaps" records the same constraint for the TA
-resolver. Phase A cannot be run to completion from an environment with no
-egress. Writing `composites.yaml` can; measuring the gate cannot.
+the build sandbox**, with AACT port 5432 closed and `clinicaltrials.gov`
+unreachable. `vocab/README.md` records the same constraint for the
+therapeutic-area resolver under "Known gaps". Writing `composites.yaml` can be
+done without egress; measuring the gate cannot.
 
 ## Standing constraints
 
-* **Do not build a generic node/edge layer alongside this.** If composites land,
-  they land as two typed vocab tables and a recursive CTE. A generic node/edge
+* **Do not build a generic node and edge layer alongside this.** If composites
+  land, they land as two typed vocab tables and a recursive CTE. A generic
   encoding would reintroduce every problem in the first section.
 * **Do not infer components from endpoint text.** "Composite of death, MI and
-  stroke" in a `description` is a tempting parse and a bad one — the exact
-  wording varies, adjudication definitions differ, and a wrong component set is
-  invisible downstream. Components are curated vocabulary, cited to a
-  definition, or they are absent.
+  stroke" in a `description` parses easily and badly: the exact wording varies,
+  adjudication definitions differ, and a wrong component set is invisible
+  downstream. Components are curated vocabulary, cited to a definition, or they
+  are absent.
 * **Do not let an unresolved variant default to `is_default`.** See above.
 * **Do not use component overlap on `scored_index` variants** to call two
-  endpoints comparable. The `kind` filter in the comparability query is load-
-  bearing, not decorative.
-* **Do not expand the composite vocabulary to improve coverage numbers.** Same
-  rule as `vocab/README.md`: terms come from a human review round against real
-  misses, never from chasing a percentage.
+  endpoints comparable. The `kind` filter in the comparability query is
+  load-bearing.
+* **Do not expand the composite vocabulary to improve coverage numbers.** As in
+  `vocab/README.md`, terms come from a human review round against real misses,
+  never from chasing a percentage.

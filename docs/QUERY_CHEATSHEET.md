@@ -15,11 +15,11 @@ uv run endpoints conform                            # writes conformed.endpoints
 uv run endpoints results conform                    # writes conformed.endpoint_results / endpoint_dispersion
 ```
 
-(`pull` also writes `conformed.study_therapeutic_area`,
-`conformed.study_drug_class` and `conformed.arm_drug_class` on its way through
--- one pull, one wave. It loads the vocabulary itself if the warehouse has
-none, so the first line above is optional; run it yourself to see the
-validation output, or after editing anything under `vocab/`.)
+`pull` also writes `conformed.study_therapeutic_area`,
+`conformed.study_drug_class` and `conformed.arm_drug_class` on its way through,
+in one wave. It loads the vocabulary itself if the warehouse has none, so the
+first line above is optional. Run it yourself to see the validation output, or
+after editing anything under `vocab/`.
 
 Want a therapeutic area with a denser efficacy signal to look at, instead of
 an unfiltered mix of everything on the registry?
@@ -189,8 +189,8 @@ ORDER BY form_a, form_b
 LIMIT 50;
 ```
 
-Differing `direction_id` down those pairs is the point, not a bug: the same
-measurement under a different form genuinely reverses which way is better (see
+Differing `direction_id` down those pairs is expected rather than a bug: the
+same measurement under a different form reverses which way is better (see
 `vocab/README.md`, "Direction is derived").
 
 **Same concept, different instrument**
@@ -373,7 +373,7 @@ FROM conformed.arm_drug_class GROUP BY 1, 2 ORDER BY 3 DESC;
 ```
 
 ```sql
--- the honest denominator: how much of the corpus the axis actually covers.
+-- the denominator: how much of the corpus the axis covers.
 SELECT
   (SELECT count(*) FROM raw.studies) AS pulled,
   (SELECT count(DISTINCT nct_id) FROM raw.interventions) AS with_interventions,

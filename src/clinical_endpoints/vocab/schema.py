@@ -138,9 +138,9 @@ TIMEPOINT_ROLES = frozenset({"assessment_time", "observation_window", "event_hor
 DERIVED_ATTRIBUTES = frozenset({"purpose", "reference", "objective"})
 
 # The closed set of tags a USDM syntax template may use; each needs a USDM
-# home for its value (see usdm/tags.py). The analysis population is
-# deliberately not a tag: it is projected as an AnalysisPopulation linked from
-# the decomposition, not rendered into the text.
+# home for its value (see usdm/tags.py). The analysis population is not a tag:
+# it is projected as an AnalysisPopulation linked from the decomposition rather
+# than rendered into the text.
 USDM_TAGS = frozenset({"measurement", "concept", "reference", "timepoint", "threshold", "scale", "event"})
 
 USDM_OBJECTIVE_KEYS = frozenset({"primary", "secondary", "exploratory", "_unresolved"})

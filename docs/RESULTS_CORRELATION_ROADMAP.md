@@ -2,86 +2,84 @@
 
 > **Status: partly shipped.** D4-D9 are implemented; their design of record is
 > [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md), and this file is kept
-> as written -- the reasoning that chose them, and the menu of what was not
-> chosen. Everything else here is still a proposal: D1-D3 (Tier 0), D10, and
+> as written: the reasoning that chose them, and the menu of what was not
+> chosen. Everything else here is still a proposal. D1-D3 (Tier 0), D10 and
 > the whole of Tier 2 do not exist in code.
 >
 > The gate below was **not** passed, because it could not be run: this
 > project's environment cannot reach clinicaltrials.gov or AACT. D4-D9 were
 > built to be measured rather than to assume a measurement, and the gate ships
-> as `endpoints results coverage` -- see
+> as `endpoints results coverage`. See
 > [`ENDPOINT_RESULTS_SPEC.md`, "The gate"](ENDPOINT_RESULTS_SPEC.md#the-gate).
 > Every number in this document remains as first written and is still owed a
 > live pull.
 >
-> Originally: a roadmap rather than a `_SPEC.md` design of record -- it names
-> candidate deliverables and their trade-offs; whichever are chosen get their
-> own spec. This is a menu of deliverables to schedule or decide against,
-> written after a research pass over what public data could reasonably be
-> joined to the warehouse. Effort sizes are relative, not estimates.
+> This is a roadmap rather than a `_SPEC.md` design of record. It names
+> candidate deliverables and their trade-offs, and whichever are chosen get
+> their own spec. It was written after a research pass over what public data
+> could reasonably be joined to the warehouse. Effort sizes are relative rather
+> than estimates.
 
 Read alongside:
 
-* [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md) -- the design of
+* [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md) — the design of
   record for D4-D9, and what shipped differently from what is proposed here
-* [`../vocab/README.md`](../vocab/README.md), "Coverage, honestly" -- the
+* [`../vocab/README.md`](../vocab/README.md), "Coverage, honestly" — the
   measured limits of the join key everything below depends on
-* [`QUERY_CHEATSHEET.md`](QUERY_CHEATSHEET.md), "Cross-study comparability" --
+* [`QUERY_CHEATSHEET.md`](QUERY_CHEATSHEET.md), "Cross-study comparability" —
   the questions the warehouse can already answer, and its caveat
-* [`COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) -- the other
+* [`COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) — the other
   open proposal, and the reason this one is also written as a gate rather than
   a plan
 
 ---
 
-## The thesis in one paragraph
+## The premise
 
-`conformed.endpoints` is not primarily a description of endpoints. It is a
-**join key**. Three sponsors writing `"PFS"`, `"Progression free survival per
-RECIST 1.1"` and `"Time from randomization to documented progression or
-death"` currently share nothing a machine can group on; after conforming they
-share `measurement_id`, `form_id`, `reference_id`, `event_id`, `scale_id` and a
-classified timepoint. Everything worth building next is an answer to one
-question: *now that rows can be grouped, what is worth attaching to the group?*
-The most valuable thing to attach is the one thing this project pointedly does
-not yet ingest -- what the trials actually found.
+`conformed.endpoints` is a **join key** more than a description of endpoints.
+Three sponsors writing `"PFS"`, `"Progression free survival per RECIST 1.1"`
+and `"Time from randomization to documented progression or death"` share
+nothing a machine can group on. After conforming they share `measurement_id`,
+`form_id`, `reference_id`, `event_id`, `scale_id` and a classified timepoint.
+Everything below answers one question: now that rows can be grouped, what is
+worth attaching to the group? The most valuable thing to attach is the one
+thing this project does not yet ingest, which is what the trials found.
 
 ## What is already true, and what it costs
 
 Three facts constrain every deliverable below.
 
 **The pipeline ingests protocol text, not results.** `raw.design_outcomes`
-carries `measure`, `time_frame`, `description`, `population` -- the *planned*
-endpoint. Nothing in `raw.*` holds a number a trial reported.
+carries `measure`, `time_frame`, `description` and `population`, which is the
+planned endpoint. Nothing in `raw.*` holds a number a trial reported.
 
 **But the results are already coming down the wire.** `ingest/ctgov_api.py`
 `_fetch_page` sends `query.term`, `pageSize` and `sort` and no `fields`
 parameter, so the API returns the full study record. For any study with
-`hasResults`, that record already contains `resultsSection` --
+`hasResults`, that record already contains `resultsSection`, with its
 `outcomeMeasuresModule`, `baselineCharacteristicsModule`,
-`participantFlowModule`, `adverseEventsModule` -- and
-`ingest/ctgov_api.py`'s row builders simply never look at it. The AACT backend
-is the same story from the other side: `run_pull` reads `ctgov.design_outcomes`
-and not `ctgov.outcomes`, `ctgov.outcome_measurements`,
-`ctgov.outcome_analyses` or `ctgov.baseline_measurements`, all of which sit in
-the same attached database. **The expensive part of results ingestion -- the
-network -- is already paid for.** What is missing is parsing and landing.
+`participantFlowModule` and `adverseEventsModule`, and `ingest/ctgov_api.py`'s
+row builders never look at it. The AACT backend is the same from the other
+side: `run_pull` reads `ctgov.design_outcomes` and not `ctgov.outcomes`,
+`ctgov.outcome_measurements`, `ctgov.outcome_analyses` or
+`ctgov.baseline_measurements`, all of which sit in the same attached database.
+**The network, the expensive part of results ingestion, is already paid for.**
+What is missing is parsing and landing.
 
 **The join key covers about two thirds of rows, head-weighted.** Measurement
-coverage is 64.5% on the unbiased sample; 77% of `measure` strings occur
+coverage is 64.5% on the unbiased sample, and 77% of `measure` strings occur
 exactly once. Every aggregate below is therefore computed over a biased subset
 that over-represents OS, PFS, ORR and adverse-event counts, and
-under-represents the instrument used in two trials. This is not a reason not to
-build -- it is a reason every deliverable must carry its own denominator, the
-way the cheat sheet's comparability queries already do.
+under-represents the instrument used in two trials. That is a reason every
+deliverable must carry its own denominator, as the cheat sheet's comparability
+queries already do.
 
 ---
 
-## Tier 0 -- deliverables available today, with no new data
+## Tier 0: deliverables available today, with no new data
 
-Worth listing first because they need no ingestion work at all, and because
-they are the cheapest way to find out whether the conformed corpus is dense
-enough to support Tier 1.
+These need no ingestion work, and they are the cheapest way to find out whether
+the conformed corpus is dense enough to support Tier 1.
 
 ### D1. Endpoint co-occurrence and study-design fingerprints
 
@@ -90,10 +88,10 @@ primary/secondary/other structure per therapeutic area and phase; how many
 endpoints a trial declares as a function of phase, TA and design. All of it is
 `GROUP BY` over `conformed.endpoints` joined to `raw.studies`.
 
-*Why it matters:* "number of endpoints" and "protocol complexity" are among the
-features the trial-success prediction literature leans on hardest, and they are
-currently extracted by everyone from raw strings. A conformed co-occurrence
-matrix is a better feature set than a count, and it is free.
+*Why it matters:* endpoint count and protocol complexity are among the features
+the trial-success prediction literature leans on hardest, and they are usually
+extracted from raw strings. A conformed co-occurrence matrix is a better
+feature set than a count, and it costs nothing new.
 
 *Ships as:* a `conformed.endpoint_cooccurrence` view plus a cheat-sheet
 section. Small.
@@ -105,19 +103,18 @@ start-year × TA × form/measurement and you get the adoption curve of every
 endpoint in the vocabulary: PFS displacing OS, the arrival of PRO instruments,
 the rise and fall of a specific responder threshold.
 
-*Why it matters:* it is the single most legible output the corpus can produce
-today, it needs no new source, and it validates the vocabulary in public --
-drift curves that match known practice are evidence the conforming works.
+*Why it matters:* it is the most legible output the corpus can produce today,
+it needs no new source, and it checks the vocabulary against known practice:
+drift curves that match are evidence the conforming works.
 
 *Ships as:* a query set and one chart. Small.
 
 ### D3. Threshold and responder-definition dispersion
 
 `threshold_comparator` / `threshold_value` / `threshold_unit` are already
-parsed. For a given measurement, what thresholds do sponsors actually use --
-PASI 75 vs 90 vs 100, ≥50% reduction vs ≥30%? Where a measurement has more than
-one threshold in play, that is a live comparability hazard that no one has
-tabulated.
+parsed. For a given measurement, which thresholds do sponsors use: PASI 75, 90
+or 100, a ≥50% reduction or a ≥30% one? Where a measurement has more than one
+threshold in play, that is a comparability hazard nobody has tabulated.
 
 *Why it matters:* it is a direct answer to "what can be correlated now that we
 can group", and it is the first place where grouping reveals a disagreement
@@ -127,7 +124,7 @@ between sponsors rather than a synonym.
 
 ---
 
-## Tier 1 -- the results section: same source, new tables
+## Tier 1: the results section, same source and new tables
 
 **Shipped: D4-D9.** See [`ENDPOINT_RESULTS_SPEC.md`](ENDPOINT_RESULTS_SPEC.md)
 for what was built and where it differs from the sketch below. D10 was not.
@@ -155,27 +152,27 @@ the schema rather than dropping and refetching.
 
 *Risk to size before committing:* the results-section outcome title is a
 **different string** from the protocol-section `measure`. They are usually the
-same and sometimes not -- sponsors reword, split one planned outcome into
+same and sometimes not, because sponsors reword, split one planned outcome into
 several reported ones, or report outcomes never registered. Linking results
-rows back to planned rows is therefore its own matching problem, not a foreign
+rows back to planned rows is its own matching problem rather than a foreign
 key. Measure the exact-match rate on a real pull before designing around it.
 
 *Ships as:* two backend parsers, five DDLs, upsert wiring. Medium, and it gates
 everything else in this tier.
 
-**Shipped**, as `ingest/results.py` + `ingest/aact_results.py`, on by default
-with `--no-results` to opt out. The risk this section names -- that a
-results-section title is a different string from the planned `measure` -- was
+**Shipped**, as `ingest/results.py` and `ingest/aact_results.py`, on by default
+with `--no-results` to opt out. The risk this section names, that a
+results-section title is a different string from the planned `measure`, was
 handled by making the link its own provenance-carrying column rather than a
-foreign key; the exact-match rate is now reportable by
+foreign key. The exact-match rate is now reportable by
 `endpoints results coverage` rather than assumed.
 
 ### D5. Link results to the vocabulary (`conformed.endpoint_results`)
 
-Do not write a second matcher. Run the *existing* conformance engine over
-results-section titles and descriptions -- they are the same kind of free text
-the engine already handles -- and record the link with its own provenance:
-exact string match to the planned outcome, conformed-to-the-same-vocabulary
+Do not write a second matcher. Run the existing conformance engine over
+results-section titles and descriptions, which are the same kind of free text
+the engine already handles, and record the link with its own provenance: an
+exact string match to the planned outcome, a conformed-to-the-same-vocabulary
 match, or unlinked.
 
 *Why this shape:* it reuses `conform/` unchanged, it keeps the audit trail the
@@ -185,18 +182,18 @@ an unlinked results row goes to a review queue rather than being force-joined.
 *Ships as:* a link table, a `conform --results` path, a review reason. Medium.
 
 **Shipped**, as `conformed.endpoint_results` and `endpoints results conform`
-(a sibling command rather than a flag on `conform`, so the two halves keep
-separate lifecycles). The review reason lives in its own
+as a sibling command rather than a flag on `conform`, so the two halves keep
+separate lifecycles. The review reason lives in its own
 `conformed.results_review_queue`, because `conform` wholesale-replaces
 `conformed.review_queue` and would have deleted results rows kept there.
 
 ### D6. The dispersion normaliser (`conformed.endpoint_dispersion`)
 
-The heart of the standard-deviation question, and the part most likely to be
-done wrong. Reported spread on ClinicalTrials.gov is **not** a standard
-deviation; `dispersion_type` is a small closed set that mixes standard
-deviation, standard error, inter-quartile range, full range, several confidence
-interval widths, and geometric coefficient of variation. `param_type` likewise
+The centre of the standard-deviation question. Reported spread on
+ClinicalTrials.gov is **not** a standard deviation: `dispersion_type` is a
+small closed set that mixes standard deviation, standard error, inter-quartile
+range, full range, several confidence interval widths, and geometric
+coefficient of variation. `param_type` likewise
 mixes mean, median, least-squares mean, geometric mean and several count types.
 Pooling them without conversion produces a number that means nothing.
 
@@ -218,24 +215,24 @@ must be filterable, because a library built mostly out of range-derived
 estimates is a different object from one built out of reported SDs.
 
 **`scales.yaml` is a prerequisite, and it was built for this.** The file
-already carries `kind`, `si_equivalent` and `factor_to_si` -- 21 of 59 terms
-have a conversion factor. Pooling FEV1 in L with FEV1 in mL, or HbA1c in % with
-mmol/mol, is exactly the case that comment anticipated. Completing
-`factor_to_si` coverage for the kinds that appear in results units, and adding
-a unit-string normaliser for the free-text `unit_of_measure` field, is part of
-this deliverable rather than a follow-on.
+already carries `kind`, `si_equivalent` and `factor_to_si`, with 21 of 59 terms
+carrying a conversion factor. Pooling FEV1 in L with FEV1 in mL, or HbA1c in %
+with mmol/mol, is the case that comment anticipated. Completing `factor_to_si`
+coverage for the kinds that appear in results units, and adding a unit-string
+normaliser for the free-text `unit_of_measure` field, is part of this
+deliverable rather than a follow-on.
 
-*Ships as:* a normaliser module, a vocabulary round on scales, a table. Medium,
-and it is the piece where an error is least visible downstream.
+*Ships as:* a normaliser module, a vocabulary round on scales, and a table.
+Medium, and the piece where an error is least visible downstream.
 
 **Shipped**, as `results/dispersion.py` + `results/units.py` +
 `conformed.endpoint_dispersion`, with the scales round taking `factor_to_si`
 from 21 of 59 terms to 58 of 67. Two refusals were added that this table does
-not list: a confidence interval reported around a *median* is not converted
-(the width-to-SD formula inverts the standard error of a mean), and a
+not list: a confidence interval reported around a median is not converted,
+because the width-to-SD formula inverts the standard error of a mean, and a
 count-typed `param_type` yields no SD at all.
 
-### D7. The endpoint statistics reference -- `endpoints stats` *(flagship)*
+### D7. The endpoint statistics reference, `endpoints stats`
 
 The user-facing answer to "what standard deviation should I expect for this
 endpoint": given a measurement (optionally narrowed by form, scale, timepoint,
@@ -253,23 +250,22 @@ FEV1, change from baseline, litres
   coverage     41 of 63 conformed studies reported a usable dispersion (65%)
 ```
 
-The coverage line is not decoration. It is the same discipline the cheat sheet
-applies to comparability queries, and without it the command is a machine for
-producing confident numbers off eight arms.
+The coverage line applies the same discipline the cheat sheet applies to
+comparability queries, so the median is always read against the number of arms
+behind it.
 
-*Why it matters:* this is the deliverable that turns the corpus from a
-descriptive resource into a design tool. Nobody publishes an empirical prior
-for the variability of a given endpoint at a given timepoint; every
-statistician assembling a sample-size calculation reconstructs it by hand from
-two or three papers they happen to know.
+*Why it matters:* this turns the corpus from a descriptive resource into a
+design tool. Nobody publishes an empirical prior for the variability of a given
+endpoint at a given timepoint, so a statistician assembling a sample-size
+calculation reconstructs it by hand from two or three papers.
 
-*Ships as:* one CLI command, one API endpoint, one documented caveat block.
-Medium, and it is the reason to do D4-D6.
+*Ships as:* one CLI command, one API endpoint, and one documented caveat block.
+Medium, and the reason to do D4-D6.
 
-**Shipped as the CLI command and the caveat block**; the HTTP endpoint was not
+**Shipped as the CLI command and the caveat block.** The HTTP endpoint was not
 added, since `endpoints serve` exists for the USDM projection specifically and
 `stats --json` covers programmatic use. The output groups by (form, unit)
-rather than requiring the caller to narrow to one -- see the spec.
+rather than requiring the caller to narrow to one; see the spec.
 
 ### D8. Baseline variability, as a second and larger denominator
 
@@ -279,33 +275,33 @@ continuous outcomes methodologists generally prefer the **baseline** SD to the
 follow-up SD when standardising. For a change-from-baseline endpoint it is also
 the more defensible planning input: the SD of a change score depends on the
 correlation between baseline and follow-up, which registries never report, so a
-change-score SD cannot be converted to a raw SD or vice versa without an
-assumption you would have to invent.
+change-score SD cannot be converted to a raw SD or the reverse without an
+invented assumption.
 
 Treating baseline variability as its own deliverable rather than a fallback
-inside D7 keeps that distinction visible in the output instead of burying it.
+inside D7 keeps that distinction visible in the output.
 
 *Ships as:* a parallel table and a `--source baseline` flag on `stats`. Small
 once D4 lands.
 
 **Shipped as the flag**, over the same `conformed.endpoint_dispersion` table
-rather than a parallel one -- a `result_kind` column keeps the two sources
-apart, and every query that must not mix them says so explicitly.
+rather than a parallel one. A `result_kind` column keeps the two sources apart,
+and every query that must not mix them says so explicitly.
 
 ### D9. Effect sizes, p-values and non-inferiority margins
 
 From `raw.outcome_analyses`, grouped by the conformed endpoint: the empirical
 distribution of hazard ratios, odds ratios, risk ratios and mean differences;
-the distribution of reported p-values; and -- the scarcest of the three --
-**the distribution of non-inferiority margins actually used per endpoint**.
+the distribution of reported p-values; and, the scarcest of the three,
+**the distribution of non-inferiority margins used per endpoint**.
 
 *Why it matters:* NI margin selection is currently justified by citing
 precedent trials found by hand. A table of every NI margin used for a given
-endpoint, with the trials behind it, does not exist publicly in any form I
-could find. The p-value distribution is separately interesting as a
-reporting-integrity check: prior work found significant results in roughly 60%
-of trials posting a treatment effect or p-value, and a per-endpoint version of
-that statistic is a finer instrument than a corpus-wide one.
+endpoint, with the trials behind it, does not appear to exist publicly. The
+p-value distribution is separately useful as a reporting-integrity check: prior
+work found significant results in roughly 60% of trials posting a treatment
+effect or p-value, and a per-endpoint version of that statistic is a finer
+instrument than a corpus-wide one.
 
 *Ships as:* a query set plus `stats --analyses`. Small once D4 lands.
 
@@ -321,21 +317,21 @@ effect and back out the implied power of trials that ran, per endpoint. Answers
 "for this endpoint, how large were the trials that detected a difference, and
 how large were the ones that did not".
 
-*Caveat that must ship with it:* this reconstructs *achieved* power from
-observed effects, which is not the same quantity as the design power a protocol
-assumed, and post-hoc power computed from an observed effect is a well-known
-statistical trap. Frame the output as a descriptive distribution of
-(N, effect, variability) triples, not as "this trial was underpowered".
+*Caveat that must ship with it:* this reconstructs achieved power from observed
+effects, which is not the design power a protocol assumed, and post-hoc power
+computed from an observed effect is a known statistical trap. Frame the output
+as a descriptive distribution of (N, effect, variability) triples rather than
+as a verdict that a trial was underpowered.
 
 *Ships as:* a query set. Small, with a large documentation burden.
 
-**Not shipped.** The inputs now exist, so it is a query set away; the
-documentation burden this section describes is the reason it was not written
-blind, ahead of a real corpus to check the framing against.
+**Not shipped.** The inputs now exist, so it is a query set away. The
+documentation burden this section describes is why it was not written ahead of
+a real corpus to check the framing against.
 
 ---
 
-## Tier 2 -- external sources worth joining
+## Tier 2: external sources worth joining
 
 Each of these is an independent, self-contained enrichment. None of them
 depends on Tier 1. All are public, and all are keyed on something the warehouse
@@ -354,10 +350,10 @@ which measurements in the vocabulary are FDA-recognised surrogates, for which
 indication, under which pathway.
 
 *Why it matters:* it is the highest-credibility external label available for an
-endpoint, it enriches the *vocabulary* rather than the results, and it makes a
-new class of question answerable -- how quickly does a newly-recognised
-surrogate propagate into registered trials, and which trials use a surrogate
-FDA has never accepted for that indication. Small, high value.
+endpoint, it enriches the vocabulary rather than the results, and it makes a
+new class of question answerable: how quickly a newly-recognised surrogate
+propagates into registered trials, and which trials use a surrogate FDA has
+never accepted for that indication. Small, high value.
 
 ### D12. FDA Clinical Outcome Assessment Compendium
 
@@ -371,17 +367,17 @@ Compendium", never "FDA-approved endpoint". Small.
 
 ### D13. COMET core outcome sets
 
-The COMET Initiative maintains a public database of core outcome sets -- the
+The COMET Initiative maintains a public database of core outcome sets, the
 minimum set of outcomes that should be measured in all trials of a given
-condition. Joining it to the vocabulary yields a per-condition list of "core"
+condition. Joining it to the vocabulary yields a per-condition list of core
 measurements, and therefore a computable **core-outcome adherence rate** per
 study and per sponsor.
 
 *Why it matters:* core-outcome adherence is measured today by manual review of
 a few dozen trials at a time. The conformed corpus makes it computable across
-thousands, which is a genuinely publishable meta-research result rather than an
-internal metric. Medium, and access terms should be checked before design --
-the database is free to search but I could not confirm a bulk or API export.
+thousands, which is a publishable meta-research result rather than an internal
+metric. Medium, and access terms should be checked before design: the database
+is free to search but a bulk or API export could not be confirmed.
 
 ### D14. Publication linkage, and registered-vs-published outcome switching
 
@@ -389,13 +385,11 @@ Link each NCT to its publications via Europe PMC's REST service, then conform
 the *published* primary endpoint and compare it to the *registered* primary
 endpoint.
 
-*Why it matters:* outcome switching -- a primary endpoint changing between
-registration and publication -- is one of the best-studied problems in trial
+*Why it matters:* outcome switching, a primary endpoint changing between
+registration and publication, is one of the best-studied problems in trial
 reporting and one of the most labour-intensive to detect, because it requires
 judging whether two differently-worded endpoints are the same endpoint. That
-judgment is precisely what the conformance engine automates. This is the
-deliverable where the project's core competence is most directly load-bearing,
-and the one most likely to be cited.
+judgment is what the conformance engine automates.
 
 *Secondary benefit:* publications carry results for the roughly 30% of
 applicable trials with nothing posted on the registry, which partly repairs the
@@ -408,10 +402,10 @@ and biologic trials, assembled from publications, phase transitions and market
 signals, with a manually annotated recent subset. It is downloadable and keyed
 on NCT ID.
 
-*The join:* endpoint choice → trial success. "Which endpoints are associated
-with trials that advanced" is a question the trial-design ML literature asks
-constantly using raw string features; asking it over a conformed vocabulary is
-a straightforwardly better version of the same question.
+*The join:* endpoint choice → trial success. Which endpoints are associated
+with trials that advanced is a question the trial-design ML literature asks
+using raw string features, and asking it over a conformed vocabulary is a
+better version of the same question.
 
 *Caveat:* these are weak labels with their own error model, and success is
 confounded by indication, sponsor and era. Treat as an external label to
@@ -423,22 +417,22 @@ responsibly.
 EU trials post summary results to CTIS, with public search and per-trial
 download. Registration in both registries is common for larger trials.
 
-*Why it matters, and why it is last:* the value is not more trials, it is
-**the same trial described twice**. A trial registered in both places gives two
+*Why it matters, and why it is last:* the value is **the same trial described
+twice** rather than more trials. A trial registered in both places gives two
 independent free-text renderings of the same endpoint, which is the only clean
-test set the conformance engine can ever get for the question "do two different
-strings for one endpoint conform to the same vocabulary term?" That is worth
-more to this project than the additional rows. Access is per-trial download
-rather than bulk, so scale carefully. Medium to large.
+test set the conformance engine can get for whether two different strings for
+one endpoint conform to the same vocabulary term. That is worth more here than
+the additional rows. Access is per-trial download rather than bulk, so scale
+carefully. Medium to large.
 
 ---
 
 ## The statistics, honestly
 
-An "expected standard deviation for an endpoint" is a **design prior assembled
-from observational aggregates**, not an estimate of a population parameter.
-Six specific things break it, and each needs to be visible in the output rather
-than in a footnote.
+An expected standard deviation for an endpoint is a **design prior assembled
+from observational aggregates** rather than an estimate of a population
+parameter. Six things break it, and each needs to be visible in the output
+rather than in a footnote.
 
 **Selection into the results database is not random.** Roughly 70% of trials
 that clearly fall under mandatory reporting have results posted; industry
@@ -451,7 +445,7 @@ The trials whose endpoints conform and the trials that post results are not
 independent samples, and the intersection is narrower than either.
 
 **Dispersion type is not standard deviation.** See D6. A pooled number computed
-across mixed dispersion types is not wrong by a little.
+across mixed dispersion types can be wrong by an order of magnitude.
 
 **Units are free text on the results side.** `unit_of_measure` is
 sponsor-written. Without the `scales.yaml` normalisation in D6, pooling silently
@@ -460,19 +454,18 @@ mixes L with mL.
 **Timepoint and population are part of the endpoint.** The SD of FEV1 change at
 week 12 is not the SD at week 52; the SD in a severe-disease enrichment
 population is not the SD in a broad one. The vocabulary has a timepoint axis and
-`population` is carried through as raw text -- the timepoint must be a grouping
+`population` is carried through as raw text. The timepoint must be a grouping
 key in D7, and the absence of a structured population axis must be stated as a
-limitation rather than papered over.
+limitation.
 
 **Change-score SD and raw SD are different quantities**, and converting between
 them requires the baseline/follow-up correlation, which registries do not
 report. Never mix them in one pool. This is why D8 exists as its own
 deliverable.
 
-The honest framing for D7's output: *"across N trials that reported a usable
-dispersion for this endpoint at this timepoint, arm-level SD had median X and
-interquartile range Y-Z; here is the coverage, and here are the trials."* Every
-one of those clauses is load-bearing.
+D7's output reads as: across N trials that reported a usable dispersion for
+this endpoint at this timepoint, arm-level SD had median X and interquartile
+range Y-Z, with this coverage and these trials behind it.
 
 ---
 
@@ -485,9 +478,10 @@ one of those clauses is load-bearing.
   why generic layers lose to typed columns here.
 * **Meta-analytic pooled effect estimates.** Computing a pooled treatment
   effect across trials grouped only by conformed endpoint means pooling across
-  different populations, comparators and eras. That is a systematic review, not
-  a query, and shipping it as a query invites exactly the misuse the project's
-  audit trail exists to prevent. Distributions, yes; pooled estimates, no.
+  different populations, comparators and eras. That is a systematic review
+  rather than a query, and shipping it as a query invites the misuse the
+  project's audit trail exists to prevent. Distributions yes, pooled estimates
+  no.
 * **Imputing dispersion where none was reported.** Leave the gap and report the
   denominator.
 * **Any individual-participant-data pathway.** Vivli, YODA and the rest are
@@ -510,30 +504,31 @@ numbers before any of Tier 1 is designed in full:
 
 1. What share of conformed studies have `hasResults`.
 2. What share of results-section outcome titles match the planned `measure`
-   string exactly -- and what the conformance engine does with the rest.
+   string exactly, and what the conformance engine does with the rest.
 3. The observed distribution of `dispersion_type` and `param_type`, and the
-   exact value sets both fields use. The enumerations assumed in D6 above are
-   from memory and secondary sources; ClinicalTrials.gov was unreachable from
-   the environment this was written in, so they must be confirmed against real
-   payloads, not trusted.
+   exact value sets both fields use. The enumerations assumed in D6 above come
+   from secondary sources, since ClinicalTrials.gov was unreachable from the
+   environment this was written in, so they must be confirmed against real
+   payloads.
 4. The share of results rows whose `unit_of_measure` normalises against
    `scales.yaml` as it stands today.
 
 **If the gate passes:** D4 → D5 → D6 → D7, in that order, with D8, D9 and D10
 following in any order once D4 lands.
 
-> **What actually happened.** The gate could not be run -- clinicaltrials.gov
-> and AACT are both unreachable from this project's environment. Rather than
-> stall the tier on an egress policy, D4-D9 were built so that no step assumes
-> the measurement: the two enumerations are recognised from an open set, an
+> **What happened.** The gate could not be run, because clinicaltrials.gov and
+> AACT are both unreachable from this project's environment. Rather than stall
+> the tier on an egress policy, D4-D9 were built so that no step assumes the
+> measurement: the two enumerations are recognised from an open set, an
 > unrecognised value is reported rather than coerced, and
 > `endpoints results coverage` answers all four questions against a real pull.
 > The four numbers are still owed. See
 > [`ENDPOINT_RESULTS_SPEC.md`, "The gate"](ENDPOINT_RESULTS_SPEC.md#the-gate).
 
 **Independently, whenever:** D13 (COMET) and D14 (publication linkage). D14 is
-the largest single item here and the one with the most external upside; it is
-listed late because it deserves its own spec, not because it ranks low.
+the largest single item here and the one with the most external upside. It is
+listed late because it deserves its own spec rather than because it ranks
+low.
 
 **Last:** D15 and D16.
 
@@ -541,7 +536,7 @@ listed late because it deserves its own spec, not because it ranks low.
 
 ## Standing constraints
 
-Decisions a future change should not quietly undo.
+Decisions a future change should not undo without replacing them.
 
 * **Results ingestion stays a thin fetch-and-land**, source-agnostic across
   both backends, exactly as protocol ingestion is. No conforming inside the
@@ -549,10 +544,10 @@ Decisions a future change should not quietly undo.
 * **Results text conforms through the existing engine.** No second matcher, no
   second vocabulary.
 * **Every derived statistic records how it was derived.** `sd_method`,
-  `sd_is_derived` and the inputs are as non-negotiable as `match_method` and
+  `sd_is_derived` and the inputs are recorded, as `match_method` and
   `confidence` are on the conformance side.
 * **Every aggregate ships its denominator.** A `stats` output without a
-  coverage line is a defect, not a terse convenience.
+  coverage line is a defect.
 * **Never pool across dispersion types, units, timepoints or change-vs-raw
   scores** without an explicit, recorded conversion.
 * **A trial that reported no usable dispersion is absent from the numerator and
@@ -562,15 +557,15 @@ Decisions a future change should not quietly undo.
 
 ## Sources consulted
 
-Written from a research pass in August 2026; `clinicaltrials.gov` and
+Written from a research pass in August 2026. `clinicaltrials.gov` and
 `aact.ctti-clinicaltrials.org` were both unreachable from this environment, so
-schema details attributed to them below are from secondary sources and must be
+schema details attributed to them below come from secondary sources and must be
 confirmed against a live pull.
 
 * [AACT database documentation](https://aact.ctti-clinicaltrials.org/documentation/219)
-  and [data dictionary](https://aact.ctti-clinicaltrials.org/data_dictionary) --
+  and [data dictionary](https://aact.ctti-clinicaltrials.org/data_dictionary) —
   results table structure
-* [`Merck/bards-aactreveal`](https://github.com/Merck/bards-aactreveal) -- an
+* [`Merck/bards-aactreveal`](https://github.com/Merck/bards-aactreveal) — an
   existing extraction layer over the same AACT results tables
 * [ClinicalTrials.gov API](https://clinicaltrials.gov/data-api/about-api) and
   [results data element definitions](https://clinicaltrials.gov/policy/results-definitions)
@@ -586,14 +581,14 @@ confirmed against a live pull.
   Nature Health (2026); dataset at [CTOD](https://chufangao.github.io/CTOD/)
 * Wan, X. et al.,
   [*Estimating the sample mean and standard deviation from the sample size, median, range and/or interquartile range*](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4383202/)
-  (2014) -- the IQR and range estimators in D6
+  (2014) — the IQR and range estimators in D6
 * [*Standardized mean differences in meta-analysis: a tutorial*](https://pmc.ncbi.nlm.nih.gov/articles/PMC11795939/)
-  -- on preferring baseline SD for standardisation (D8)
+  — on preferring baseline SD for standardisation (D8)
 * [*The Standard Error/Standard Deviation Mix-Up*](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC11239727/)
-  -- why D6 is the highest-risk item in Tier 1
+  — why D6 is the highest-risk item in Tier 1
 * [*Reporting of statistically significant results at ClinicalTrials.gov*](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5129217/)
-  -- the p-value baseline referenced in D9
+  — the p-value baseline referenced in D9
 * [FDA results-reporting compliance notice, March 2026](https://www.fda.gov/news-events/press-announcements/fda-reminds-more-2200-sponsors-and-researchers-disclose-trial-results)
-  -- the ~70% posting rate used above
+  — the ~70% posting rate used above
 * [*Obstacles to the reuse of study metadata in ClinicalTrials.gov*](https://www.nature.com/articles/s41597-020-00780-z)
-  -- prior art on why outcome measures resist reuse
+  — prior art on why outcome measures resist reuse

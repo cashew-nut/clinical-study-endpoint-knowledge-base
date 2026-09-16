@@ -1,13 +1,13 @@
-# Dimension: EVENT -- what occurrence ends the clock, for a time-to-event (or
-# other event-family) endpoint. Added by docs/EVENT_SEMANTICS_SPEC.md.
+# Dimension: EVENT, what occurrence ends the clock for a time-to-event or
+# other event-family endpoint. Added by docs/EVENT_SEMANTICS_SPEC.md.
 #
 # THE GAP THIS FILLS. A time-to-event endpoint is defined by a time origin and
 # an event; before this file the model had dimensions for the origin
 # (`reference`) and for what is assessed (`measurement`), and none for the
-# event itself. Projecting "PFS" therefore rendered the only thing it had --
-# the assessment -- into the event slot of the sentence ("Time from
-# randomisation to Tumour burden (RECIST)"), which is confident and wrong: PFS
-# is time to *progression or death*, not time to *an assessment*. See
+# event itself. Projecting "PFS" therefore rendered the assessment, the only
+# thing it had, into the event slot of the sentence ("Time from randomisation
+# to Tumour burden (RECIST)"), which is confident and wrong: PFS is time to
+# progression or death, not time to an assessment. See
 # docs/EVENT_SEMANTICS_SPEC.md for the full defect and the NCT01777919 case
 # that surfaced it.
 #
@@ -16,26 +16,26 @@
 # scoped per matching.yaml) plus two fields new to this file and one borrowed:
 #
 #   polarity        harm | benefit. Replaces the event_polarity_cues lookup
-#                    for any row whose event resolves -- directions.yaml's cue
+#                    for any row whose event resolves. directions.yaml's cue
 #                    regexes stay as the fallback for rows whose event does
 #                    NOT resolve, so the two cannot drift apart (see that
 #                    file's note).
 #   ascertained_by   measurement id(s) that typically ascertain this event.
 #                    Documentation and a validation target (ids must exist),
-#                    not a matching input -- it is what keeps the PFS<->ORR
+#                    not a matching input. It is what makes the PFS<->ORR
 #                    join explicable: the PFS event's progression component is
 #                    ascertained by the same RECIST measurement ORR is a
 #                    responder proportion over.
 #   components       makes an EVENT UNION explicit: event ids only, acyclic,
 #                    same discipline as composites.yaml (curated, cited, never
 #                    inferred from text). A term carries `components` OR
-#                    `ascertained_by`+match rules, never both -- a union is
+#                    `ascertained_by` plus match rules, never both. A union is
 #                    reached via a named-endpoint definition (or its own
 #                    synonyms, if it is later given any), never assembled at
 #                    match time from its parts.
 #
 # WHY NOT REGRAIN MEASUREMENT INSTEAD. measurements.yaml keeps PFS and ORR on
-# one id (`tumour_burden_recist`) on purpose -- that shared id is the
+# one id (`tumour_burden_recist`) because that shared id is the
 # SAME_MEASUREMENT_DIFFERENT_FORM join. Moving "progression-free survival"
 # onto an event-grained measurement id would fix the PFS sentence by
 # destroying that join. The event is a new axis, not a better measurement.
@@ -46,12 +46,11 @@
 # a whole endpoint bundle. Where a phrase already resolves a measurement whose
 # `implies_event` names this term (e.g. "disease progression" resolving
 # `disease_progression_event`, which implies `disease_progression`), this file
-# deliberately does NOT duplicate that phrase as its own synonym -- the
-# validator rejects a synonym claimed by two of {measurement, event,
-# named_endpoint}, and duplicating it here would only race the measurement
-# match for no gain. Synonyms/patterns below are therefore the event-specific
-# residue: wording that names the OCCURRENCE ("time to X") rather than the
-# assessment of it.
+# does NOT duplicate that phrase as its own synonym. The validator rejects a
+# synonym claimed by two of {measurement, event, named_endpoint}, and
+# duplicating it here would only race the measurement match for no gain. The
+# synonyms and patterns below are the event-specific residue: wording that
+# names the OCCURRENCE ("time to X") rather than the assessment of it.
 #
 # COVERAGE. The starter set is every distinct event class named by
 # directions.yaml's `event_polarity_cues` harm/benefit regexes, plus the
@@ -80,9 +79,9 @@ terms:
     notes: >-
       The OS event. No bare "death" synonym: `vital_status` already lists it
       as an assessment-language measurement synonym, and that measurement's
-      `implies_event` reaches this term with no duplicated text match --
-      keeping "death" here too would be the exact cross-file collision the
-      validator's ambiguous-synonym rule exists to catch.
+      `implies_event` reaches this term with no duplicated text match. Keeping
+      "death" here too would be the cross-file collision the validator's
+      ambiguous-synonym rule exists to catch.
 
   - id: disease_progression
     label: "Objective disease progression"
@@ -94,13 +93,13 @@ terms:
     patterns:
       - '\btime to (disease |radiographic |objective )?progression\b'
     notes: >-
-      Deliberately does not repeat "disease progression" / "radiographic
-      progression" / "progressive disease" here: those already resolve
-      `disease_progression_event` as a measurement (or `tumour_burden_recist`
-      via RECIST wording), and that measurement's `implies_event` reaches this
-      term with no duplicated text match. Only the residue -- "time to
-      progression" phrasing and the one synonym neither measurement lists --
-      lives here.
+      Does not repeat "disease progression", "radiographic progression" or
+      "progressive disease" here: those already resolve
+      `disease_progression_event` as a measurement, or `tumour_burden_recist`
+      via RECIST wording, and that measurement's `implies_event` reaches this
+      term with no duplicated text match. Only the residue lives here: the
+      "time to progression" phrasing and the one synonym neither measurement
+      lists.
 
   - id: disease_progression_or_death
     label: "Disease progression or death from any cause"
@@ -111,7 +110,7 @@ terms:
     notes: >-
       The PFS event. An event union: the endpoint fires on whichever
       component occurs first. Components follow the composite spec's
-      event_union discipline -- curated, cited, never inferred from text.
+      event_union discipline: curated, cited, never inferred from text.
       Reached via the `pfs`/`rpfs`/`dor` named-endpoint definitions, not by
       text matching (no synonyms/patterns of its own).
 
@@ -146,9 +145,8 @@ terms:
       - '\btime to (first |confirmed |objective )?response\b'
     notes: >-
       The TTR event, and (as a REFERENCE, a separate vocab entry of the same
-      id in references.yaml) DOR's time origin -- "duration of response"
-      counts from the moment response is first documented, not from
-      randomisation.
+      id in references.yaml) DOR's time origin: "duration of response" counts
+      from the moment response is first documented, not from randomisation.
 
   - id: treatment_failure
     label: "Treatment failure / need for subsequent therapy"
@@ -206,8 +204,8 @@ terms:
     patterns:
       - '\btime to (initiation of )?rescue (medication|therapy|treatment)\b'
     notes: >-
-      Needing rescue medication is the bad outcome, so later is better --
-      easy to get backwards, which is why directions.yaml wrote this one down
+      Needing rescue medication is the bad outcome, so later is better. Easy
+      to get backwards, which is why directions.yaml wrote this one down
       rather than leaving it to a default.
 
   - id: treatment_discontinuation
@@ -243,7 +241,7 @@ terms:
     patterns:
       - '\btime to transplant\w*\b'
     notes: >-
-      The harm sense -- organ failure severe enough to require a transplant.
+      The harm sense: organ failure severe enough to require a transplant.
       Distinct from `references.yaml`'s `index_event`, which covers dating a
       trial's clock FROM a transplant already performed.
 
@@ -276,9 +274,9 @@ terms:
   # =========================================================================
   # Added in round three, against a pull whose two largest areas are
   # cardiovascular and respiratory. Before it, event resolution on event-family
-  # rows ran 72.0% in oncology and 48.8% / 47.7% in those two -- the same
-  # oncology bias measurements.yaml had, in the dimension where being wrong is
-  # loudest: an event-family row whose event does not resolve renders at
+  # rows ran 72.0% in oncology and 48.8% / 47.7% in those two, the same
+  # oncology bias measurements.yaml had, in the dimension where being wrong
+  # costs most: an event-family row whose event does not resolve renders at
   # `partial` tier, and one that resolves to the WRONG event renders a
   # confident, standards-conformant, clinically wrong sentence. "Major adverse
   # cardiovascular events within 30 days (MACE30)" resolved to
@@ -288,7 +286,7 @@ terms:
   # wording lives on the measurement (measurements.yaml's cardiovascular and
   # respiratory round-three blocks), which reaches the event through
   # `implies_event`; what stays here is the residue that names the OCCURRENCE
-  # rather than the assessment of it -- "time to X" phrasings and composite
+  # rather than the assessment of it: "time to X" phrasings and composite
   # unions with no text form of their own.
 
   - id: myocardial_infarction
@@ -324,7 +322,7 @@ terms:
       `death_any_cause`, and a trial's cardiovascular-death endpoint is a
       strictly narrower event than its all-cause one. Leaving it to
       `vital_status` would have rendered "Time from randomisation to death from
-      any cause" over a CV-death endpoint -- the same class of confident, wrong
+      any cause" over a CV-death endpoint, the same class of confident, wrong
       sentence as the PFS defect that created this file. The measurement stays
       `vital_status` either way, so the survival join is untouched.
 
@@ -394,8 +392,8 @@ terms:
       - '\bnet adverse (clinical|event clinical) events?\b'
     notes: >-
       MACE is clinically a union of cardiovascular death, myocardial infarction
-      and stroke -- all three of which are event ids in this section -- and it
-      is deliberately NOT declared with `components`. This file's XOR rule
+      and stroke, all three of which are event ids in this section, and it is
+      NOT declared with `components`. This file's XOR rule
       (`components` XOR match rules) draws exactly the right line, and MACE is
       on the other side of it from `disease_progression_or_death`: that term has
       no text form of its own and is reached only through the `pfs` definition,
@@ -404,8 +402,8 @@ terms:
       matcher would then have to be forbidden from using. The four- and
       five-point variants (adding revascularisation, hospitalisation for
       unstable angina) are the same event with a different adjudication
-      definition, which is a Threshold question rather than a second term --
-      the same call `tumour_burden_recist` makes about RECIST's response
+      definition, which is a Threshold question rather than a second term, the
+      same call `tumour_burden_recist` makes about RECIST's response
       criteria.
 
       The two patterns are the one place this file matches text that a
@@ -415,7 +413,7 @@ terms:
       description almost always spells the components out ("adjudicated as CV
       death, nonfatal MI, and nonfatal stroke"). With no `measure`-level match
       the cascade reached the description first and resolved the event to
-      whichever single component it found there -- "Major adverse
+      whichever single component it found there: "Major adverse
       cardiovascular event (MACE)" came out as time to stroke, and "Major
       adverse cardiovascular events within 30 days (MACE30)" as time to death
       from any cause. Rows these patterns miss still fall through to the
@@ -454,9 +452,8 @@ terms:
       optional once `hospitalisation` gained `implies_event:
       hospitalisation_event` in round three. Direction is event-first, so
       without a discharge event "Time to discharge" inherited the ADMISSION
-      event's `harm` polarity and came out `longer_is_better` -- a real
-      regression the round-three before/after direction diff caught on three
-      rows. directions.yaml's benefit cues have listed "time to ... discharge"
+      event's `harm` polarity and came out `longer_is_better`, a regression the
+      round-three before/after direction diff caught on three rows. directions.yaml's benefit cues have listed "time to ... discharge"
       since they were written; this is the same judgment, moved to the layer
       that now decides first.
 
@@ -520,8 +517,8 @@ terms:
     concept: not_stated
     definition: >-
       The endpoint is an event-family form (forms.yaml `event_family: true`)
-      but the text does not name -- and no named-endpoint definition or
-      measurement `implies_event` resolves -- what occurrence ends the clock.
+      but neither the text nor a named-endpoint definition nor a measurement's
+      `implies_event` says what occurrence ends the clock.
       Kept explicit so an unresolved event is visible and countable, the same
       way `reference.not_stated` and `direction.not_stated` are, rather than
       leaving it a silent null.
@@ -534,7 +531,7 @@ concepts_note: >-
   pathogen_clearance, immune_reconstitution, global_clinical_change) and a
   plain descriptive string elsewhere (amputation, kidney_function,
   transplantation, treatment_discontinuation, fracture, not_stated). Not
-  cross-validated against measurements.yaml's declared `concepts:` list --
-  see vocab/README.md decision #2 and this spec's Open Question #1 on concept
-  promotion; promoting `concept` to its own vocabulary is additive, not a
+  cross-validated against measurements.yaml's declared `concepts:` list. See
+  vocab/README.md decision #2 and this spec's Open Question #1 on concept
+  promotion: promoting `concept` to its own vocabulary is additive and not a
   reason to gate this file on it now.

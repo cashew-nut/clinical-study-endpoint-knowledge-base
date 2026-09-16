@@ -5,13 +5,13 @@
 # that, but not identically:
 #
 #   AACT      ctgov.interventions (intervention_type, name, description),
-#             ctgov.intervention_other_names, and ctgov.design_group_interventions
-#             -- a real arm<->intervention join table. No MeSH ancestors, and no
+#             ctgov.intervention_other_names, and ctgov.design_group_interventions,
+#             a real arm<->intervention join table. No MeSH ancestors, and no
 #             intervention browse branches.
 #   CT.gov v2 protocolSection.armsInterventionsModule.interventions[] (type,
 #             name, otherNames[], armGroupLabels[]) plus
 #             derivedSection.interventionBrowseModule's meshes[], ancestors[]
-#             and browseBranches[] -- the ancestry AACT lacks, but only an
+#             and browseBranches[], the ancestry AACT lacks, but only an
 #             arm-label string match where AACT has a join table.
 #
 # So the mapping is written in layers, applied in this order, FIRST HIT WINS PER
@@ -25,7 +25,7 @@
 #                      obvious class is the wrong one, this settles it by hand.
 #                      Matched against both because for interventions the
 #                      descriptor IS a drug name and sponsors usually write the
-#                      same string -- an override that applied only to the NLM
+#                      same string, so an override that applied only to the NLM
 #                      side would settle half the corpus at random.
 #   2. agent_names     exact drug name. Matched against BOTH the sponsor's
 #                      `name`/`other_name` AND the NLM descriptor, because for
@@ -33,15 +33,14 @@
 #                      entry is a human assertion about a specific drug, which
 #                      is why it outranks NLM's own ancestry below.
 #   3. name_patterns   WHO INN stems, and the vaccine-platform words no stem
-#                      covers. See the block's own note -- this layer is doing
-#                      more work than it looks like.
+#                      covers. See the block's own note for what it carries.
 #   4. ancestor_rules  MeSH ancestors of the coded interventions. NLM's own
 #                      hierarchy: the mechanism signal, where it exists.
 #   5. branch_rules    CT.gov's coarse pharmacologic branches. Always yields a
 #                      `pharmacologic` class, never a mechanism claim.
 #   6. modality_rules  the registry's own intervention_type. Applies only where
 #                      no `modality` class has already been matched for that
-#                      intervention -- unlike every other layer, this one is a
+#                      intervention. Unlike every other layer, this one is a
 #                      fallback WITHIN its axis rather than a first-hit-wins
 #                      competitor, because "monoclonal antibody" and "small
 #                      molecule" are alternatives and "PD-1 inhibitor" and
@@ -50,13 +49,13 @@
 #
 # A study usually has several interventions and therefore several classes. Keep
 # them all; drug_classes.yaml `precedence` picks the primary. Do NOT collapse to
-# one class here -- combination therapy is the norm, and a trial of
-# pembrolizumab plus carboplatin genuinely is both.
+# one class here: combination therapy is the norm, and a trial of pembrolizumab
+# plus carboplatin is both.
 #
 # WHAT THIS FILE IS NOT. It is not a drug dictionary, and must not grow into
 # one under coverage pressure. `agent_names` covers the agents a Phase 3 corpus
-# is mostly made of; everything else is meant to be caught by the stem, ancestor
-# and branch layers, and what those miss goes to
+# is mostly made of, everything else is caught by the stem, ancestor and branch
+# layers, and what those miss goes to
 # conformed.drug_class_review_queue rather than being guessed at. If the review
 # queue is dominated by one class's agents, the fix is a review round, not a
 # looser pattern.
@@ -96,9 +95,8 @@ control_rules:
       - '\bobservation only\b'
       - '\bwatchful waiting\b'
     notes: >-
-      Distinct from placebo, and the distinction matters: an arm that receives
-      nothing has no blinding and no placebo response, so its variability is not
-      the placebo arm's variability.
+      Distinct from placebo: an arm that receives nothing has no blinding and
+      no placebo response, so its variability is not the placebo arm's.
 
 # --- layer 1: exact MeSH descriptor overrides -----------------------------
 # Only for descriptors whose obvious class is the wrong one. Everything else
@@ -109,8 +107,8 @@ term_overrides:
   # sides before comparison.
   # An antimalarial by INN stem and MeSH ancestry, but in trial registrations it
   # is overwhelmingly an antirheumatic or (2020-2021) a COVID antiviral
-  # candidate. Left as antiparasitic deliberately -- the mechanism is what it is,
-  # and the therapeutic area separates the uses.
+  # candidate. Left as antiparasitic: the mechanism is what it is, and the
+  # therapeutic area separates the uses.
   "Hydroxychloroquine": antiparasitic
   # Both an NSAID and an antiplatelet. Classed as antiplatelet because that is
   # what a trial registering it as an intervention is almost always studying;
@@ -564,13 +562,12 @@ agent_names:
   "nvx-cov2373": subunit_vaccine
 
 # --- layer 3: name patterns -----------------------------------------------
-# WHO International Nonproprietary Name stems. This layer is doing more work
-# than it looks like: INN stems are a published, enforced naming convention, so
-# "-gliflozin" is not a guess about a drug, it is the WHO stem that made the
-# drug's name what it is. That makes this the layer most likely to class an
-# agent NLM has not coded yet -- which is exactly the gap `agent_names` cannot
-# close, since a new molecular entity is routinely uncoded for a year or more
-# after registration.
+# WHO International Nonproprietary Name stems. INN stems are a published,
+# enforced naming convention, so "-gliflozin" is not a guess about a drug, it
+# is the WHO stem that made the drug's name what it is. That makes this the
+# layer most likely to class an agent NLM has not coded yet, which is the gap
+# `agent_names` cannot close, since a new molecular entity is routinely uncoded
+# for a year or more after registration.
 #
 # Ordered most specific first, because first hit wins: "-ciclib" must be tried
 # before the generic "-ib" family, and "-tinib" before "-nib".
@@ -622,22 +619,22 @@ name_patterns:
   - drug_class: tyrosine_kinase_inhibitor
     patterns: ['\w+tinib\b']
     notes: >-
-      Deliberately last of the "-ib" family, and deliberately the parent class
-      rather than a specific target: the stem says kinase inhibitor and nothing
-      more. A specific target needs an `agent_names` entry.
+      Last of the "-ib" family, and the parent class rather than a specific
+      target, because the stem says kinase inhibitor and nothing more. A
+      specific target needs an `agent_names` entry.
   - drug_class: monoclonal_antibody
     patterns: ['\w+mab\b']
     notes: >-
-      A `modality` class, so it never competes with a mechanism match -- an
-      agent matched to pd1_inhibitor by name still picks this up as its modality
-      (see `resolution.modality_is_orthogonal`).
+      A `modality` class, so it never competes with a mechanism match. An agent
+      matched to pd1_inhibitor by name still picks this up as its modality (see
+      `resolution.modality_is_orthogonal`).
   - drug_class: antibody_drug_conjugate
     patterns: ['\w+mab (vedotin|deruxtecan|govitecan|emtansine|mafodotin|tesirine)\b']
   - drug_class: fusion_protein
     patterns: ['\w+cept\b']
   - drug_class: oligonucleotide_therapy
     patterns: ['\w+(sen|siran|rsen)\b']
-  # Vaccine platform, which no INN stem covers -- these are trial-name words.
+  # Vaccine platform, which no INN stem covers; these are trial-name words.
   - drug_class: mrna_vaccine
     patterns: ['\bmrna\b.*\bvaccine\b', '\bvaccine\b.*\bmrna\b', '\bmodified mrna\b']
   - drug_class: viral_vector_vaccine
@@ -655,7 +652,7 @@ name_patterns:
 
 # --- layer 4: MeSH ancestors ----------------------------------------------
 # NLM's own hierarchy, from derivedSection.interventionBrowseModule.ancestors[].
-# CT.gov backend only -- AACT publishes no intervention ancestry (see
+# CT.gov backend only. AACT publishes no intervention ancestry (see
 # ingest/aact_interventions.py), so this layer is simply empty there and the
 # resolver falls through to branches and modality.
 #
@@ -734,13 +731,13 @@ ancestor_rules:
 # Matched on `branch_name`, NEVER by parsing `branch_abbrev`: the CONDITION
 # branch abbreviations turned out to be "B" + a MeSH tree code ("BC04" =
 # Neoplasms, see ta/resolver.py), and there is no evidence the intervention
-# branches use that convention -- they are not documented anywhere this project
-# can reach. Landing them verbatim and matching the name costs nothing and
-# cannot be silently wrong the way a parsed abbreviation could.
+# branches use that convention, and they are not documented anywhere this
+# project can reach. Landing them verbatim and matching the name costs nothing
+# and cannot be silently wrong the way a parsed abbreviation could.
 #
 # Always yields a `pharmacologic` class. This is the weakest layer above the
 # defaults, and it exists so a study whose interventions resolve to no mechanism
-# lands somewhere honest rather than in `unclassified_agent`.
+# lands on a real term rather than in `unclassified_agent`.
 branch_rules:
   - drug_class: antineoplastic_agent
     patterns: ['\bantineoplastic\b']
@@ -769,9 +766,9 @@ branch_rules:
   - drug_class: ophthalmic_agent
     patterns: ['\bophthalmic\b']
     notes: >-
-      "All Drugs and Chemicals" is deliberately unmapped. It is on essentially
-      every drug study, so mapping it would give every such study one identical
-      class and make the axis look far better covered than it is.
+      "All Drugs and Chemicals" is unmapped. It is on essentially every drug
+      study, so mapping it would give every such study one identical class and
+      make the axis look better covered than it is.
 
 # --- layer 6: modality, from the registry's own intervention_type ---------
 # The one layer that is a fallback within its axis rather than a competitor:
@@ -781,7 +778,7 @@ branch_rules:
 #
 # Keyed on intervention_type, case- and separator-insensitively (the two
 # backends spell these differently, the same way they spell PRIMARY/Primary
-# differently -- see ingest/results.py).
+# differently; see ingest/results.py).
 modality_rules:
   DRUG: small_molecule
   DEVICE: device_intervention
@@ -793,12 +790,11 @@ modality_rules:
   DIAGNOSTIC_TEST: device_intervention
   COMBINATION_PRODUCT: device_intervention
   notes: >-
-    BIOLOGICAL is deliberately absent. It covers monoclonal antibodies,
-    vaccines, cell therapies and recombinant proteins alike, so any single
-    modality it mapped to would be wrong most of the time; the name stems in
-    layer 3 classify biologics far better than the type field can. An
-    unmatched BIOLOGICAL simply carries no modality class, which is the honest
-    outcome.
+    BIOLOGICAL is absent. It covers monoclonal antibodies, vaccines, cell
+    therapies and recombinant proteins alike, so any single modality it mapped
+    to would be wrong most of the time, and the name stems in layer 3 classify
+    biologics better than the type field can. An unmatched BIOLOGICAL carries
+    no modality class.
 
 # --- layer 7: defaults ----------------------------------------------------
 defaults:

@@ -1,4 +1,4 @@
-# Dimension: SCALE -- the unit the endpoint's value is expressed in.
+# Dimension: SCALE, the unit the endpoint's value is expressed in.
 #
 # Scale is a property of the (measurement, form) pair, not of either alone:
 # body weight in kg becomes % under percent_change_from_baseline, and becomes
@@ -81,7 +81,7 @@ terms:
     synonyms: ["month", "months", "mo", "mth"]
     notes: >-
       The default scale for time-to-event oncology endpoints, which the reference
-      table records as "Months (KM)" -- the KM qualifier is an analysis method, not
+      table records as "Months (KM)". The KM qualifier is an analysis method, not
       a unit, and belongs in the form's notes rather than here.
   - id: years
     label: "Years"
@@ -129,7 +129,7 @@ terms:
     synonyms: ["percent", "percentage", "%"]
     notes: >-
       A percentage of a measured quantity (oxygen saturation, ejection fraction,
-      lung extent), NOT a percentage of participants -- keep those on
+      lung extent), NOT a percentage of participants. Keep those on
       percentage_of_participants, since only one of the two is a proportion of a
       denominator of people.
   - id: percent_predicted
@@ -168,7 +168,7 @@ terms:
     synonyms: ["points", "score", "total score", "score units", "rated from",
                "units on a scale", "score on a scale"]
     notes: >-
-      The most common scale in the corpus by a wide margin -- instrument scores
+      The most common scale in the corpus by a wide margin: instrument scores
       (PASI, EASI, DLQI, MADRS, NIHSS, WOMAC, CGI, ...). The instrument's range and
       polarity live on the measurement, not here, so that "points" stays a unit
       rather than becoming a per-instrument vocabulary.
@@ -201,7 +201,7 @@ terms:
     si_equivalent: logmar
     factor_to_si: 1
     synonyms: ["logMAR", "log MAR"]
-    notes: "Inverse polarity to letters_etdrs -- lower logMAR is better vision."
+    notes: "Inverse polarity to letters_etdrs: lower logMAR is better vision."
   - id: steps_drss
     label: "DRSS steps"
     inline_label: "DRSS steps"
@@ -249,7 +249,7 @@ terms:
     synonyms: ["L/min", "l/min", "litres per minute", "liters per minute", "LPM"]
     notes: >-
       Peak expiratory flow is reported in L/min by some sponsors and L/s by
-      others, in trials of the same drug class -- the case factor_to_si exists
+      others, in trials of the same drug class, which is the case factor_to_si exists
       for.
   - id: metres_per_second
     label: "Metres per second (m/s)"
@@ -377,7 +377,7 @@ terms:
     si_equivalent: hours
     factor_to_si: 0.00000027777778
     synonyms: ["ms", "msec", "milliseconds"]
-    notes: "QT/QTcF intervals. Shares kind `time` with the survival units by unit algebra only -- filter on measurement.domain, not on kind, to separate ECG from survival."
+    notes: "QT/QTcF intervals. Shares kind `time` with the survival units by unit algebra only, so filter on measurement.domain rather than on kind to separate ECG from survival."
 
   # --- concentrations and laboratory ---------------------------------------
   - id: percent_hba1c
@@ -387,7 +387,7 @@ terms:
     si_equivalent: mmol_per_mol
     synonyms: ["percent HbA1c", "NGSP %", "% (mmol/mol)", "NGSP"]
     notes: >-
-      The reference table records HbA1c's scale as "% (mmol/mol)" -- two coexisting
+      The reference table records HbA1c's scale as "% (mmol/mol)": two coexisting
       conventions for one quantity (NGSP % and IFCC mmol/mol). They are kept as
       separate terms with an si_equivalent link so both report into one comparison;
       conversion is IFCC = (NGSP - 2.15) * 10.929, which is affine, not a single

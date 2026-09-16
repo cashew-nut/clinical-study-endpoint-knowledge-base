@@ -1,4 +1,4 @@
-# Dimension: DIRECTION -- which way is a better result.
+# Dimension: DIRECTION, which way is a better result.
 #
 # Direction is almost never stated in a registry `measure` string. It is derived,
 # not matched: forms.yaml carries a `direction_rule` and measurements.yaml carries a
@@ -83,7 +83,7 @@ terms:
     notes: >-
       Easy to get wrong and easy to spot once wrong. "Time to first subsequent
       therapy" is longer_is_better; "Time to Response (TTR)" is shorter_is_better.
-      Both are time_to_event, so form alone cannot decide -- only the event's
+      Both are time_to_event, so form alone cannot decide. Only the event's
       polarity can, which is why measurements.yaml carries event_polarity.
 
   - id: target_range
@@ -108,7 +108,7 @@ terms:
     label: "No preferred direction"
     definition: >-
       The endpoint is descriptive or characterising, with no better or worse
-      result -- PK exposure parameters, drug concentrations, ADA titres reported
+      result: PK exposure parameters, drug concentrations, ADA titres reported
       for characterisation, exploratory biomarkers.
     sign: 0
     cues:
@@ -127,7 +127,7 @@ terms:
 # Event polarity is not always a property of the measurement.
 #
 # `measurements.yaml` carries `event_polarity` per measurement, which is right for
-# most of the corpus -- an adverse event is a harm wherever it appears. But some
+# most of the corpus, since an adverse event is a harm wherever it appears. But some
 # measurements host events of BOTH polarities: RECIST tumour assessment gives
 # "time to progression" (harm, longer is better) and "time to response" (benefit,
 # sooner is better) from one measurement id. The measurement cannot decide between
@@ -163,7 +163,7 @@ event_polarity_cues:
     events.yaml's cardiovascular/respiratory terms. They are belt and braces, not
     the primary evidence: direction is event-first, so a row whose event resolves
     takes the event's own `polarity` and never reaches these regexes. They catch
-    the residue -- a time-to-first-infarction row whose measurement did not
+    the residue: a time-to-first-infarction row whose measurement did not
     resolve, and so has no `implies_event` to follow.
 
 # Direction is derived, never matched, so the fallback is on derivation: when
