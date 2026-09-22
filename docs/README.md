@@ -25,12 +25,15 @@ Each spec states its own status at the top. In short:
 | [`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md) | **implemented** (phases 1–4; phase 0, the measurement, needs a live pull) | grouping endpoints by the drug class under study: landing the interventions, the class vocabulary, the layered resolver, and `--drug-class` / `--by drug-class` |
 | [`COMPOSITE_ENDPOINTS_SPEC.md`](COMPOSITE_ENDPOINTS_SPEC.md) | **not implemented** | decomposing composite endpoints into their components — a proposal, gated on a measurement that needs a live pull |
 | [`RESULTS_CORRELATION_ROADMAP.md`](RESULTS_CORRELATION_ROADMAP.md) | **partly shipped** (D4–D9) | the menu the results spec was chosen from, and what was decided against |
+| [`SNOWFLAKE_CONFORMED_LAYER_SPEC.md`](SNOWFLAKE_CONFORMED_LAYER_SPEC.md) | **handoff spec** | building the `conformed` layer as Snowflake tables over AACT sources, with no DuckDB, CLI, API or ingestion pipeline |
 
 Read them in that order if you are new to the project: the first two explain
 how the pipeline gets its data and what it emits, the next two are corrections
 made after validating the projection against a real trial, the fifth is what
 the pipeline does with what trials reported, the sixth is how endpoints are
-grouped by what was being tested, and the last two are proposals.
+grouped by what was being tested, and the next two are proposals. The last is
+not a design record for this codebase: it is the porting brief for
+reimplementing the conformed layer in Snowflake.
 
 ### Conventions
 
