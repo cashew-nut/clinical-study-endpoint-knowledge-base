@@ -6,7 +6,7 @@ import csv
 import datetime as dt
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
@@ -22,6 +22,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from clinical_endpoints.cli import guide
 from clinical_endpoints.conform.pipeline import run_conform
 from clinical_endpoints.db import (
     AactConnectionError,
@@ -43,6 +44,7 @@ from clinical_endpoints.results.stats import (
     sd_distribution,
     stratify_by_drug_class,
 )
+from clinical_endpoints.scope import ScopeError, StudyScope
 from clinical_endpoints.usdm.codes import UnknownOutcomeType
 from clinical_endpoints.usdm.envelope import module_envelope, wrapper_envelope
 from clinical_endpoints.usdm.project import (
@@ -96,6 +98,114 @@ app.add_typer(results_app, name="results")
 USDM_ENVELOPES = ("module", "wrapper")
 
 STATS_STRATIFIERS = ("drug-class",)
+
+# The study filters every reporting command takes. Each accepts a
+# comma-separated list (values OR'd); different filters are AND'd.
+STUDY_FILTERS_PANEL = "Study filters (shared by every reporting command)"
+ENDPOINT_FILTERS_PANEL = "Endpoint filters"
+
+TaOption = Annotated[
+    Optional[str],
+    typer.Option(
+        "--ta",
+        help="Therapeutic area id(s), comma-separated, e.g. respiratory,oncology. "
+        "Matches any area a study resolved to.",
+        rich_help_panel=STUDY_FILTERS_PANEL,
+    ),
+]
+OrgOption = Annotated[
+    Optional[str],
+    typer.Option(
+        "--org",
+        help='Lead-sponsor name fragment(s), comma-separated, case-insensitive, e.g. "Pfizer,AbbVie".',
+        rich_help_panel=STUDY_FILTERS_PANEL,
+    ),
+]
+PhaseOption = Annotated[
+    Optional[str],
+    typer.Option(
+        "--phase",
+        help='Study phase(s), comma-separated: 1, 2, 3, 4, 1/2, 2/3, na (or PHASE3 etc.). '
+        "Matched exactly, so 3 does not include 2/3.",
+        rich_help_panel=STUDY_FILTERS_PANEL,
+    ),
+]
+DrugClassOption = Annotated[
+    Optional[str],
+    typer.Option(
+        "--drug-class",
+        help="Drug-class id(s), comma-separated, e.g. sglt2_inhibitor (study tier).",
+        rich_help_panel=STUDY_FILTERS_PANEL,
+    ),
+]
+SinceOption = Annotated[
+    Optional[str],
+    typer.Option(
+        "--since",
+        help="Only studies with start_date on/after this date (YYYY-MM-DD).",
+        rich_help_panel=STUDY_FILTERS_PANEL,
+    ),
+]
+MeasurementOption = Annotated[
+    Optional[str],
+    typer.Option(
+        "--measurement",
+        help="Vocabulary measurement id(s), comma-separated, e.g. fev1.",
+        rich_help_panel=ENDPOINT_FILTERS_PANEL,
+    ),
+]
+FormOption = Annotated[
+    Optional[str],
+    typer.Option(
+        "--form",
+        help="Vocabulary form id(s), comma-separated, e.g. change_from_baseline.",
+        rich_help_panel=ENDPOINT_FILTERS_PANEL,
+    ),
+]
+TimepointOption = Annotated[
+    Optional[str],
+    typer.Option(
+        "--timepoint",
+        help="Timepoint pattern id(s), comma-separated, e.g. single_fixed.",
+        rich_help_panel=ENDPOINT_FILTERS_PANEL,
+    ),
+]
+
+
+def _study_scope(
+    *,
+    ta: Optional[str] = None,
+    org: Optional[str] = None,
+    phase: Optional[str] = None,
+    drug_class: Optional[str] = None,
+    since: Optional[str] = None,
+) -> StudyScope:
+    try:
+        return StudyScope.from_options(
+            ta=ta, org=org, phase=phase, drug_class=drug_class, since=since
+        )
+    except ScopeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+
+def _scoped_nct_ids(con, scope: StudyScope) -> Optional[list[str]]:
+    """The studies in scope, or None for every study. Exits cleanly (code 0)
+    when the filters match nothing, so a report never reads an empty filter
+    as "no filter"."""
+    if scope.is_empty:
+        return None
+    try:
+        scope.validate(con)
+    except ScopeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    nct_ids = scope.nct_ids(con)
+    if not nct_ids:
+        console.print(f"[yellow]No pulled study matches {scope.describe()}.[/yellow]")
+        raise typer.Exit(code=0)
+    console.print(f"[dim]Scope: {scope.describe()} ({len(nct_ids):,} studies)[/dim]")
+    return nct_ids
 
 
 def _determinate_progress() -> Progress:
@@ -209,17 +319,20 @@ def _ensure_vocab_loaded(
 @app.command()
 def pull(
     phase: str = typer.Option(
-        ..., "--phase", help='Comma-separated phases, e.g. "3" or "1/2,2,3".'
+        ..., "--phase", help='Comma-separated phases, e.g. "3" or "1/2,2,3".',
+        rich_help_panel=STUDY_FILTERS_PANEL,
     ),
     limit: int = typer.Option(500, "--limit", help="Max studies to pull, most recent first."),
     since: Optional[str] = typer.Option(
-        None, "--since", help="Only studies with start_date on/after this date (YYYY-MM-DD)."
+        None, "--since", help="Only studies with start_date on/after this date (YYYY-MM-DD).",
+        rich_help_panel=STUDY_FILTERS_PANEL,
     ),
     ta: Optional[str] = typer.Option(
         None,
         "--ta",
         help="Therapeutic-area filter (comma-separated ids from therapeutic_areas.yaml, "
         "e.g. oncology,respiratory). Applied client-side before --limit.",
+        rich_help_panel=STUDY_FILTERS_PANEL,
     ),
     drug_class: Optional[str] = typer.Option(
         None,
@@ -227,12 +340,14 @@ def pull(
         help="Drug-class filter (comma-separated ids from drug_classes.yaml, e.g. "
         "glp1_receptor_agonist,sglt2_inhibitor). Applied client-side before --limit. "
         "Not needed to get drug classes: every pull resolves them for what it lands.",
+        rich_help_panel=STUDY_FILTERS_PANEL,
     ),
     org: Optional[str] = typer.Option(
         None,
         "--org",
         help="Lead-sponsor filter (comma-separated name fragments, case-insensitive, "
         'e.g. "Pfizer" or "Pfizer,AbbVie"). Applied server-side before --limit.',
+        rich_help_panel=STUDY_FILTERS_PANEL,
     ),
     results: bool = typer.Option(
         True,
@@ -532,9 +647,15 @@ def vocab_sample(
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
+    ta: TaOption = None,
+    org: OrgOption = None,
+    phase: PhaseOption = None,
+    drug_class: DrugClassOption = None,
+    since: SinceOption = None,
 ) -> None:
     """Export design_outcomes vocabulary for review: a per-field frequency
     table with coverage (default), or a row-level sample (--format rows)."""
+    scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     if fmt not in ("frequency", "rows"):
         console.print(f"[red]--format must be 'frequency' or 'rows', got {fmt!r}[/red]")
         raise typer.Exit(code=1)
@@ -553,6 +674,7 @@ def vocab_sample(
 
     con = connect(warehouse)
     try:
+        nct_ids = _scoped_nct_ids(con, scope)
         result = run_vocab_sample(
             con,
             min_frequency=min_frequency,
@@ -562,6 +684,7 @@ def vocab_sample(
             out_path=out_path,
             fmt=fmt,
             outcome_types=outcome_types,
+            nct_ids=nct_ids,
         )
     finally:
         con.close()
@@ -655,9 +778,15 @@ def ta_diff_tree(
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
+    ta: TaOption = None,
+    org: OrgOption = None,
+    phase: PhaseOption = None,
+    drug_class: DrugClassOption = None,
+    since: SinceOption = None,
 ) -> None:
     """Report every disagreement between the tree-prefix layer and the regex
     layer over every pulled study's conditions, most frequent first."""
+    scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     con = connect(warehouse)
     try:
         if not _vocab_ta_tables_ready(con):
@@ -670,8 +799,9 @@ def ta_diff_tree(
             console.print("[red]Run `endpoints pull` first -- no raw.browse_conditions yet.[/red]")
             raise typer.Exit(code=1)
 
-        availability = tree_availability_summary(con)
-        diffs = diff_tree_vs_pattern(con)
+        nct_ids = _scoped_nct_ids(con, scope)
+        availability = tree_availability_summary(con, nct_ids=nct_ids)
+        diffs = diff_tree_vs_pattern(con, nct_ids=nct_ids)
     finally:
         con.close()
 
@@ -711,8 +841,14 @@ def drug_class_distribution(
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
+    ta: TaOption = None,
+    org: OrgOption = None,
+    phase: PhaseOption = None,
+    drug_class: DrugClassOption = None,
+    since: SinceOption = None,
 ) -> None:
     """The pulled corpus by drug class."""
+    scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     con = connect(warehouse)
     try:
         if not _table_exists(con, "conformed", "study_drug_class"):
@@ -722,8 +858,12 @@ def drug_class_distribution(
             )
             raise typer.Exit(code=1)
 
+        nct_ids = _scoped_nct_ids(con, scope)
         where = ["1 = 1"]
         params: list = []
+        if nct_ids is not None:
+            where.append("c.nct_id = ANY(?)")
+            params.append(nct_ids)
         if kind:
             where.append("c.kind = ?")
             params.append(kind)
@@ -742,7 +882,7 @@ def drug_class_distribution(
             """,
             params,
         ).fetchall()
-        coverage = drug_class_coverage_summary(con)
+        coverage = drug_class_coverage_summary(con, nct_ids=nct_ids)
     finally:
         con.close()
 
@@ -784,19 +924,28 @@ def drug_class_coverage_cmd(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
     top: int = typer.Option(20, "--top", help="How many unclassified agents to list."),
+    ta: TaOption = None,
+    org: OrgOption = None,
+    phase: PhaseOption = None,
+    drug_class: DrugClassOption = None,
+    since: SinceOption = None,
 ) -> None:
     """How much of the corpus the drug-class axis covers, and what it missed."""
+    scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     con = connect(warehouse)
     try:
-        coverage = drug_class_coverage_summary(con)
+        nct_ids = _scoped_nct_ids(con, scope)
+        coverage = drug_class_coverage_summary(con, nct_ids=nct_ids)
         unclassified = []
         if _table_exists(con, "conformed", "drug_class_review_queue"):
+            scoped = "" if nct_ids is None else "WHERE nct_id = ANY(?)"
             unclassified = con.execute(
-                """
+                f"""
                 SELECT name, count(*) AS n FROM conformed.drug_class_review_queue
+                {scoped}
                 GROUP BY 1 ORDER BY n DESC, name LIMIT ?
                 """,
-                [max(top, 0)],
+                ([nct_ids] if nct_ids is not None else []) + [max(top, 0)],
             ).fetchall()
     finally:
         con.close()
@@ -847,9 +996,15 @@ def drug_class_diff_ancestors(
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
+    ta: TaOption = None,
+    org: OrgOption = None,
+    phase: PhaseOption = None,
+    drug_class: DrugClassOption = None,
+    since: SinceOption = None,
 ) -> None:
     """Report every disagreement between the curated layers and NLM's MeSH
     ancestry over every pulled study's interventions, most frequent first."""
+    scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     con = connect(warehouse)
     try:
         if not _vocab_drug_class_tables_ready(con):
@@ -861,8 +1016,9 @@ def drug_class_diff_ancestors(
         if not _table_exists(con, "raw", "interventions"):
             console.print("[red]Run `endpoints pull` first -- no raw.interventions yet.[/red]")
             raise typer.Exit(code=1)
-        diffs = diff_ancestors(con)
-        coverage = drug_class_coverage_summary(con)
+        nct_ids = _scoped_nct_ids(con, scope)
+        diffs = diff_ancestors(con, nct_ids=nct_ids)
+        coverage = drug_class_coverage_summary(con, nct_ids=nct_ids)
     finally:
         con.close()
 
@@ -996,16 +1152,25 @@ def usdm_show(
 def usdm_coverage(
     warehouse: str = typer.Option("warehouse.duckdb", "--warehouse"),
     limit: int = typer.Option(0, "--limit", help="Only the first N trials; 0 = all."),
+    ta: TaOption = None,
+    org: OrgOption = None,
+    phase: PhaseOption = None,
+    drug_class: DrugClassOption = None,
+    since: SinceOption = None,
 ) -> None:
     """The fidelity-tier mix across every conformed trial: `templated`,
     `partial` (an optional group dropped), or `verbatim` (no template applied)."""
+    scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     con = connect(warehouse)
     try:
+        in_scope = _scoped_nct_ids(con, scope)
         rules = load_projection_rules(con)
+        scoped = "" if in_scope is None else "WHERE nct_id = ANY(?)"
         nct_ids = [
             row[0]
             for row in con.execute(
-                "SELECT DISTINCT nct_id FROM conformed.endpoints ORDER BY nct_id"
+                f"SELECT DISTINCT nct_id FROM conformed.endpoints {scoped} ORDER BY nct_id",
+                [] if in_scope is None else [in_scope],
             ).fetchall()
         ]
         if limit:
@@ -1098,14 +1263,21 @@ def results_coverage_cmd(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
     top: int = typer.Option(20, "--top", help="How many distinct values to list per field."),
+    ta: TaOption = None,
+    org: OrgOption = None,
+    phase: PhaseOption = None,
+    drug_class: DrugClassOption = None,
+    since: SinceOption = None,
 ) -> None:
     """Results coverage: what share of studies posted results, what share of
     reported titles match a planned one, the `param_type` and
     `dispersion_type` value sets, and what share of units resolve."""
+    scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     con = connect(warehouse)
     try:
         try:
-            report = results_coverage.gate_measurements(con, top=top)
+            nct_ids = _scoped_nct_ids(con, scope)
+            report = results_coverage.gate_measurements(con, top=top, nct_ids=nct_ids)
         except results_coverage.NoResults as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=1) from exc
@@ -1183,21 +1355,18 @@ def results_coverage_cmd(
 
 @app.command()
 def stats(
-    measurement: Optional[str] = typer.Option(
-        None, "--measurement", help="Vocabulary measurement id, e.g. fev1."
-    ),
-    form: Optional[str] = typer.Option(
-        None, "--form", help="Vocabulary form id, e.g. change_from_baseline."
-    ),
+    measurement: MeasurementOption = None,
+    form: FormOption = None,
+    timepoint: TimepointOption = None,
     scale: Optional[str] = typer.Option(
         None, "--scale", help="Pool only this unit, e.g. litres (the converted unit where "
-        "scales.yaml declares a conversion)."
+        "scales.yaml declares a conversion).", rich_help_panel=ENDPOINT_FILTERS_PANEL,
     ),
-    timepoint: Optional[str] = typer.Option(
-        None, "--timepoint", help="Timepoint pattern id, e.g. fixed_visit."
-    ),
-    ta: Optional[str] = typer.Option(None, "--ta", help="Primary therapeutic area id."),
-    phase: Optional[str] = typer.Option(None, "--phase", help="Study phase, e.g. PHASE3."),
+    ta: TaOption = None,
+    org: OrgOption = None,
+    phase: PhaseOption = None,
+    drug_class: DrugClassOption = None,
+    since: SinceOption = None,
     source: str = typer.Option(
         "outcome",
         "--source",
@@ -1218,15 +1387,11 @@ def stats(
         "--no-approximate",
         help="Exclude the Wan et al. IQR/range estimates.",
     ),
-    drug_class: Optional[str] = typer.Option(
-        None,
-        "--drug-class",
-        help="Only studies whose interventions resolved to this drug class (study tier).",
-    ),
     by: Optional[str] = typer.Option(
         None,
         "--by",
-        help="Stratify instead of filtering. Only 'drug-class' is supported.",
+        help="Stratify: one block per value. Only 'drug-class' is supported; with "
+        "--drug-class it shows just those classes.",
     ),
     by_kind: str = typer.Option(
         "mechanism",
@@ -1244,20 +1409,18 @@ def stats(
     if by is not None and by not in STATS_STRATIFIERS:
         console.print(f"[red]--by must be one of {STATS_STRATIFIERS}, got {by!r}[/red]")
         raise typer.Exit(code=1)
-    if by == "drug-class" and drug_class:
-        console.print(
-            "[red]--drug-class and --by drug-class are mutually exclusive.[/red]"
-        )
-        raise typer.Exit(code=1)
 
+    scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     filters = StatsFilters(
-        measurement=measurement, form=form, scale=scale, timepoint=timepoint, ta=ta,
-        phase=phase, drug_class=drug_class, source=source,
+        measurement=measurement, form=form, scale=scale, timepoint=timepoint,
+        ta=scope.ta, org=scope.org, phase=scope.phase, drug_class=scope.drug_class,
+        since=scope.since.isoformat() if scope.since else None, source=source,
         include_approximate=not no_approximate, include_derived=not only_reported,
     )
     con = connect(warehouse)
     try:
         try:
+            scope.validate(con)
             if by == "drug-class":
                 strata = stratify_by_drug_class(con, filters, kind=by_kind, analyses=analyses)
                 report = None
@@ -1315,10 +1478,13 @@ def stats(
 
 
 def _describe_filters(filters: StatsFilters) -> str:
-    parts = [f"{key}={value}" for key, value in (
+    def _show(value) -> str:
+        return ",".join(value) if isinstance(value, (tuple, list)) else str(value)
+
+    parts = [f"{key}={_show(value)}" for key, value in (
         ("measurement", filters.measurement), ("form", filters.form), ("scale", filters.scale),
-        ("timepoint", filters.timepoint), ("ta", filters.ta), ("phase", filters.phase),
-        ("drug_class", filters.drug_class),
+        ("timepoint", filters.timepoint), ("ta", filters.ta), ("org", filters.org),
+        ("phase", filters.phase), ("drug_class", filters.drug_class), ("since", filters.since),
     ) if value]
     parts.append(f"source={filters.source}")
     return ", ".join(parts)
@@ -1476,6 +1642,23 @@ def _stats_json(report, *, analyses: bool) -> dict:
     }
 
 
+@app.command("help")
+def help_(
+    topic: Optional[str] = typer.Argument(
+        None, help=f"One of: {', '.join(guide.TOPICS)}. Omit for the overview."
+    ),
+) -> None:
+    """A usage cheat sheet: the workflow, the shared filters, and worked examples."""
+    text = guide.render(topic)
+    if text is None:
+        console.print(
+            f"[red]No help topic {topic!r}. Topics: {', '.join(guide.TOPICS)}.[/red] "
+            f"For every option of a command: `endpoints {topic} --help`."
+        )
+        raise typer.Exit(code=1)
+    console.print(text, highlight=False, soft_wrap=True)
+
+
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host"),
@@ -1511,16 +1694,26 @@ def review_list(
     warehouse: str = typer.Option(
         "warehouse.duckdb", "--warehouse", help="Path to the DuckDB warehouse file."
     ),
+    ta: TaOption = None,
+    org: OrgOption = None,
+    phase: PhaseOption = None,
+    drug_class: DrugClassOption = None,
+    since: SinceOption = None,
 ) -> None:
     """List conformed.review_queue entries -- run `endpoints conform` first."""
+    scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     con = connect(warehouse)
     try:
         if not _table_exists(con, "conformed", "review_queue"):
             console.print("[red]No conformed.review_queue yet -- run `endpoints conform` first.[/red]")
             raise typer.Exit(code=1)
 
+        nct_ids = _scoped_nct_ids(con, scope)
         where = ["status = ?"]
         params: list = [status]
+        if nct_ids is not None:
+            where.append("nct_id = ANY(?)")
+            params.append(nct_ids)
         if reason:
             where.append("reason = ?")
             params.append(reason)

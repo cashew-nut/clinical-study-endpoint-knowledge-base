@@ -616,20 +616,24 @@ def diff_ancestors(
     ]
 
 
-def coverage_summary(con: duckdb.DuckDBPyConnection) -> dict:
+def coverage_summary(
+    con: duckdb.DuckDBPyConnection, *, nct_ids: Optional[list[str]] = None
+) -> dict:
     """How much of the corpus the axis covers. `ancestor_studies` and
-    `branch_studies` are CT.gov-only signals; AACT publishes neither."""
-    def _count(sql: str) -> int:
-        return con.execute(sql).fetchone()[0]
+    `branch_studies` are CT.gov-only signals; AACT publishes neither.
+    `nct_ids` restricts every count to those studies; None means all."""
+    scope, params = ("", []) if nct_ids is None else (" AND nct_id = ANY(?)", [list(nct_ids)])
+
+    def _count(select: str, table: str, where: str = "TRUE") -> int:
+        return con.execute(f"SELECT {select} FROM {table} WHERE {where}{scope}", params).fetchone()[0]
+
+    def _count_if(schema: str, table: str, select: str) -> int:
+        return _count(select, f"{schema}.{table}") if _table_exists(con, schema, table) else 0
 
     if not _table_exists(con, "raw", "studies"):
         return {"studies": 0, "studies_with_interventions": 0, "resolved": False}
-    studies = _count("SELECT count(*) FROM raw.studies")
-    has_interventions = (
-        _count("SELECT count(DISTINCT nct_id) FROM raw.interventions")
-        if _table_exists(con, "raw", "interventions")
-        else 0
-    )
+    studies = _count("count(*)", "raw.studies")
+    has_interventions = _count_if("raw", "interventions", "count(DISTINCT nct_id)")
     if not _table_exists(con, "conformed", "study_drug_class"):
         return {
             "studies": studies,
@@ -641,33 +645,19 @@ def coverage_summary(con: duckdb.DuckDBPyConnection) -> dict:
         "studies_with_interventions": has_interventions,
         "resolved": True,
         "classified_studies": _count(
-            "SELECT count(DISTINCT nct_id) FROM conformed.study_drug_class "
-            "WHERE drug_class_id NOT IN ('unclassified_agent', 'no_interventions_stated')"
+            "count(DISTINCT nct_id)", "conformed.study_drug_class",
+            "drug_class_id NOT IN ('unclassified_agent', 'no_interventions_stated')",
         ),
         "mechanism_studies": _count(
-            "SELECT count(DISTINCT nct_id) FROM conformed.study_drug_class WHERE kind = 'mechanism'"
+            "count(DISTINCT nct_id)", "conformed.study_drug_class", "kind = 'mechanism'"
         ),
         "control_studies": _count(
-            "SELECT count(DISTINCT nct_id) FROM conformed.study_drug_class WHERE kind = 'control'"
+            "count(DISTINCT nct_id)", "conformed.study_drug_class", "kind = 'control'"
         ),
-        "ancestor_studies": (
-            _count("SELECT count(DISTINCT nct_id) FROM raw.browse_intervention_ancestors")
-            if _table_exists(con, "raw", "browse_intervention_ancestors")
-            else 0
+        "ancestor_studies": _count_if(
+            "raw", "browse_intervention_ancestors", "count(DISTINCT nct_id)"
         ),
-        "branch_studies": (
-            _count("SELECT count(DISTINCT nct_id) FROM raw.browse_intervention_branches")
-            if _table_exists(con, "raw", "browse_intervention_branches")
-            else 0
-        ),
-        "arm_rows": (
-            _count("SELECT count(*) FROM conformed.arm_drug_class")
-            if _table_exists(con, "conformed", "arm_drug_class")
-            else 0
-        ),
-        "review_queue": (
-            _count("SELECT count(*) FROM conformed.drug_class_review_queue")
-            if _table_exists(con, "conformed", "drug_class_review_queue")
-            else 0
-        ),
+        "branch_studies": _count_if("raw", "browse_intervention_branches", "count(DISTINCT nct_id)"),
+        "arm_rows": _count_if("conformed", "arm_drug_class", "count(*)"),
+        "review_queue": _count_if("conformed", "drug_class_review_queue", "count(*)"),
     }
