@@ -767,11 +767,11 @@ def test_stats_rejects_an_unknown_stratifier(tmp_path, monkeypatch):
     assert "--by must be one of" in result.output
 
 
-def test_stats_rejects_filtering_and_stratifying_on_the_same_axis(tmp_path, monkeypatch):
+def test_stats_rejects_an_unrecognised_phase(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    result = runner.invoke(app, ["stats", "--drug-class", "statin", "--by", "drug-class"])
+    result = runner.invoke(app, ["stats", "--phase", "7"])
     assert result.exit_code == 1
-    assert "mutually exclusive" in result.output
+    assert "Unrecognized phase" in result.output
 
 
 def test_drug_class_coverage_on_an_empty_warehouse_says_so(tmp_path, monkeypatch):

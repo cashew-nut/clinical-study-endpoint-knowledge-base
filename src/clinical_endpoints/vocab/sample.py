@@ -19,10 +19,17 @@ FIELDS = ("measure", "description", "time_frame")
 OUTCOME_TYPES = ("primary", "secondary", "other")
 
 
-def _outcome_type_clause(outcome_types: tuple[str, ...] | None) -> tuple[str, list]:
-    if not outcome_types:
-        return "", []
-    return "AND outcome_type = ANY(?)", [list(outcome_types)]
+def _row_filter_clause(
+    outcome_types: tuple[str, ...] | None, nct_ids: list[str] | None = None
+) -> tuple[str, list]:
+    clause, params = "", []
+    if outcome_types:
+        clause += " AND outcome_type = ANY(?)"
+        params.append(list(outcome_types))
+    if nct_ids is not None:
+        clause += " AND nct_id = ANY(?)"
+        params.append(list(nct_ids))
+    return clause, params
 
 
 def run_vocab_sample(
@@ -35,9 +42,14 @@ def run_vocab_sample(
     out_path: Path | str = "vocab_review.csv",
     fmt: str = "frequency",
     outcome_types: tuple[str, ...] | None = None,
+    nct_ids: list[str] | None = None,
 ) -> dict:
+    """`nct_ids` restricts the sample to those studies; None means every study."""
     if fmt == "rows":
-        return _run_row_sample(con, seed=seed, limit=limit, out_path=out_path, outcome_types=outcome_types)
+        return _run_row_sample(
+            con, seed=seed, limit=limit, out_path=out_path, outcome_types=outcome_types,
+            nct_ids=nct_ids,
+        )
     if fmt != "frequency":
         raise ValueError(f"fmt must be 'frequency' or 'rows', got {fmt!r}")
     return _run_frequency_sample(
@@ -48,6 +60,7 @@ def run_vocab_sample(
         limit=limit,
         out_path=out_path,
         outcome_types=outcome_types,
+        nct_ids=nct_ids,
     )
 
 
@@ -60,10 +73,11 @@ def _run_frequency_sample(
     limit: int,
     out_path: Path | str,
     outcome_types: tuple[str, ...] | None,
+    nct_ids: list[str] | None = None,
 ) -> dict:
     out_path = Path(out_path)
     coverage_path = out_path.with_name(f"{out_path.stem}_coverage.csv")
-    oc_clause, oc_params = _outcome_type_clause(outcome_types)
+    oc_clause, oc_params = _row_filter_clause(outcome_types, nct_ids)
 
     rows: list[tuple[str, str, int]] = []
     coverage: list[dict] = []
@@ -173,10 +187,11 @@ def _run_row_sample(
     limit: int,
     out_path: Path | str,
     outcome_types: tuple[str, ...] | None,
+    nct_ids: list[str] | None = None,
 ) -> dict:
     out_path = Path(out_path)
-    oc_clause, oc_params = _outcome_type_clause(outcome_types)
-    where_clause = f"WHERE {oc_clause[4:]}" if oc_clause else ""
+    oc_clause, oc_params = _row_filter_clause(outcome_types, nct_ids)
+    where_clause = f"WHERE {oc_clause[len(' AND '):]}" if oc_clause else ""
 
     limit_clause = "LIMIT ?" if limit and limit > 0 else ""
     params = [*oc_params, seed] + ([limit] if limit and limit > 0 else [])

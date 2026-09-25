@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass, field, replace
-from typing import Optional
+from typing import Optional, Union
 
 import duckdb
 
@@ -22,23 +22,38 @@ from clinical_endpoints.results.effects import (
     null_value,
     parse_ni_margin,
 )
+from clinical_endpoints.scope import StudyScope, split_values
 
 SOURCES = ("outcome", "baseline")
 
 
+# Endpoint and study filters take one id or several (a tuple, or a
+# comma-separated string); several values are OR'd, different filters AND'd.
+FilterValue = Union[None, str, tuple]
+
+
 @dataclass(frozen=True)
 class StatsFilters:
-    measurement: Optional[str] = None
-    form: Optional[str] = None
+    measurement: FilterValue = None
+    form: FilterValue = None
     scale: Optional[str] = None
-    timepoint: Optional[str] = None
-    ta: Optional[str] = None
-    phase: Optional[str] = None
+    timepoint: FilterValue = None
+    ta: FilterValue = None
+    phase: FilterValue = None
     # Always the study tier (conformed.study_drug_class), never the arm tier.
-    drug_class: Optional[str] = None
+    drug_class: FilterValue = None
+    org: FilterValue = None
+    since: Optional[str] = None
     source: str = "outcome"
     include_approximate: bool = True
     include_derived: bool = True
+
+    @property
+    def scope(self) -> StudyScope:
+        return StudyScope.from_options(
+            ta=self.ta, org=self.org, phase=self.phase, drug_class=self.drug_class,
+            since=self.since,
+        )
 
 
 @dataclass
@@ -69,31 +84,22 @@ class SdGroup:
 def _filter_sql(filters: StatsFilters) -> tuple[str, list]:
     where = ["r.result_kind = ?"]
     params: list = [filters.source]
-    if filters.measurement:
-        where.append("r.measurement_id = ?")
-        params.append(filters.measurement)
-    if filters.form:
-        where.append("r.form_id = ?")
-        params.append(filters.form)
-    if filters.timepoint:
-        where.append("r.timepoint_pattern = ?")
-        params.append(filters.timepoint)
-    if filters.ta:
-        where.append(
-            "r.nct_id IN (SELECT nct_id FROM conformed.study_therapeutic_area "
-            "WHERE ta_id = ? AND is_primary)"
-        )
-        params.append(filters.ta)
-    if filters.phase:
-        where.append("r.nct_id IN (SELECT nct_id FROM raw.studies WHERE phase = ?)")
-        params.append(filters.phase)
-    if filters.drug_class:
-        # Study tier: the results section's group_key links to a protocol arm
-        # only by title, so an arm-level join is not yet defensible.
-        where.append(
-            "r.nct_id IN (SELECT nct_id FROM conformed.study_drug_class WHERE drug_class_id = ?)"
-        )
-        params.append(filters.drug_class)
+    for column, value in (
+        ("r.measurement_id", filters.measurement),
+        ("r.form_id", filters.form),
+        ("r.timepoint_pattern", filters.timepoint),
+    ):
+        values = split_values(value)
+        if values:
+            where.append(f"{column} = ANY(?)")
+            params.append(list(values))
+    # drug_class is study tier: the results section's group_key links to a
+    # protocol arm only by title, so an arm-level join is not yet defensible.
+    scope = filters.scope
+    if not scope.is_empty:
+        clause, scope_params = scope.predicate("r.nct_id")
+        where.append(clause)
+        params.extend(scope_params)
     return " AND ".join(where), params
 
 
@@ -122,6 +128,13 @@ def _require(con: duckdb.DuckDBPyConnection, filters: Optional[StatsFilters] = N
     ):
         raise NotComputed(
             "conformed.study_drug_class is missing, so --drug-class has nothing to filter on "
+            "-- run `endpoints vocab validate` and `endpoints pull` first"
+        )
+    if filters is not None and filters.ta and not _table_exists(
+        con, "conformed", "study_therapeutic_area"
+    ):
+        raise NotComputed(
+            "conformed.study_therapeutic_area is missing, so --ta has nothing to filter on "
             "-- run `endpoints vocab validate` and `endpoints pull` first"
         )
 
@@ -277,16 +290,19 @@ def stratify_by_drug_class(
         )
 
     where, params = _filter_sql(filters)
+    # A --drug-class filter alongside the stratifier picks which strata to show.
+    chosen = split_values(filters.drug_class)
+    class_filter = " AND c.drug_class_id = ANY(?)" if chosen else ""
     class_rows = con.execute(
         f"""
         SELECT c.drug_class_id, count(DISTINCT r.nct_id) AS studies
         FROM conformed.endpoint_results r
         JOIN conformed.study_drug_class c ON c.nct_id = r.nct_id
-        WHERE {where} AND c.kind = ?
+        WHERE {where} AND c.kind = ?{class_filter}
         GROUP BY 1 ORDER BY studies DESC, c.drug_class_id
         LIMIT ?
         """,
-        params + [kind, max(limit, 1)],
+        params + [kind] + ([list(chosen)] if chosen else []) + [max(limit, 1)],
     ).fetchall()
 
     compute = analysis_distribution if analyses else sd_distribution

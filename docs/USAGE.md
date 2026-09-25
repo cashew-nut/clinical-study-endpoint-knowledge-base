@@ -4,7 +4,9 @@ Every command, with the options worth knowing and what each one writes. For a
 first run, start with the [quickstart](../README.md#quickstart); for SQL against
 the result, see [`QUERY_CHEATSHEET.md`](QUERY_CHEATSHEET.md).
 
+* [Help from the CLI](#help-from-the-cli)
 * [The warehouse](#the-warehouse)
+* [Filtering any report](#filtering-any-report)
 * [Ingesting studies](#ingesting-studies)
 * [Therapeutic areas](#therapeutic-areas)
 * [The vocabulary](#the-vocabulary)
@@ -14,6 +16,18 @@ the result, see [`QUERY_CHEATSHEET.md`](QUERY_CHEATSHEET.md).
 * [Projecting to USDM 4.0](#projecting-to-usdm-40)
 * [Serving the API](#serving-the-api)
 * [Not implemented](#not-implemented)
+
+## Help from the CLI
+
+```bash
+uv run endpoints help            # the workflow, the commands, the shared filters
+uv run endpoints help filters    # what --ta/--org/--phase/--drug-class/--since mean
+uv run endpoints help stats      # worked examples for one command
+uv run endpoints stats --help    # every option of one command
+```
+
+Topics: `filters`, `stats`, `pull`, `drug-class`, `results`, `usdm`, `vocab`,
+`review`, `ta`.
 
 ## The warehouse
 
@@ -33,6 +47,36 @@ can sit side by side, one per therapeutic area or one per vocabulary revision:
 uv run endpoints vocab validate --warehouse onc.duckdb
 uv run endpoints pull --phase 3 --ta oncology --warehouse onc.duckdb
 ```
+
+## Filtering any report
+
+Every command that reads the warehouse takes the same study filters, with the
+same meaning: `stats`, `results coverage`, `drug-class distribution`,
+`drug-class coverage`, `drug-class diff-ancestors`, `ta diff-tree`,
+`usdm coverage`, `review list` and `vocab sample`. `pull` takes the same flags
+to decide what to land.
+
+| flag | keeps studies that |
+|---|---|
+| `--ta respiratory,oncology` | resolved to any of these therapeutic areas (any area, not only the primary one) |
+| `--org "Pfizer,AbbVie"` | have a lead sponsor whose name contains any of these, case-insensitive |
+| `--phase 3` or `--phase 2/3,3` | have exactly one of these phases (`3` does not include `2/3`; `PHASE3` also works) |
+| `--drug-class sglt2_inhibitor` | resolved to any of these drug classes (study tier) |
+| `--since 2020-01-01` | started on or after this date |
+
+Values within one flag are OR'd; different flags are AND'd:
+
+```bash
+# respiratory AND (Pfizer OR AbbVie) AND phase 3
+uv run endpoints stats --measurement fev1 --by drug-class --ta respiratory --org Pfizer,AbbVie --phase 3
+uv run endpoints results coverage --ta respiratory --since 2018-01-01
+uv run endpoints drug-class distribution --org Merck --phase 3
+```
+
+A report filtered this way prints the scope and how many studies it covers.
+Filters that match no pulled study say so and exit cleanly; an unknown `--ta`
+or `--drug-class` id is an error that names it. `conform` and
+`results conform` always rebuild over the whole warehouse and take no filters.
 
 ## Ingesting studies
 
@@ -536,9 +580,13 @@ and which of them the vocabulary does not yet recognise; and what share of
 ```bash
 uv run endpoints stats --measurement fev1
 uv run endpoints stats --measurement fev1 --form change_from_baseline --scale litres
-uv run endpoints stats --measurement fev1 --ta respiratory --phase PHASE3
+uv run endpoints stats --measurement fev1 --ta respiratory --phase 3
+uv run endpoints stats --measurement fev1 --org "GlaxoSmithKline,AstraZeneca" --since 2015-01-01
+uv run endpoints stats --measurement fev1,fvc --form change_from_baseline
 uv run endpoints stats --measurement fev1 --drug-class muscarinic_antagonist
 uv run endpoints stats --measurement fev1 --by drug-class
+uv run endpoints stats --measurement fev1 --by drug-class --form change_from_baseline --org Pfizer
+uv run endpoints stats --measurement fev1 --by drug-class --drug-class muscarinic_antagonist,beta2_agonist
 uv run endpoints stats --measurement fev1 --by drug-class --analyses
 uv run endpoints stats --measurement fev1 --source baseline
 uv run endpoints stats --measurement fev1 --analyses
@@ -572,6 +620,10 @@ since pooling treatment effects across mechanisms is a category error and a
 median effect across all drugs has no referent. `--by drug-class` stratifies
 over `mechanism` classes by default, which `--by-kind` changes, and the strata
 are not disjoint: a combination trial appears under every class it used.
+Combined with `--drug-class`, `--by drug-class` shows only the named classes.
+Every [study filter](#filtering-any-report) narrows the corpus before it is
+stratified, and `--measurement`, `--form` and `--timepoint` each take a
+comma-separated list too.
 
 `--drug-class` is the study tier. It narrows to trials that used the class, and
 does not claim the SD came from an arm that received it. See

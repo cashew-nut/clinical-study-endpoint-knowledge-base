@@ -225,6 +225,9 @@ uv sync --extra serve      # ...plus FastAPI/uvicorn, if you want `endpoints ser
 ## Quickstart
 
 The whole flow, from an empty directory to a USDM payload for one study.
+`uv run endpoints help` prints the same workflow and the common usage from the
+CLI; `uv run endpoints help filters` covers the `--ta`, `--org`, `--phase`,
+`--drug-class` and `--since` filters every report shares.
 
 **1. Validate the vocabularies and load them into the warehouse.** Everything
 downstream reads `vocab.*` tables, not the YAML, so this is what a run is
