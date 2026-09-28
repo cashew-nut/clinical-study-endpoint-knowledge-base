@@ -42,6 +42,7 @@ from clinical_endpoints.results.stats import (
     StatsFilters,
     analysis_distribution,
     sd_distribution,
+    stratify_by_arm_role,
     stratify_by_drug_class,
 )
 from clinical_endpoints.scope import ScopeError, StudyScope
@@ -97,7 +98,7 @@ app.add_typer(results_app, name="results")
 
 USDM_ENVELOPES = ("module", "wrapper")
 
-STATS_STRATIFIERS = ("drug-class",)
+STATS_STRATIFIERS = ("drug-class", "arm-role")
 
 # The study filters every reporting command takes. Each accepts a
 # comma-separated list (values OR'd); different filters are AND'd.
@@ -1250,6 +1251,9 @@ def results_conform(
     if result["sd_methods"]:
         methods = " · ".join(f"{m} {c}" for m, c in result["sd_methods"].items())
         console.print(f"[dim]{methods}[/dim]")
+    if result["arm_links"]:
+        links = " · ".join(f"{method} {count}" for method, count in result["arm_links"].items())
+        console.print(f"Results groups linked to a protocol arm: {links}")
 
 
 def _pct(numerator, denominator) -> str:
@@ -1271,7 +1275,8 @@ def results_coverage_cmd(
 ) -> None:
     """Results coverage: what share of studies posted results, what share of
     reported titles match a planned one, the `param_type` and
-    `dispersion_type` value sets, and what share of units resolve."""
+    `dispersion_type` value sets, what share of units resolve, and what share
+    of results groups link to a protocol arm with a role."""
     scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     con = connect(warehouse)
     try:
@@ -1352,6 +1357,30 @@ def results_coverage_cmd(
                 + "[/yellow]"
             )
 
+    arms = report["arms"]
+    console.print("\n[bold]5. Results groups vs protocol arms[/bold]")
+    if not arms.get("computed"):
+        console.print("  [yellow]run `endpoints results conform` to measure this[/yellow]")
+    else:
+        for method, count in arms["link_methods"].items():
+            console.print(f"  {method:<32} {count:>7}  ({_pct(count, arms['groups'])})")
+        if arms["roles"]:
+            console.print(
+                "  [dim]linked, by role (source): "
+                + " · ".join(f"{role} {count}" for role, count in arms["roles"].items())
+                + "[/dim]"
+            )
+        console.print(
+            f"  {arms['sd_rows_with_role']} of {arms['sd_rows']} arm-level SDs carry an arm role "
+            f"({_pct(arms['sd_rows_with_role'], arms['sd_rows'])}); that is what "
+            "`stats --arm-role` stands on"
+        )
+        if arms["role_conflicts"]:
+            console.print(
+                f"  [yellow]{arms['role_conflicts']} arm(s) whose registry type disagrees with "
+                "their drug-class evidence (role_conflict)[/yellow]"
+            )
+
 
 @app.command()
 def stats(
@@ -1379,6 +1408,21 @@ def stats(
         help="Report effect sizes, p-values and non-inferiority margins instead of the SD "
         "distribution.",
     ),
+    arm_role: Optional[str] = typer.Option(
+        None,
+        "--arm-role",
+        help="Only arms of this role: experimental or control (comma-separated for both). "
+        "Arms whose results group does not link to a protocol arm are excluded, and "
+        "counted.",
+        rich_help_panel=ENDPOINT_FILTERS_PANEL,
+    ),
+    arm_type: Optional[str] = typer.Option(
+        None,
+        "--arm-type",
+        help="Only arms of this registry type, comma-separated: experimental, "
+        "active_comparator, placebo_comparator, sham_comparator, no_intervention, other.",
+        rich_help_panel=ENDPOINT_FILTERS_PANEL,
+    ),
     only_reported: bool = typer.Option(
         False, "--only-reported", help="Exclude every derived SD, leaving only reported ones."
     ),
@@ -1390,8 +1434,8 @@ def stats(
     by: Optional[str] = typer.Option(
         None,
         "--by",
-        help="Stratify: one block per value. Only 'drug-class' is supported; with "
-        "--drug-class it shows just those classes.",
+        help="Stratify: one block per value. 'drug-class' (with --drug-class, just those "
+        "classes) or 'arm-role' (experimental and control arms).",
     ),
     by_kind: str = typer.Option(
         "mechanism",
@@ -1415,6 +1459,7 @@ def stats(
         measurement=measurement, form=form, scale=scale, timepoint=timepoint,
         ta=scope.ta, org=scope.org, phase=scope.phase, drug_class=scope.drug_class,
         since=scope.since.isoformat() if scope.since else None, source=source,
+        arm_role=arm_role, arm_type=arm_type,
         include_approximate=not no_approximate, include_derived=not only_reported,
     )
     con = connect(warehouse)
@@ -1423,6 +1468,9 @@ def stats(
             scope.validate(con)
             if by == "drug-class":
                 strata = stratify_by_drug_class(con, filters, kind=by_kind, analyses=analyses)
+                report = None
+            elif by == "arm-role":
+                strata = stratify_by_arm_role(con, filters, analyses=analyses)
                 report = None
             else:
                 report = (
@@ -1433,6 +1481,30 @@ def stats(
             raise typer.Exit(code=1) from exc
     finally:
         con.close()
+
+    if report is None and by == "arm-role":
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "stratified_by": "arm_role",
+                        "strata": [
+                            {"arm_role": role, **_stats_json(r, analyses=False)}
+                            for role, r in strata
+                        ],
+                    },
+                    indent=2,
+                )
+            )
+            return
+        for role, stratum in strata:
+            console.print(f"\n[bold cyan]── {role} arms ──[/bold cyan]")
+            _print_sd(stratum)
+        console.print(
+            "\n[dim]Strata are disjoint: a results group links to at most one protocol arm. "
+            "Groups that link to none, or to an arm typed OTHER, are in neither.[/dim]"
+        )
+        return
 
     if report is None:
         if as_json:
@@ -1485,6 +1557,7 @@ def _describe_filters(filters: StatsFilters) -> str:
         ("measurement", filters.measurement), ("form", filters.form), ("scale", filters.scale),
         ("timepoint", filters.timepoint), ("ta", filters.ta), ("org", filters.org),
         ("phase", filters.phase), ("drug_class", filters.drug_class), ("since", filters.since),
+        ("arm_role", filters.arm_role), ("arm_type", filters.arm_type),
     ) if value]
     parts.append(f"source={filters.source}")
     return ", ".join(parts)
@@ -1502,6 +1575,7 @@ def _print_sd(report) -> None:
             "[yellow]No arm-level measurement yielded a usable dispersion for this "
             f"selection ({report['studies_conformed']} conformed study/studies matched).[/yellow]"
         )
+        _print_arm_link(report)
         _print_skips(report["skip_reasons"])
         return
 
@@ -1536,7 +1610,26 @@ def _print_sd(report) -> None:
             f"reported a usable dispersion ({_pct(group.studies, group.studies_conformed)})"
         )
 
+    _print_arm_link(report)
     _print_skips(report["skip_reasons"])
+
+
+def _print_arm_link(report) -> None:
+    """Printed whenever arms were selected: the arm filter's own denominator."""
+    link = report.get("arm_link")
+    if not link or not report["filters"].selects_arms:
+        return
+    roles = " · ".join(f"{role} {count}" for role, count in link["by_role"].items()) or "none"
+    console.print(
+        f"\n    arm link    {link['with_role']} of {link['arms']} usable arm-level SDs in this "
+        f"selection carry an arm role ({_pct(link['with_role'], link['arms'])}): {roles}"
+    )
+    if link["no_role_reasons"]:
+        console.print(
+            "                [dim]no role: "
+            + " · ".join(f"{reason} {count}" for reason, count in link["no_role_reasons"].items())
+            + "[/dim]"
+        )
 
 
 def _print_skips(skips: dict) -> None:
@@ -1632,6 +1725,7 @@ def _stats_json(report, *, analyses: bool) -> dict:
         **body,
         "studies_with_sd": report["studies_with_sd"],
         "skip_reasons": report["skip_reasons"],
+        "arm_link": report.get("arm_link"),
         "groups": [
             {
                 **group.__dict__,

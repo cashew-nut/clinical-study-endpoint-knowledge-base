@@ -588,6 +588,9 @@ uv run endpoints stats --measurement fev1 --by drug-class
 uv run endpoints stats --measurement fev1 --by drug-class --form change_from_baseline --org Pfizer
 uv run endpoints stats --measurement fev1 --by drug-class --drug-class muscarinic_antagonist,beta2_agonist
 uv run endpoints stats --measurement fev1 --by drug-class --analyses
+uv run endpoints stats --measurement fev1 --arm-role control
+uv run endpoints stats --measurement fev1 --arm-type placebo_comparator
+uv run endpoints stats --measurement fev1 --by arm-role
 uv run endpoints stats --measurement fev1 --source baseline
 uv run endpoints stats --measurement fev1 --analyses
 uv run endpoints stats --measurement fev1 --json
@@ -631,6 +634,28 @@ does not claim the SD came from an arm that received it. See
 for why the arm tier, which is written to `conformed.arm_drug_class`, is not
 joined here yet.
 
+**`--arm-role` and `--by arm-role` split by control versus experimental
+arm.** Each SD comes from one arm, so this is a per-row selection rather than
+a study filter: `--arm-role control` gives the control-arm SD distribution
+(the number a sample-size calculation usually wants), and `--by arm-role`
+prints an experimental block and a control block. The strata are disjoint. The
+role comes from the protocol's `armGroups[].type`: `EXPERIMENTAL` is
+experimental, and the active, placebo and sham comparators and
+`NO_INTERVENTION` are control. An arm typed `OTHER` is control only when every
+intervention the drug-class arm tier gave it is of kind `control`, and
+otherwise has no role. `--arm-type` selects the registry value itself, so
+`--arm-type placebo_comparator` excludes active comparators.
+
+The results section does not say which protocol arm a result belongs to. It
+has its own group ids and titles, so `results conform` links each results
+group to a protocol arm by title (`conformed.result_group_arm`, see
+`link_method`) and gives no role to a group it cannot place. An arm-selected
+report therefore always prints an `arm link` line, which says how many of the
+selection's usable SDs had a role and why the rest did not. The baseline
+"Total" column is one of those, by construction. `results coverage` section 5
+gives the same measurement for the whole corpus. The arm filters do not apply
+to `--analyses`, because an analysis compares arms and so has no single role.
+
 There is always one block per **(form, unit)** group, because the SD of a
 change from baseline is not the SD of a raw value and the SD in litres is not
 the SD in millilitres. `--form` and `--scale` narrow the selection and are not
@@ -641,6 +666,8 @@ group is the converted unit and says so.
 |---|---|
 | `--source baseline` | baseline characteristics instead of reported outcomes: a larger denominator and a different quantity, never a fallback |
 | `--analyses` | effect sizes, p-values and non-inferiority margins instead of the SD distribution |
+| `--arm-role` | only `experimental` or `control` arms; prints how many arms had no role |
+| `--arm-type` | only arms of this registry type, e.g. `placebo_comparator` |
 | `--only-reported` | drop every derived SD, leaving only the ones trials reported outright |
 | `--no-approximate` | drop the Wan et al. IQR/range estimates, which are approximations rather than conversions |
 | `--json` | the same report as JSON, including every group's coverage |

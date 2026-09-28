@@ -77,6 +77,8 @@ STATS = """\
   uv run endpoints stats --measurement fev1 --by drug-class --form change_from_baseline --ta respiratory --org Pfizer
   uv run endpoints stats --measurement fev1 --by drug-class --drug-class muscarinic_antagonist,beta2_agonist
   uv run endpoints stats --measurement fev1 --by drug-class --by-kind modality
+  uv run endpoints stats --measurement fev1 --by arm-role                 # experimental vs control arms
+  uv run endpoints stats --measurement fev1 --arm-role control            # control arms only
 
 [bold]Other views[/bold]
   uv run endpoints stats --measurement fev1 --analyses     [dim]# effect sizes, p-values, NI margins[/dim]

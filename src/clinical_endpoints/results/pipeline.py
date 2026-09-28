@@ -7,6 +7,8 @@ spread into an estimated SD.
   be identified.
 * `conformed.endpoint_dispersion`: one row per arm-level measurement, with an
   `sd_estimate` and the path that produced it.
+* `conformed.result_group_arm`: each results group linked to the protocol arm
+  it reports, and that arm's role (`results/arms.py`).
 
 | `link_method`           | meaning                                                            |
 |-------------------------|--------------------------------------------------------------------|
@@ -33,6 +35,7 @@ from clinical_endpoints.conform.rules import load_rules
 from clinical_endpoints.conform.text import normalise
 from clinical_endpoints.db import bulk_insert
 from clinical_endpoints.results import dispersion as dispersion_mod
+from clinical_endpoints.results.arms import write_result_group_arm
 from clinical_endpoints.results.units import load_unit_rules, resolve_unit, to_si
 
 # The dimension columns shared, name for name, with conformed.endpoints, so
@@ -212,8 +215,9 @@ def run_results_conform(
     on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> dict:
     """Conform every results row, link it to the planned endpoint where one
-    exists, then normalise every arm-level dispersion into an SD estimate.
-    Replaces the three tables wholesale."""
+    exists, normalise every arm-level dispersion into an SD estimate, and
+    link each results group to its protocol arm. Replaces the four tables
+    wholesale."""
     if not _table_exists(con, "raw", "outcome_measures"):
         raise NoResults(
             "raw.outcome_measures is empty -- run `endpoints pull` (without --no-results) first"
@@ -336,6 +340,7 @@ def run_results_conform(
         )
 
     dispersion_counts = _write_dispersion(con, unit_rules, now)
+    arm_counts = write_result_group_arm(con)
 
     return {
         "results_rows": len(source_rows),
@@ -350,6 +355,7 @@ def run_results_conform(
             ).fetchall()
         ),
         **dispersion_counts,
+        "arm_links": arm_counts["links"],
     }
 
 

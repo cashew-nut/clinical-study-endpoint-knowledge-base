@@ -456,6 +456,15 @@ measurement: **`endpoints stats` does not consume the arm tier**, and
 `design_groups` title join is still unmeasured. The gate is recorded in
 `write_arm_drug_class`'s docstring.
 
+That title join now exists as `conformed.result_group_arm` (written by
+`results conform`, see `results/arms.py`), and `results coverage` section 5
+measures it. `stats --arm-role` / `--by arm-role` consume it, but only for the
+arm's **role** (experimental or control, from `armGroups[].type`), and each
+arm-selected report prints its own link rate. The arm tier's drug class uses
+this table in one place only: as fallback evidence that an arm typed `OTHER`
+is a control. Routing `--drug-class` through the arm tier stays gated until
+section 5 has been read on a live pull.
+
 ## What would make this the wrong thing to build
 
 * **If Phase 0 question 3 comes back low.** MeSH intervention coding is
