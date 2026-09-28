@@ -592,6 +592,15 @@ RESULTS_ARM_INTERVENTIONS = [
     ("NCT10000001", "Placebo arm", 1, "arm_label"),
 ]
 
+# The protocol's arms. The results section titles NCT10000001's arms "Drug"
+# and "Placebo" (a title_stem link) and NCT10000002's only arm "Drug" (a
+# sole_arm link); the baseline "Total" column links to no arm.
+RESULTS_DESIGN_GROUPS = [
+    ("NCT10000001", "EXPERIMENTAL", "Drug arm", "Tiotropium once daily"),
+    ("NCT10000001", "PLACEBO_COMPARATOR", "Placebo arm", "Matching placebo"),
+    ("NCT10000002", "EXPERIMENTAL", "Budesonide/Formoterol 160/4.5", None),
+]
+
 
 @pytest.fixture(scope="session")
 def results_warehouse_path(tmp_path_factory) -> str:
@@ -599,7 +608,7 @@ def results_warehouse_path(tmp_path_factory) -> str:
     `conform` and `results conform` run."""
     from clinical_endpoints.conform.pipeline import run_conform
     from clinical_endpoints.drug_class.resolver import run_drug_class_resolution
-    from clinical_endpoints.ingest.design import STUDIES_DDL
+    from clinical_endpoints.ingest.design import DESIGN_GROUPS_DDL, STUDIES_DDL
     from clinical_endpoints.ingest.interventions import INTERVENTION_TABLES
     from clinical_endpoints.ingest.results import RESULTS_TABLES
     from clinical_endpoints.results.pipeline import run_results_conform
@@ -653,10 +662,14 @@ def results_warehouse_path(tmp_path_factory) -> str:
     con.executemany(
         "INSERT INTO raw.arm_interventions VALUES (?, ?, ?, ?)", RESULTS_ARM_INTERVENTIONS
     )
+    con.execute(f"CREATE TABLE raw.design_groups ({DESIGN_GROUPS_DDL})")
+    con.executemany("INSERT INTO raw.design_groups VALUES (?, ?, ?, ?)", RESULTS_DESIGN_GROUPS)
 
+    # The order `pull` then `results conform` runs them in: the arm link reads
+    # conformed.arm_drug_class.
     run_conform(con)
-    run_results_conform(con)
     run_drug_class_resolution(con, vocab_dir=vocab_dir)
+    run_results_conform(con)
     con.close()
     return str(path)
 

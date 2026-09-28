@@ -1,9 +1,10 @@
-"""`endpoints results coverage`: four measurements of the results section.
+"""`endpoints results coverage`: five measurements of the results section.
 
 1. what share of conformed studies have results posted;
 2. what share of reported outcome titles match a planned `measure`;
 3. the observed `dispersion_type` and `param_type` value sets;
-4. the share of `unit_of_measure` strings that resolve against scales.yaml.
+4. the share of `unit_of_measure` strings that resolve against scales.yaml;
+5. the share of results groups linked to a protocol arm, and their roles.
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ def gate_measurements(
         "titles": _titles(con, nct_ids),
         "enumerations": _enumerations(con, nct_ids, top=top),
         "units": _units(con, nct_ids, top=top),
+        "arms": _arms(con, nct_ids),
     }
 
 
@@ -199,6 +201,60 @@ def _units(
         "convertible_to_si": convertible,
         "unresolved_distinct": len(unmatched),
         "unresolved": [{"value": value, "rows": count} for value, count in unmatched[:top]],
+    }
+
+
+def _arms(con: duckdb.DuckDBPyConnection, nct_ids: Optional[list[str]] = None) -> dict:
+    """How often a results group's title finds its protocol arm, and what
+    role the linked ones carry. Counted over distinct (study, group title)
+    pairs, and over the arm-level rows with a usable SD, which is what
+    `stats --arm-role` stands on."""
+    if not _table_exists(con, "conformed", "result_group_arm"):
+        return {"computed": False}
+    scope, params = _scoped(nct_ids)
+    links = dict(
+        con.execute(
+            f"""
+            SELECT coalesce(link_method, 'unlinked: ' || link_skip_reason), count(*)
+            FROM conformed.result_group_arm WHERE TRUE{scope}
+            GROUP BY 1 ORDER BY 2 DESC
+            """,
+            params,
+        ).fetchall()
+    )
+    roles = dict(
+        con.execute(
+            f"""
+            SELECT coalesce(arm_role, 'no_role') || ' (' || coalesce(role_source, '-') || ')',
+                   count(*)
+            FROM conformed.result_group_arm WHERE link_method IS NOT NULL{scope}
+            GROUP BY 1 ORDER BY 2 DESC
+            """,
+            params,
+        ).fetchall()
+    )
+    conflicts = con.execute(
+        f"SELECT count(*) FROM conformed.result_group_arm WHERE role_conflict{scope}", params
+    ).fetchone()[0]
+    d_scope, d_params = _scoped(nct_ids, "d.nct_id")
+    sd_rows, sd_rows_with_role = con.execute(
+        f"""
+        SELECT count(*), count(a.arm_role)
+        FROM conformed.endpoint_dispersion d
+        LEFT JOIN conformed.result_group_arm a
+          ON a.nct_id = d.nct_id AND a.group_title IS NOT DISTINCT FROM d.group_title
+        WHERE d.sd_estimate IS NOT NULL{d_scope}
+        """,
+        d_params,
+    ).fetchone()
+    return {
+        "computed": True,
+        "groups": sum(links.values()),
+        "link_methods": links,
+        "roles": roles,
+        "role_conflicts": conflicts,
+        "sd_rows": sd_rows,
+        "sd_rows_with_role": sd_rows_with_role,
     }
 
 

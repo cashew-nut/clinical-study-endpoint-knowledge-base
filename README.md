@@ -133,7 +133,10 @@ is not the SD of a raw value, and the SD in litres is not the SD in
 millilitres. The coverage line reports how many arms the distribution stands
 on. `--source baseline` gives the baseline SD as its own quantity rather than
 as a fallback, and `--analyses` gives the effect-size, p-value and
-non-inferiority-margin distributions instead.
+non-inferiority-margin distributions instead. `--arm-role control` (or
+`--by arm-role`) splits the SDs by control versus experimental arm, linking
+each results group to its protocol arm by title and printing how many arms it
+could not place.
 
 See [`docs/ENDPOINT_RESULTS_SPEC.md`](docs/ENDPOINT_RESULTS_SPEC.md) for what
 is converted, what is refused, and the four measurements this still owes a live

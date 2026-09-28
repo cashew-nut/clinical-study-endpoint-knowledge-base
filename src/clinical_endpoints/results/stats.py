@@ -16,6 +16,7 @@ from typing import Optional, Union
 
 import duckdb
 
+from clinical_endpoints.results.arms import ARM_ROLES, ARM_TYPES, fold_arm_type
 from clinical_endpoints.results.effects import (
     RATIO_SCALE_EFFECTS,
     classify_effect,
@@ -44,6 +45,10 @@ class StatsFilters:
     drug_class: FilterValue = None
     org: FilterValue = None
     since: Optional[str] = None
+    # Arm tier, through conformed.result_group_arm: experimental or control,
+    # or the registry's finer armGroups[].type.
+    arm_role: FilterValue = None
+    arm_type: FilterValue = None
     source: str = "outcome"
     include_approximate: bool = True
     include_derived: bool = True
@@ -54,6 +59,10 @@ class StatsFilters:
             ta=self.ta, org=self.org, phase=self.phase, drug_class=self.drug_class,
             since=self.since,
         )
+
+    @property
+    def selects_arms(self) -> bool:
+        return bool(split_values(self.arm_role) or split_values(self.arm_type))
 
 
 @dataclass
@@ -103,6 +112,34 @@ def _filter_sql(filters: StatsFilters) -> tuple[str, list]:
     return " AND ".join(where), params
 
 
+# Joined to endpoint_dispersion `d`. NULL-safe, so an untitled group finds its
+# result_group_arm row and that row's `no_group_title` skip reason.
+_ARM_JOIN = (
+    "LEFT JOIN conformed.result_group_arm a "
+    "ON a.nct_id = d.nct_id AND a.group_title IS NOT DISTINCT FROM d.group_title"
+)
+
+
+def _arm_sql(filters: StatsFilters) -> tuple[str, list]:
+    """(" AND a.arm_role = ANY(?) ...", params) for the arm filters, or nothing."""
+    clause, params = "", []
+    roles = split_values(filters.arm_role)
+    if roles:
+        unknown = sorted(set(roles) - set(ARM_ROLES))
+        if unknown:
+            raise ValueError(f"--arm-role must be one of {ARM_ROLES}, got {', '.join(unknown)}")
+        clause += " AND a.arm_role = ANY(?)"
+        params.append(list(roles))
+    types = [fold_arm_type(value) for value in split_values(filters.arm_type) or ()]
+    if types:
+        unknown = sorted(set(types) - set(ARM_TYPES))
+        if unknown:
+            raise ValueError(f"--arm-type must be one of {ARM_TYPES}, got {', '.join(unknown)}")
+        clause += " AND a.arm_type = ANY(?)"
+        params.append(types)
+    return clause, params
+
+
 def _table_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str) -> bool:
     return bool(
         con.execute(
@@ -130,6 +167,13 @@ def _require(con: duckdb.DuckDBPyConnection, filters: Optional[StatsFilters] = N
             "conformed.study_drug_class is missing, so --drug-class has nothing to filter on "
             "-- run `endpoints vocab validate` and `endpoints pull` first"
         )
+    if filters is not None and filters.selects_arms and not _table_exists(
+        con, "conformed", "result_group_arm"
+    ):
+        raise NotComputed(
+            "conformed.result_group_arm is missing, so --arm-role has nothing to select on "
+            "-- re-run `endpoints results conform`"
+        )
     if filters is not None and filters.ta and not _table_exists(
         con, "conformed", "study_therapeutic_area"
     ):
@@ -149,6 +193,9 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
     scale_filter = ""
     if filters.scale:
         scale_filter = " AND coalesce(d.si_scale_id, d.scale_id) = ?"
+    scale_params = [filters.scale] if filters.scale else []
+    arm_clause, arm_params = _arm_sql(filters)
+    arm_join = _ARM_JOIN if _table_exists(con, "conformed", "result_group_arm") else ""
 
     # si_scale_id is a function of scale_id, so a group never mixes converted
     # and unconverted values.
@@ -164,9 +211,10 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
             d.n, r.nct_id, r.timepoint_pattern
         FROM conformed.endpoint_dispersion d
         JOIN conformed.endpoint_results r ON r.result_id = d.result_id
-        WHERE {where} AND d.sd_estimate IS NOT NULL{scale_filter}
+        {arm_join}
+        WHERE {where} AND d.sd_estimate IS NOT NULL{scale_filter}{arm_clause}
         """,
-        params + ([filters.scale] if filters.scale else []),
+        params + scale_params + arm_params,
     ).fetchall()
 
     if not filters.include_approximate:
@@ -235,10 +283,11 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
             SELECT d.sd_skip_reason, count(*)
             FROM conformed.endpoint_dispersion d
             JOIN conformed.endpoint_results r ON r.result_id = d.result_id
-            WHERE {where} AND d.sd_estimate IS NULL
+            {arm_join}
+            WHERE {where} AND d.sd_estimate IS NULL{arm_clause}
             GROUP BY 1 ORDER BY 2 DESC
             """,
-            params,
+            params + arm_params,
         ).fetchall()
     )
 
@@ -248,6 +297,49 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
         "studies_conformed": conformed_studies,
         "studies_with_sd": len({row[9] for row in rows}),
         "skip_reasons": skips,
+        "arm_link": _arm_link_summary(con, where, params, scale_filter, scale_params)
+        if arm_join
+        else None,
+    }
+
+
+def _arm_link_summary(
+    con: duckdb.DuckDBPyConnection, where: str, params: list, scale_filter: str, scale_params: list
+) -> dict:
+    """How the usable SDs in this selection, before any arm filter, split by
+    arm role. An arm-selected distribution is read against this: a control-arm
+    median drawn from a third of the arms is not the control-arm median."""
+    by_role = con.execute(
+        f"""
+        SELECT coalesce(a.arm_role, 'no_role'), count(*)
+        FROM conformed.endpoint_dispersion d
+        JOIN conformed.endpoint_results r ON r.result_id = d.result_id
+        {_ARM_JOIN}
+        WHERE {where} AND d.sd_estimate IS NOT NULL{scale_filter}
+        GROUP BY 1 ORDER BY 2 DESC
+        """,
+        params + scale_params,
+    ).fetchall()
+    unlinked = dict(
+        con.execute(
+            f"""
+            SELECT coalesce(a.link_skip_reason, 'role_not_stated'), count(*)
+            FROM conformed.endpoint_dispersion d
+            JOIN conformed.endpoint_results r ON r.result_id = d.result_id
+            {_ARM_JOIN}
+            WHERE {where} AND d.sd_estimate IS NOT NULL{scale_filter}
+              AND a.arm_role IS NULL
+            GROUP BY 1 ORDER BY 2 DESC
+            """,
+            params + scale_params,
+        ).fetchall()
+    )
+    roles = dict(by_role)
+    return {
+        "arms": sum(roles.values()),
+        "with_role": sum(count for role, count in roles.items() if role != "no_role"),
+        "by_role": {role: count for role, count in roles.items() if role != "no_role"},
+        "no_role_reasons": unlinked,
     }
 
 
@@ -313,9 +405,36 @@ def stratify_by_drug_class(
     return out
 
 
+def stratify_by_arm_role(
+    con: duckdb.DuckDBPyConnection, filters: StatsFilters, *, analyses: bool = False
+) -> list[tuple[str, dict]]:
+    """The SD distribution once per arm role, experimental then control.
+    Returns [(arm_role, report), ...]; an --arm-role filter picks which.
+
+    Unlike drug class, the strata are disjoint: a results group links to at
+    most one arm. Arms with no role are in neither, and each report's
+    `arm_link` counts them.
+    """
+    if analyses:
+        raise ValueError(
+            "--by arm-role does not apply to --analyses: an analysis compares arms, so it "
+            "belongs to no single role"
+        )
+    chosen = split_values(filters.arm_role)
+    roles = [role for role in ARM_ROLES if not chosen or role in chosen]
+    if chosen and not roles:
+        raise ValueError(f"--arm-role must be one of {ARM_ROLES}, got {', '.join(chosen)}")
+    return [(role, sd_distribution(con, replace(filters, arm_role=role))) for role in roles]
+
+
 def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> dict:
     """Effect sizes, p-values and non-inferiority margins reported for the
     selected endpoint. Distributions, never a pooled estimate."""
+    if filters.selects_arms:
+        raise ValueError(
+            "--arm-role and --arm-type do not apply to --analyses: an analysis compares "
+            "arms, so it belongs to no single role"
+        )
     _require(con, filters)
     if not _table_exists(con, "raw", "outcome_analyses"):
         raise NotComputed("raw.outcome_analyses is empty -- run `endpoints pull` first")

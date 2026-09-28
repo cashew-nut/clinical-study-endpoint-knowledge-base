@@ -21,7 +21,7 @@ Read alongside:
 ## Read this before the diagrams
 
 **There is not one foreign key in this warehouse.** DuckDB is given
-`PRIMARY KEY` on five of the nine tables and nothing else. Every edge drawn
+`PRIMARY KEY` on five of the ten tables and nothing else. Every edge drawn
 below is a convention the pipeline maintains rather than a constraint the
 database enforces, so a dangling reference is possible in principle. One case
 is deliberate; see
@@ -277,6 +277,7 @@ erDiagram
 | `endpoint_results` | reported outcome, or baseline characteristic | `result_id` (PK) | `results conform` |
 | `results_review_queue` | reported outcome needing review | `review_id` (PK) | `results conform` |
 | `endpoint_dispersion` | arm × class × category measurement | `dispersion_id` (PK) | `results conform` |
+| `result_group_arm` | (study, results group title), linked or not | `(nct_id, group_title)`, undeclared | `results conform` |
 | `study_therapeutic_area` | (study, therapeutic area) | `(nct_id, ta_id)`, undeclared | `pull` |
 | `study_drug_class` | (study, drug class) | `(nct_id, drug_class_id)`, undeclared | `pull` |
 | `arm_drug_class` | (study, arm, drug class) per contributing intervention | none — see below | `pull` |
@@ -380,6 +381,14 @@ is why `endpoints stats` does not group dispersion by drug class (see
 `write_arm_drug_class`'s docstring, and [`DRUG_CLASS_SPEC.md`](DRUG_CLASS_SPEC.md),
 "Class is an arm property"). Joining them yields a number resting on an
 unmeasured join.
+
+`result_group_arm` is that title join, made explicit. It holds one row per
+results group title, with the protocol arm it matched (`arm_title`), how it
+matched (`link_method`: `exact_title`, `title_stem` or `sole_arm`), or why it
+did not (`link_skip_reason`). It is what `stats --arm-role` joins through, on
+`(nct_id, group_title)` NULL-safely, and it carries only the arm's **role**
+(experimental or control, from `armGroups[].type`), not its drug class.
+`results coverage` section 5 is the measurement of how often the link holds.
 
 **`outcome_type` is not case-normalised anywhere.** It is stored as the backend
 wrote it, on `endpoints`, `review_queue`, `endpoint_results` and
