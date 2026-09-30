@@ -89,6 +89,16 @@ def _table_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str) -> bo
     )
 
 
+def _column_exists(con: duckdb.DuckDBPyConnection, schema: str, table: str, column: str) -> bool:
+    return bool(
+        con.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = ? AND table_name = ? AND column_name = ?",
+            [schema, table, column],
+        ).fetchone()
+    )
+
+
 def _inline_map(con: duckdb.DuckDBPyConnection, table: str) -> dict[str, str]:
     """`inline_label` where the term declares one, else `label`."""
     rows = con.execute(f"SELECT id, coalesce(inline_label, label) FROM vocab.{table}").fetchall()
@@ -99,6 +109,11 @@ def load_projection_rules(con: duckdb.DuckDBPyConnection) -> ProjectionRules:
     if not _table_exists(con, "vocab", "usdm_templates"):
         raise NotConformed(
             "vocab.usdm_templates is empty -- run `endpoints vocab validate` first"
+        )
+    if not _table_exists(con, "vocab", "summaries"):
+        raise NotConformed(
+            "vocab.summaries is missing: the warehouse vocabulary predates the summary "
+            "dimension -- run `endpoints vocab validate`, then `endpoints conform`"
         )
 
     templates: dict[str, TemplateSpec] = {}
@@ -176,6 +191,8 @@ class SourceRow:
     form_id: str | None = None
     measurement_id: str | None = None
     summary_id: str | None = None
+    summary_match_method: str | None = None
+    summary_confidence: float | None = None
     reference_id: str | None = None
     event_id: str | None = None
     scale_id: str | None = None
@@ -210,7 +227,7 @@ SELECT endpoint_id, outcome_type, measure_raw, description_raw, time_frame_raw, 
        form_match_method, measurement_match_method, reference_match_method, analysable,
        event_id, event_match_method, named_endpoint_id,
        form_confidence, measurement_confidence, reference_confidence, event_confidence,
-       summary_id
+       summary_id, summary_match_method, summary_confidence
 FROM conformed.endpoints WHERE nct_id = ?
 """
 
@@ -229,6 +246,11 @@ def fetch_rows(con: duckdb.DuckDBPyConnection, nct_id: str) -> list[SourceRow]:
         raise NotPulled(f"{nct_id} has not been pulled into raw.studies")
     if not _table_exists(con, "conformed", "endpoints"):
         raise NotConformed("conformed.endpoints is empty -- run `endpoints conform` first")
+    if not _column_exists(con, "conformed", "endpoints", "summary_id"):
+        raise NotConformed(
+            "conformed.endpoints predates the summary dimension -- run `endpoints vocab validate`, "
+            "then `endpoints conform`"
+        )
 
     rows: list[SourceRow] = []
     for r in con.execute(_CONFORMED_SELECT, [nct_id]).fetchall():
@@ -244,7 +266,7 @@ def fetch_rows(con: duckdb.DuckDBPyConnection, nct_id: str) -> list[SourceRow]:
                 event_id=r[20], event_match_method=r[21], named_endpoint_id=r[22],
                 form_confidence=r[23], measurement_confidence=r[24],
                 reference_confidence=r[25], event_confidence=r[26],
-                summary_id=r[27],
+                summary_id=r[27], summary_match_method=r[28], summary_confidence=r[29],
             )
         )
     if _table_exists(con, "conformed", "review_queue"):
@@ -466,6 +488,8 @@ def _conformance(ids: IdFactory, row: SourceRow, tier: str) -> dict:
     add("formMatchConfidence", row.form_confidence)
     add("measurementMatchMethod", row.measurement_match_method)
     add("measurementMatchConfidence", row.measurement_confidence)
+    add("summaryMatchMethod", row.summary_match_method)
+    add("summaryMatchConfidence", row.summary_confidence)
     add("referenceMatchMethod", row.reference_match_method)
     add("referenceMatchConfidence", row.reference_confidence)
     add("eventMatchMethod", row.event_match_method)

@@ -125,6 +125,10 @@ def test_reference_table_fixtures_conform_end_to_end(con):
         # Spaced "AUC" once matched auc_over_time ahead of change_from_baseline.
         ("Change From Baseline in FEV1 AUC (0-3h) at Week 24", ("change_from_baseline", "fev1", "auc", "increase_is_better")),
         ("Change from baseline in FEV1 area under the curve from 0 to 3 hours", ("change_from_baseline", "fev1", "auc", "increase_is_better")),
+        # The window between FEV1 and the AUC once put it out of the veto's reach.
+        ("Change From Baseline in FEV1 Area Under the Curve 0-3 Hours (AUC0-3) at Day 1", ("change_from_baseline", "fev1", "auc", "increase_is_better")),
+        ("Change From Baseline in AUC0-3 of FEV1 at Week 24", ("change_from_baseline", "fev1", "auc", "increase_is_better")),
+        ("Change From Baseline in Weighted Mean FEV1 Over 0-3 Hours", ("change_from_baseline", "fev1", "auc", "increase_is_better")),
         ("Percent change from baseline in FEV1 AUC0-3", ("percent_change_from_baseline", "fev1", "auc", "increase_is_better")),
         ("Change From Baseline in Trough FEV1 (L) at Week 24", ("change_from_baseline", "fev1", "trough", "increase_is_better")),
         ("Change from baseline in peak FEV1", ("change_from_baseline", "fev1", "peak", "increase_is_better")),

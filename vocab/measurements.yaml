@@ -2879,9 +2879,15 @@ terms:
       # MMTT C-peptide, OGTT glucose. The quantity is that measurement, with
       # summary `auc` (summaries.yaml). Without this, "FEV1 AUC0-3" matched
       # here on length and took a neutral direction and ng*h/mL.
-      - '\b(FEV\s?[1₁]|FVC|PEF|C-?peptide|glucose|insulin|glucagon|pain)\b\W+(\w+\W+){0,2}AUC'
-      - '\bAUC\S*\W+(\w+\W+){0,3}(FEV\s?[1₁]|FVC|PEF|C-?peptide|glucose|insulin|glucagon|pain)\b'
-      - '\barea under the (FEV\s?[1₁]|FVC|C-?peptide|glucose|insulin) '
+      # Spirometry, C-peptide and glucose veto ANYWHERE in the text: registry
+      # titles put the window between them and the AUC ("FEV1 Area Under the
+      # Curve 0-3 Hours (AUC0-3)"), and none of them names a drug whose
+      # exposure would be measured.
+      - '\b(FEV\s?[1₁]|forced expiratory volume|FVC|forced vital capacity|PEF|peak expiratory flow|C-?peptide|glucose)\b'
+      # Insulin and glucagon are also drugs, so their own PK AUC is real; only
+      # an AUC right beside them, as in a meal-test response, vetoes.
+      - '\b(insulin|glucagon|pain)\b\W+(\w+\W+){0,2}AUC'
+      - '\bAUC\S*\W+(\w+\W+){0,3}(insulin|glucagon|pain)\b'
 
   - id: pk_ctrough
     label: "Trough concentration (Ctrough)"
