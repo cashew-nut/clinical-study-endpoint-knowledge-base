@@ -191,6 +191,8 @@ terms:
       The plan's reference-table fixture for change-from-baseline. Percent-predicted
       variants share this measurement and differ only in Reference
       (predicted_normal) and Scale, so do not create a second term for them.
+      Trough, peak and AUC FEV1 share it too and differ in Summary
+      (summaries.yaml), for the same reason.
 
   - id: fvc
     label: "Forced vital capacity (FVC)"
@@ -844,6 +846,9 @@ terms:
     default_scale: ng_per_ml
     typical_ta: [metabolic_endocrine]
     synonyms: ["C-peptide", "MMTT C-peptide", "mixed meal tolerance test C-peptide", "C-peptide AUC"]
+    notes: >-
+      C-peptide AUC and peak C-peptide are this measurement with Summary `auc`
+      or `peak` (summaries.yaml), as trough/peak/AUC FEV1 are all `fev1`.
 
   - id: body_weight
     label: "Body weight"
@@ -2869,6 +2874,14 @@ terms:
     default_scale: ng_h_per_ml
     synonyms: ["AUC", "AUC0-t", "AUC0-inf", "AUC0-last", "AUC0-24", "area under the plasma concentration-time curve"]
     patterns: ['\bAUC\s?[0-9]*[-,]?\w*\b']
+    not_if_matches:
+      # An AUC of a response rather than of drug concentration: serial FEV1,
+      # MMTT C-peptide, OGTT glucose. The quantity is that measurement, with
+      # summary `auc` (summaries.yaml). Without this, "FEV1 AUC0-3" matched
+      # here on length and took a neutral direction and ng*h/mL.
+      - '\b(FEV\s?[1₁]|FVC|PEF|C-?peptide|glucose|insulin|glucagon|pain)\b\W+(\w+\W+){0,2}AUC'
+      - '\bAUC\S*\W+(\w+\W+){0,3}(FEV\s?[1₁]|FVC|PEF|C-?peptide|glucose|insulin|glucagon|pain)\b'
+      - '\barea under the (FEV\s?[1₁]|FVC|C-?peptide|glucose|insulin) '
 
   - id: pk_ctrough
     label: "Trough concentration (Ctrough)"

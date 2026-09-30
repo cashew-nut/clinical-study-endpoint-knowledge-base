@@ -36,6 +36,8 @@ FilterValue = Union[None, str, tuple]
 @dataclass(frozen=True)
 class StatsFilters:
     measurement: FilterValue = None
+    # summaries.yaml ids; `none` selects rows that name no summary.
+    summary: FilterValue = None
     form: FilterValue = None
     scale: Optional[str] = None
     timepoint: FilterValue = None
@@ -102,6 +104,15 @@ def _filter_sql(filters: StatsFilters) -> tuple[str, list]:
         if values:
             where.append(f"{column} = ANY(?)")
             params.append(list(values))
+    summaries = split_values(filters.summary)
+    if summaries:
+        named = [v for v in summaries if v != "none"]
+        clauses = ["r.summary_id = ANY(?)"] if named else []
+        if named:
+            params.append(named)
+        if "none" in summaries:
+            clauses.append("r.summary_id IS NULL")
+        where.append("(" + " OR ".join(clauses) + ")")
     # drug_class is study tier: the results section's group_key links to a
     # protocol arm only by title, so an arm-level join is not yet defensible.
     scope = filters.scope

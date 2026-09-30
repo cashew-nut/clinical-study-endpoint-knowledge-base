@@ -16,6 +16,7 @@ _DIMENSION_TABLE = {
     "measurement": "measurements",
     "reference": "references",
     "event": "events",
+    "summary": "summaries",
     "named_endpoint": "named_endpoints",
 }
 
@@ -50,6 +51,7 @@ class ConformRules:
     reference_matcher: TermMatcher
     event_matcher: TermMatcher
     named_endpoint_matcher: TermMatcher
+    summary_matcher: TermMatcher
 
     form_cascade: Cascade
     measurement_cascade: Cascade
@@ -57,6 +59,7 @@ class ConformRules:
     timepoint_cascade: Cascade
     event_cascade: Cascade
     named_endpoint_cascade: Cascade
+    summary_cascade: Cascade
 
     form_analysable: dict[str, bool]
     form_expects_threshold: dict[str, bool]
@@ -94,6 +97,7 @@ def load_rules(con: duckdb.DuckDBPyConnection) -> ConformRules:
     reference_matcher = matcher.build_matcher(con, "reference", "references", match_settings)
     event_matcher = matcher.build_matcher(con, "event", "events", match_settings)
     named_endpoint_matcher = matcher.build_matcher(con, "named_endpoint", "named_endpoints", match_settings)
+    summary_matcher = matcher.build_matcher(con, "summary", "summaries", match_settings)
 
     form_analysable = {
         row[0]: (row[1] == "true") for row in con.execute("SELECT id, analysable FROM vocab.forms").fetchall()
@@ -146,12 +150,14 @@ def load_rules(con: duckdb.DuckDBPyConnection) -> ConformRules:
         reference_matcher=reference_matcher,
         event_matcher=event_matcher,
         named_endpoint_matcher=named_endpoint_matcher,
+        summary_matcher=summary_matcher,
         form_cascade=load_cascade(con, "form"),
         measurement_cascade=load_cascade(con, "measurement"),
         reference_cascade=load_cascade(con, "reference"),
         timepoint_cascade=load_cascade(con, "timepoint"),
         event_cascade=load_cascade(con, "event"),
         named_endpoint_cascade=load_cascade(con, "named_endpoint"),
+        summary_cascade=load_cascade(con, "summary"),
         form_analysable=form_analysable,
         form_expects_threshold=form_expects_threshold,
         form_direction_rule=form_direction_rule,

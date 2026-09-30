@@ -1,0 +1,78 @@
+# Dimension: SUMMARY, how repeated readings of one measurement within a single
+# assessment are reduced to one value.
+#
+# Serial spirometry after a dose yields a curve of FEV1 readings. A registry
+# endpoint reports one number from that curve: the pre-dose reading (trough), the
+# highest post-dose reading (peak), or the area under it over a window (AUC,
+# usually normalised by the window length so it stays in litres). A mixed-meal
+# tolerance test does the same to C-peptide. All three are still FEV1, or still
+# C-peptide, which is the point of keeping this off the measurement: trough,
+# peak and AUC FEV1 share `measurement_id = fev1` and so share the
+# SAME_MEASUREMENT join, and differ here instead.
+#
+# Kept off the form for the same reason. "Change from baseline in FEV1 AUC0-3"
+# is a change from baseline (form) in FEV1 (measurement) summarised as an AUC
+# (summary). Form answers what kind of number the endpoint reports; summary
+# answers which reading of the measurement went into it. forms.yaml's
+# `auc_over_time` is the form only when the AUC is the reported value itself,
+# with no comparison against a reference, and such rows carry summary `auc` too.
+#
+# A row with no summary named gets NULL, not a sentinel: most measurements are
+# a single reading per assessment and have nothing to summarise.
+#
+# `inline_label` is the prefix the USDM text puts before the measurement's own
+# label, through the optional `{summary}` tag in usdm_templates.yaml.
+
+version: 1
+dimension: summary
+terms:
+
+  - id: trough
+    label: "Trough"
+    inline_label: "trough"
+    definition: >-
+      The reading at the end of the dosing interval, immediately before the next
+      dose: the lowest expected value of a drug effect.
+    synonyms: ["trough", "pre-dose", "predose"]
+    patterns:
+      - '\btrough\b'
+
+  - id: peak
+    label: "Peak"
+    inline_label: "peak"
+    definition: >-
+      The highest reading over a post-dose observation window.
+    synonyms: ["peak", "maximum post-dose", "maximal post-dose"]
+    patterns:
+      - '\bpeak\b'
+    not_if_matches:
+      # Measurements whose own name contains "peak": the word names the
+      # quantity, not a reduction of a curve of it.
+      - '\bpeak (expiratory |inspiratory )?flow\b'
+      - '\bpeak (oxygen|VO\s?2)\b'
+      - '\bVO\s?2 ?peak\b'
+    notes: >-
+      Not `maximum` in general: "maximum tolerated dose" and "VO2 max" are not a
+      peak of a serial measurement.
+
+  - id: auc
+    label: "Area under the curve"
+    inline_label: "area under the curve of"
+    definition: >-
+      The measurement integrated over an observation window, reported as an area
+      or, divided by the window length, as a time-weighted average in the
+      measurement's own units (FEV1 AUC0-3h in litres).
+    synonyms: ["area under the curve", "time-weighted average", "time weighted average"]
+    patterns:
+      # AUC glued to its window ("AUC0-3", "AUC0-12h", "AUClast") has no word
+      # boundary after the C, so only the leading edge is anchored.
+      - '(?-i:(?<![\w])AUC)'
+      - '\barea under the (\w+[- ])*curve\b'
+      - '\btime[- ]weighted average\b'
+
+# Earlier wins. AUC first: "AUC of peak-normalised..." is an AUC, and a string
+# naming an AUC window reports the area whatever else it mentions.
+match_precedence:
+  - auc
+  - peak
+  - trough

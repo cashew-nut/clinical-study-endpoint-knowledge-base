@@ -65,6 +65,12 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         list_references={"applies_to_forms": "form"},
     ),
     DimensionSpec(
+        filename="summaries.yaml",
+        dimension="summary",
+        table="summaries",
+        columns=("id", "label", "inline_label", "definition", "notes"),
+    ),
+    DimensionSpec(
         filename="scales.yaml",
         dimension="scale",
         table="scales",
@@ -141,6 +147,8 @@ DERIVED_ATTRIBUTES = frozenset({"purpose", "reference", "objective"})
 # home for its value (see usdm/tags.py). The analysis population is not a tag:
 # it is projected as an AnalysisPopulation linked from the decomposition rather
 # than rendered into the text.
-USDM_TAGS = frozenset({"measurement", "concept", "reference", "timepoint", "threshold", "scale", "event"})
+USDM_TAGS = frozenset(
+    {"measurement", "summary", "concept", "reference", "timepoint", "threshold", "scale", "event"}
+)
 
 USDM_OBJECTIVE_KEYS = frozenset({"primary", "secondary", "exploratory", "_unresolved"})

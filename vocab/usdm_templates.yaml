@@ -41,6 +41,11 @@
 #              unresolved. Groups may not nest.
 #   \{ \} \[ \] \\   escapes.
 #
+# {summary} is always an optional prefix, `[{summary} ]{measurement}`: most
+# rows name no summary (summaries.yaml), and it rides as its own tag rather than
+# inside the measurement's label so the measurement surrogate stays shared
+# across trough, peak and AUC readings of the same quantity.
+#
 # WHAT IS NOT A TAG. Direction. It is derived rather than matched
 # (directions.yaml), it can vary by therapeutic area via `direction_by_ta`, and
 # "decrease is better" belongs in no endpoint's name. It travels in
@@ -105,7 +110,7 @@ templates:
 
   # --- proportions ---------------------------------------------------------
   - form: responder_proportion
-    template: "Proportion of participants achieving {threshold} in {measurement}[ from {reference}][ {timepoint}]"
+    template: "Proportion of participants achieving {threshold} in [{summary} ]{measurement}[ from {reference}][ {timepoint}]"
     notes: >-
       {threshold} is required because forms.yaml marks this form
       expects_threshold: true. A responder proportion with no recoverable
@@ -121,27 +126,33 @@ templates:
 
   # --- change from a reference value --------------------------------------
   - form: change_from_baseline
-    template: "Change from {reference} in {measurement}[ {timepoint}][ ({scale})]"
+    template: "Change from {reference} in [{summary} ]{measurement}[ {timepoint}][ ({scale})]"
     reference_fallback: patient_baseline
 
   - form: percent_change_from_baseline
-    template: "Percent change from {reference} in {measurement}[ {timepoint}]"
+    template: "Percent change from {reference} in [{summary} ]{measurement}[ {timepoint}]"
     reference_fallback: patient_baseline
 
   - form: ratio_to_baseline
-    template: "Ratio to {reference} of {measurement}[ {timepoint}]"
+    template: "Ratio to {reference} of [{summary} ]{measurement}[ {timepoint}]"
     reference_fallback: patient_baseline
 
   - form: shift_from_baseline
-    template: "Shift from {reference} in {measurement} category[ {timepoint}]"
+    template: "Shift from {reference} in [{summary} ]{measurement} category[ {timepoint}]"
     reference_fallback: patient_baseline
 
   # --- values and exposure -------------------------------------------------
   - form: value_at_timepoint
-    template: "{measurement}[ {timepoint}][ ({scale})]"
+    template: "[{summary} ]{measurement}[ {timepoint}][ ({scale})]"
 
   - form: auc_over_time
     template: "Area under the {measurement} curve[ {timepoint}]"
+    notes: >-
+      No {summary} tag: every row of this form carries summary `auc`, and the
+      frame already says so. The continuous-quantity templates above render
+      it as an optional prefix, so "Change from baseline in FEV1 AUC0-3"
+      reads "Change from baseline in area under the curve of FEV1" while its
+      measurement surrogate stays plain FEV1, shared with trough and peak FEV1.
 
   # --- counts and rates ----------------------------------------------------
   - form: event_count
@@ -156,14 +167,14 @@ templates:
       in extensions until scales.yaml carries a denominator form.
 
   - form: annualized_rate_of_change
-    template: "Annualised rate of change in {measurement}[ from {reference}][ {timepoint}]"
+    template: "Annualised rate of change in [{summary} ]{measurement}[ from {reference}][ {timepoint}]"
 
   - form: event_free_days
     template: "Days free of {event}[ {timepoint}]"
 
   # --- the awkward ones ----------------------------------------------------
   - form: correlation
-    template: "Correlation involving {measurement}[ {timepoint}]"
+    template: "Correlation involving [{summary} ]{measurement}[ {timepoint}]"
     notes: >-
       Under-modelled by design. A correlation endpoint has two variables and
       conformed.endpoints has one measurement_id. "Involving" avoids borrowing
@@ -173,7 +184,7 @@ templates:
       schema change rather than a template change.
 
   - form: not_stated
-    template: "{measurement}[ {timepoint}]"
+    template: "[{summary} ]{measurement}[ {timepoint}]"
     notes: >-
       The fallback frame. 31% of rows name a measurement and no form, so this is
       the most-used template in the file, and it asserts only what was actually

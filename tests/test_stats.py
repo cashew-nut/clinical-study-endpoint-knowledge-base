@@ -120,6 +120,16 @@ def test_filters_narrow_without_changing_the_shape(results_con):
     )["groups"]
 
 
+def test_summary_filter_separates_plain_from_auc_fev1(results_con):
+    """The fixture's FEV1 rows name no summary: `none` keeps them, `auc`
+    (an FEV1 AUC endpoint, same measurement id) excludes them."""
+    everything = sd_distribution(results_con, StatsFilters(measurement="fev1"))
+    plain = sd_distribution(results_con, StatsFilters(measurement="fev1", summary="none"))
+    assert [g.arms for g in plain["groups"]] == [g.arms for g in everything["groups"]]
+    assert not sd_distribution(results_con, StatsFilters(measurement="fev1", summary="auc"))["groups"]
+    assert sd_distribution(results_con, StatsFilters(measurement="fev1", summary="auc,none"))["groups"]
+
+
 def test_a_single_arm_group_gets_a_quantile_rather_than_an_exception(results_con):
     """`statistics.quantiles` raises below two points; one arm is an ordinary
     case that needs its denominator printed, not an exception."""

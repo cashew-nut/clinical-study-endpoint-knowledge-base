@@ -379,9 +379,19 @@ terms:
       - "AUC0-24"
       - "time-weighted average"
     patterns:
-      - '\bAUC\b'
-      - '\barea under the (plasma |serum )?(concentration[- ]time |response )?curve\b'
+      # AUC glued to its window ("AUC0-3", "AUC0-24h", "AUClast") has no word
+      # boundary after the C, so only the leading edge is anchored.
+      - '(?-i:(?<![\w])AUC)'
+      - '\barea under the (\w+[- ])*curve\b'
       - '\btime[- ]weighted average\b'
+    notes: >-
+      The form only when the area is the reported value itself ("C-peptide AUC
+      at Week 52", "AUC0-24 of drug X"). "Change from baseline in FEV1 AUC0-3"
+      is a change_from_baseline whose summary is `auc` (summaries.yaml): the
+      AUC is which reading of FEV1 went into the change, not what kind of
+      number the endpoint reports. match_precedence below puts this form after
+      the baseline-comparison forms for that reason. Either way the row
+      carries summary `auc`, so every AUC endpoint is one query away.
 
   # --- counts and rates ----------------------------------------------------
   - id: event_count
@@ -553,7 +563,9 @@ terms:
 # Precedence when a raw string matches several forms. Earlier wins.
 # Grounded in the observed overlaps: "percent change" also matches "change";
 # "number of participants with X" also matches "number of"; "rate" appears in
-# both response-rate and event-rate phrasings.
+# both response-rate and event-rate phrasings; "change from baseline in FEV1
+# AUC0-3" is a change of an AUC, so auc_over_time sits below every form that
+# can wrap one and wins only over a bare value.
 match_precedence:
   - descriptive
   - correlation
@@ -563,7 +575,6 @@ match_precedence:
   - annualized_rate_of_change
   - event_free_rate_at_timepoint
   - time_to_event
-  - auc_over_time
   - proportion_of_time_in_state
   - responder_proportion
   - incidence_proportion
@@ -571,6 +582,7 @@ match_precedence:
   - event_free_days
   - event_count
   - change_from_baseline
+  - auc_over_time
   - value_at_timepoint
   - not_stated
 

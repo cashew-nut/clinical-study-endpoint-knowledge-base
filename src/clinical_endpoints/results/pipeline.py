@@ -55,6 +55,7 @@ CREATE OR REPLACE TABLE conformed.endpoint_results (
     form_id VARCHAR, form_match_method VARCHAR, form_confidence DOUBLE, form_source_field VARCHAR,
     measurement_id VARCHAR, measurement_match_method VARCHAR, measurement_confidence DOUBLE,
     measurement_source_field VARCHAR,
+    summary_id VARCHAR, summary_match_method VARCHAR, summary_confidence DOUBLE, summary_source_field VARCHAR,
     reference_id VARCHAR, reference_match_method VARCHAR, reference_confidence DOUBLE,
     reference_source_field VARCHAR,
     event_id VARCHAR, event_match_method VARCHAR, event_confidence DOUBLE, event_source_field VARCHAR,
@@ -177,19 +178,21 @@ def _read_result_rows(con: duckdb.DuckDBPyConnection) -> list[_ResultRow]:
 
 
 def _planned_index(con: duckdb.DuckDBPyConnection, steps: list[str]):
-    """Per study: normalised `measure` -> endpoint, and measurement_id -> endpoint."""
+    """Per study: normalised `measure` -> endpoint, and (measurement_id,
+    summary_id) -> endpoint. The summary is part of the key so a trough FEV1
+    result does not link to a planned FEV1 AUC endpoint of the same study."""
     by_title: dict[tuple[str, str], tuple[str, Optional[str]]] = {}
-    by_measurement: dict[tuple[str, str], tuple[str, Optional[str]]] = {}
+    by_measurement: dict[tuple[str, str, Optional[str]], tuple[str, Optional[str]]] = {}
     if not _table_exists(con, "conformed", "endpoints"):
         return by_title, by_measurement
-    for endpoint_id, nct_id, measure_raw, measurement_id, form_id in con.execute(
-        "SELECT endpoint_id, nct_id, measure_raw, measurement_id, form_id FROM conformed.endpoints"
+    for endpoint_id, nct_id, measure_raw, measurement_id, summary_id, form_id in con.execute(
+        "SELECT endpoint_id, nct_id, measure_raw, measurement_id, summary_id, form_id FROM conformed.endpoints"
     ).fetchall():
         title_key = normalise(measure_raw, steps).lower()
         if title_key:
             by_title.setdefault((nct_id, title_key), (endpoint_id, form_id))
         if measurement_id:
-            by_measurement.setdefault((nct_id, measurement_id), (endpoint_id, form_id))
+            by_measurement.setdefault((nct_id, measurement_id, summary_id), (endpoint_id, form_id))
     return by_title, by_measurement
 
 
@@ -288,7 +291,7 @@ def run_results_conform(
             elif title_key and (row.nct_id, title_key) in unconformed_titles:
                 link_method = "exact_title"
             else:
-                planned = by_measurement.get((row.nct_id, outcome.measurement_id))
+                planned = by_measurement.get((row.nct_id, outcome.measurement_id, outcome.summary_id))
                 if planned is not None:
                     link_method = "conformed_measurement"
                     planned_endpoint_id, planned_form_id = planned
