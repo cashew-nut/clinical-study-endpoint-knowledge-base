@@ -129,8 +129,10 @@ measurement=fev1, source=outcome
     coverage    2 of 2 conformed studies reported a usable dispersion (100.0%)
 ```
 
-The output is grouped by form and unit because the SD of a change from baseline
-is not the SD of a raw value, and the SD in litres is not the SD in
+The output is grouped by form, summary and unit because the SD of a change
+from baseline is not the SD of a raw value, the SD of trough FEV1 is not the SD
+of FEV1 AUC (a named summary adds itself to the header, as in
+`change_from_baseline · auc · litres`), and the SD in litres is not the SD in
 millilitres. The coverage line reports how many arms the distribution stands
 on. `--source baseline` gives the baseline SD as its own quantity rather than
 as a fallback, and `--analyses` gives the effect-size, p-value and

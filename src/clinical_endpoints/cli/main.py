@@ -1591,7 +1591,9 @@ def _print_sd(report) -> None:
         return
 
     for group in report["groups"]:
-        header = f"{group.form_id or '(no form)'} · {group.scale_id or '(no unit)'}"
+        header = " · ".join(
+            part for part in (group.form_id or "(no form)", group.summary_id, group.scale_id or "(no unit)") if part
+        )
         if group.converted:
             header += "  [dim](converted via scales.yaml)[/dim]"
         if group.sd_scale != "arithmetic":
@@ -1662,11 +1664,12 @@ def _print_analyses(report) -> None:
 
     if report["effects"]:
         console.print("\n  [bold]effect measures[/bold]")
-        table = Table("effect", "unit", "studies", "analyses", "median", "IQR", "null",
+        table = Table("effect", "summary", "unit", "studies", "analyses", "median", "IQR", "null",
                       box=None, pad_edge=False)
         for effect in report["effects"]:
             table.add_row(
                 effect["effect_kind"],
+                effect["summary_id"] or "-",
                 effect["scale_id"] or "-",
                 str(effect["studies"]),
                 str(effect["analyses"]),

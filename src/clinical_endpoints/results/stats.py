@@ -70,6 +70,9 @@ class StatsFilters:
 @dataclass
 class SdGroup:
     form_id: Optional[str]
+    # summaries.yaml; None when the endpoint names no summary. Part of the
+    # group key: the SD of trough FEV1 is not the SD of FEV1 AUC.
+    summary_id: Optional[str]
     scale_id: Optional[str]
     sd_scale: str
     converted: bool
@@ -195,7 +198,7 @@ def _require(con: duckdb.DuckDBPyConnection, filters: Optional[StatsFilters] = N
 
 
 def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> dict:
-    """The arm-level SD distribution, one block per (form, unit) group."""
+    """The arm-level SD distribution, one block per (form, summary, unit) group."""
     _require(con, filters)
     if filters.source not in SOURCES:
         raise ValueError(f"--source must be one of {SOURCES}, got {filters.source!r}")
@@ -219,7 +222,7 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
             d.sd_scale,
             coalesce(d.sd_estimate_si, d.sd_estimate) AS sd,
             d.sd_method, d.sd_is_approximate, d.sd_is_derived,
-            d.n, r.nct_id, r.timepoint_pattern
+            d.n, r.nct_id, r.timepoint_pattern, r.summary_id
         FROM conformed.endpoint_dispersion d
         JOIN conformed.endpoint_results r ON r.result_id = d.result_id
         {arm_join}
@@ -235,14 +238,14 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
 
     denominator_rows = con.execute(
         f"""
-        SELECT r.form_id, count(DISTINCT r.nct_id)
+        SELECT r.form_id, r.summary_id, count(DISTINCT r.nct_id)
         FROM conformed.endpoint_results r
         WHERE {where}
-        GROUP BY 1
+        GROUP BY 1, 2
         """,
         params,
     ).fetchall()
-    conformed_by_form = dict(denominator_rows)
+    conformed_by_form = {(form_id, summary_id): n for form_id, summary_id, n in denominator_rows}
     conformed_studies = con.execute(
         f"SELECT count(DISTINCT r.nct_id) FROM conformed.endpoint_results r WHERE {where}",
         params,
@@ -250,10 +253,10 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
 
     grouped: dict[tuple, list] = {}
     for row in rows:
-        grouped.setdefault((row[0], row[1], row[2], row[3]), []).append(row)
+        grouped.setdefault((row[0], row[11], row[1], row[2], row[3]), []).append(row)
 
     groups: list[SdGroup] = []
-    for (form_id, scale_id, converted, sd_scale), members in grouped.items():
+    for (form_id, summary_id, scale_id, converted, sd_scale), members in grouped.items():
         values = sorted(row[4] for row in members)
         studies = {row[9] for row in members}
         ns = [row[8] for row in members if row[8] is not None]
@@ -267,6 +270,7 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
         groups.append(
             SdGroup(
                 form_id=form_id,
+                summary_id=summary_id,
                 scale_id=scale_id,
                 sd_scale=sd_scale,
                 converted=bool(converted),
@@ -283,10 +287,10 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
                     ((pattern, len(ncts)) for pattern, ncts in timepoints.items()),
                     key=lambda kv: (-kv[1], kv[0] or ""),
                 ),
-                studies_conformed=conformed_by_form.get(form_id, 0),
+                studies_conformed=conformed_by_form.get((form_id, summary_id), 0),
             )
         )
-    groups.sort(key=lambda g: (-g.arms, g.form_id or "", g.scale_id or ""))
+    groups.sort(key=lambda g: (-g.arms, g.form_id or "", g.summary_id or "", g.scale_id or ""))
 
     skips = dict(
         con.execute(
@@ -457,7 +461,8 @@ def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters)
             a.param_type, a.param_value_num, a.p_value, a.p_value_num, a.p_value_modifier,
             a.ci_percent, a.ci_lower_limit, a.ci_upper_limit, a.method,
             a.non_inferiority, a.non_inferiority_type, a.non_inferiority_description,
-            r.nct_id, r.form_id, a.group_description, u.pool_scale_id, u.unit_factor
+            r.nct_id, r.form_id, a.group_description, u.pool_scale_id, u.unit_factor,
+            r.summary_id
         FROM raw.outcome_analyses a
         JOIN conformed.endpoint_results r ON r.source_id = a.outcome_id AND r.result_kind = 'outcome'
         LEFT JOIN (
@@ -476,26 +481,28 @@ def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters)
 
     # Ratio effects are dimensionless and pool on the effect alone; every
     # other effect is on the endpoint's scale and pools per unit, converted
-    # alongside it.
+    # alongside it. Both split by summary: a trough FEV1 difference and an
+    # FEV1 AUC difference are different effects in the same litres.
     effects: dict[tuple, list] = {}
     effect_labels: dict[tuple, str] = {}
     for row in rows:
         kind = classify_effect(row[0])
         dimensionless = kind in RATIO_SCALE_EFFECTS
-        key = (kind, None if dimensionless else row[15])
+        key = (kind, row[17], None if dimensionless else row[15])
         if row[1] is not None:
             factor = 1.0 if dimensionless else (row[16] if row[16] is not None else 1.0)
             effects.setdefault(key, []).append((row[1] * factor, row[12]))
         effect_labels.setdefault(key, row[0] or kind)
 
     effect_summary = []
-    for (kind, scale_id), values in sorted(effects.items(), key=lambda kv: -len(kv[1])):
+    for (kind, summary_id, scale_id), values in sorted(effects.items(), key=lambda kv: -len(kv[1])):
         numbers = sorted(v for v, _nct in values)
         effect_summary.append(
             {
                 "effect_kind": kind,
+                "summary_id": summary_id,
                 "scale_id": scale_id,
-                "label": effect_labels.get((kind, scale_id)),
+                "label": effect_labels.get((kind, summary_id, scale_id)),
                 "null_value": null_value(kind),
                 "analyses": len(numbers),
                 "studies": len({nct for _v, nct in values}),

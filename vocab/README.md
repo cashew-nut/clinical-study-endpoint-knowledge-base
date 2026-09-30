@@ -164,7 +164,8 @@ baseline-comparison form in `match_precedence`. `pk_auc` carries a
 `not_if_matches` veto for response analytes (FEV1, C-peptide, glucose...) next
 to the AUC. The USDM templates render `[{summary} ]{measurement}` so the text
 says "area under the curve of FEV1" while the measurement surrogate stays
-plain FEV1. `endpoints stats --summary` separates the SD distributions.
+plain FEV1. `endpoints stats` groups by summary as well as form and unit, and
+`--summary` narrows to one.
 
 ### 5. Reference spans time origins and value references, tagged by `kind`
 
