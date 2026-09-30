@@ -65,6 +65,17 @@ def resolve_reference(rules: ConformRules, fields: dict[str, str]) -> FieldMatch
     return FieldMatch(rules.reference_cascade.fallback, None, 0.0, None)
 
 
+def resolve_summary(rules: ConformRules, fields: dict[str, str]) -> Optional[FieldMatch]:
+    """None means no summary named, which most rows are; matching.yaml's
+    `fallback: none` is that NULL, not a term id."""
+    for step in rules.summary_cascade.steps:
+        text = _field_text(fields, step.field)
+        hit = rules.summary_matcher.match(text)
+        if hit:
+            return FieldMatch(hit.term_id, step.match_method, rules.confidence_floor[step.match_method], step.field)
+    return None
+
+
 def resolve_measurement(rules: ConformRules, fields: dict[str, str]) -> Optional[FieldMatch]:
     """None means unmatched; the caller diverts the row to the review queue."""
     for step in rules.measurement_cascade.steps:

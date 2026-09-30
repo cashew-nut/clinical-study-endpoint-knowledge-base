@@ -38,6 +38,7 @@ assembled from:
 |---|---|---|
 | `forms.yaml` | 18 | what kind of number the endpoint is (a change from baseline, a responder proportion, a time to event) |
 | `measurements.yaml` | 242 | what quantity or event it is about (FEV1, PASI, vital status) |
+| `summaries.yaml` | 3 | which reading of a repeated measurement went into it (trough, peak, AUC) |
 | `references.yaml` | 17 | what it is measured against (own baseline, randomisation, comparator arm) |
 | `events.yaml` | 38 | what occurrence stops the clock on a time-to-event endpoint |
 | `named_endpoints.yaml` | 12 | what a literature name means (PFS, OS, MACE) |
@@ -128,8 +129,10 @@ measurement=fev1, source=outcome
     coverage    2 of 2 conformed studies reported a usable dispersion (100.0%)
 ```
 
-The output is grouped by form and unit because the SD of a change from baseline
-is not the SD of a raw value, and the SD in litres is not the SD in
+The output is grouped by form, summary and unit because the SD of a change
+from baseline is not the SD of a raw value, the SD of trough FEV1 is not the SD
+of FEV1 AUC (a named summary adds itself to the header, as in
+`change_from_baseline · auc · litres`), and the SD in litres is not the SD in
 millilitres. The coverage line reports how many arms the distribution stands
 on. `--source baseline` gives the baseline SD as its own quantity rather than
 as a fallback, and `--analyses` gives the effect-size, p-value and

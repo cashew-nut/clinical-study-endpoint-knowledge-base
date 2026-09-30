@@ -136,6 +136,14 @@ cascade:
     - field: description
       match_method: syntactic_rule
     - fallback: review_queue          # an unmatched MEASUREMENT is queued, unlike form
+  summary:
+    # summaries.yaml. Most rows name no summary, and that is a resolved state
+    # rather than a gap, so the fallback writes NULL.
+    - field: measure
+      match_method: exact
+    - field: description
+      match_method: syntactic_rule
+    - fallback: none
   timepoint:
     - field: time_frame
       match_method: exact

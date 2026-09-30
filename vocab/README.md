@@ -9,6 +9,7 @@ the judgment calls, and the things a reviewer should push back on.
 ```
 forms.yaml               18 terms   what kind of number the endpoint is
 measurements.yaml       242 terms   what quantity or event it is about
+summaries.yaml            3 terms   which reading of a repeated measurement (trough, peak, AUC)
 references.yaml          17 terms   what it is measured against
 directions.yaml           7 terms   which way is better (derived, not matched)
 events.yaml              38 terms   what occurrence ends the clock, for a time-to-event endpoint
@@ -141,6 +142,30 @@ rather than a gap in the vocabulary. The conforming pipeline upgrades those from
 `time_frame`, where a `baseline_to_timepoint` pattern implies
 change-from-baseline, and records the upgrade in `match_method` rather than
 passing it off as an exact match.
+
+### 4a. Trough, peak and AUC are a summary, not a measurement or a form
+
+"Change from baseline in FEV1 AUC0-3" used to land in one of two wrong
+places. With a spaced "AUC" it became `auc_over_time`, which sat above
+`change_from_baseline` in `match_precedence`. Written "AUC0-3" it missed
+that form's `\bAUC\b` and hit `pk_auc` on span length instead, taking a
+neutral direction and ng*h/mL for a lung-function endpoint in litres.
+
+The endpoint is a change from baseline (form) in FEV1 (measurement), where
+the FEV1 value is the area under the post-dose curve. That last part is its
+own dimension, `summaries.yaml`: `trough`, `peak` or `auc`, NULL when none is
+named. Trough, peak and AUC FEV1 all keep `measurement_id = fev1`, so the
+SAME_MEASUREMENT join still spans them, and `summary_id` tells them apart.
+C-peptide follows the same rule (`c_peptide` + `auc`).
+
+`auc_over_time` stays for an AUC reported as the value itself ("C-peptide
+AUC at Week 52", "AUC0-24 of drug X") and now sits below every
+baseline-comparison form in `match_precedence`. `pk_auc` carries a
+`not_if_matches` veto for response analytes (FEV1, C-peptide, glucose...) next
+to the AUC. The USDM templates render `[{summary} ]{measurement}` so the text
+says "area under the curve of FEV1" while the measurement surrogate stays
+plain FEV1. `endpoints stats` groups by summary as well as form and unit, and
+`--summary` narrows to one.
 
 ### 5. Reference spans time origins and value references, tagged by `kind`
 

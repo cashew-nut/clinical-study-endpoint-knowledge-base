@@ -120,6 +120,45 @@ def test_filters_narrow_without_changing_the_shape(results_con):
     )["groups"]
 
 
+def test_summary_filter_separates_plain_from_auc_fev1(results_con):
+    """The fixture's FEV1 rows name no summary: `none` keeps them, `auc`
+    (an FEV1 AUC endpoint, same measurement id) excludes them."""
+    everything = sd_distribution(results_con, StatsFilters(measurement="fev1"))
+    plain = sd_distribution(results_con, StatsFilters(measurement="fev1", summary="none"))
+    assert [g.arms for g in plain["groups"]] == [g.arms for g in everything["groups"]]
+    assert not sd_distribution(results_con, StatsFilters(measurement="fev1", summary="auc"))["groups"]
+    assert sd_distribution(results_con, StatsFilters(measurement="fev1", summary="auc,none"))["groups"]
+
+
+def test_sd_groups_split_by_summary(results_warehouse_path, tmp_path):
+    """Trough and AUC FEV1 share measurement fev1 but their SDs are different
+    quantities, so a named summary makes its own group and its own denominator."""
+    import shutil
+
+    import duckdb
+
+    path = tmp_path / "warehouse.duckdb"
+    shutil.copy(results_warehouse_path, path)
+    con = duckdb.connect(str(path))
+    try:
+        nct_id = con.execute(
+            "SELECT min(nct_id) FROM conformed.endpoint_results "
+            "WHERE measurement_id = 'fev1' AND form_id = 'change_from_baseline' AND result_kind = 'outcome'"
+        ).fetchone()[0]
+        con.execute(
+            "UPDATE conformed.endpoint_results SET summary_id = 'auc' "
+            "WHERE nct_id = ? AND measurement_id = 'fev1' AND result_kind = 'outcome'",
+            [nct_id],
+        )
+        groups = sd_distribution(con, StatsFilters(measurement="fev1"))["groups"]
+    finally:
+        con.close()
+    by_summary = {g.summary_id: g for g in groups if g.form_id == "change_from_baseline"}
+    assert set(by_summary) == {None, "auc"}
+    assert by_summary["auc"].studies == by_summary[None].studies == 1
+    assert by_summary["auc"].studies_conformed == by_summary[None].studies_conformed == 1
+
+
 def test_a_single_arm_group_gets_a_quantile_rather_than_an_exception(results_con):
     """`statistics.quantiles` raises below two points; one arm is an ordinary
     case that needs its denominator printed, not an exception."""

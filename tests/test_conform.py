@@ -113,6 +113,50 @@ def test_reference_table_fixtures_conform_end_to_end(con):
         )
 
 
+# ------------------------------------------------------- summary of a measurement
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # The reported endpoint: "AUC0-3" once matched pk_auc on span length and
+        # took a neutral direction and ng*h/mL.
+        ("Change From Baseline in FEV1 AUC0-3 (L) at Week 24", ("change_from_baseline", "fev1", "auc", "increase_is_better")),
+        # Spaced "AUC" once matched auc_over_time ahead of change_from_baseline.
+        ("Change From Baseline in FEV1 AUC (0-3h) at Week 24", ("change_from_baseline", "fev1", "auc", "increase_is_better")),
+        ("Change from baseline in FEV1 area under the curve from 0 to 3 hours", ("change_from_baseline", "fev1", "auc", "increase_is_better")),
+        ("Percent change from baseline in FEV1 AUC0-3", ("percent_change_from_baseline", "fev1", "auc", "increase_is_better")),
+        ("Change From Baseline in Trough FEV1 (L) at Week 24", ("change_from_baseline", "fev1", "trough", "increase_is_better")),
+        ("Change from baseline in peak FEV1", ("change_from_baseline", "fev1", "peak", "increase_is_better")),
+        ("Change from baseline in FEV1", ("change_from_baseline", "fev1", None, "increase_is_better")),
+        # An AUC reported as the value itself keeps the auc_over_time form.
+        ("FEV1 AUC0-12h at Week 12", ("auc_over_time", "fev1", "auc", "increase_is_better")),
+        # C-peptide follows the same rule as FEV1.
+        ("Change from baseline in C-peptide AUC", ("change_from_baseline", "c_peptide", "auc", "increase_is_better")),
+        ("C-peptide AUC at Week 52", ("auc_over_time", "c_peptide", "auc", "increase_is_better")),
+        # Drug exposure AUC is still pk_auc.
+        ("AUC0-24 of drug X", ("auc_over_time", "pk_auc", "auc", "neutral")),
+        # "peak" inside a measurement's own name is not a summary.
+        ("Change from baseline in peak expiratory flow", ("change_from_baseline", "peak_expiratory_flow", None, "increase_is_better")),
+        ("Peak VO2", ("not_stated", "peak_oxygen_uptake", None, "increase_is_better")),
+    ],
+)
+def test_trough_peak_and_auc_share_the_measurement_and_differ_in_summary(con, text, expected):
+    _insert_outcomes(con, [("NCT000950", "primary", text, None, None, None)])
+    run_conform(con)
+    row = con.execute(
+        "SELECT form_id, measurement_id, summary_id, direction_id FROM conformed.endpoints WHERE nct_id = 'NCT000950'"
+    ).fetchone()
+    assert row == expected, text
+
+
+def test_summary_is_its_own_usdm_tag_ahead_of_the_measurement(con):
+    _insert_outcomes(con, [("NCT000951", "primary", "Change From Baseline in FEV1 AUC0-3 (L) at Week 24", None, None, None)])
+    run_conform(con)
+    usdm_text = con.execute("SELECT usdm_text FROM conformed.endpoints WHERE nct_id = 'NCT000951'").fetchone()[0]
+    assert '<usdm:tag name="summary"/> <usdm:tag name="measurement"/>' in usdm_text
+
+
 # ------------------------------------------------- specific-vs-generic instrument
 
 

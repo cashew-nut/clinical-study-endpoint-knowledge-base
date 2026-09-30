@@ -163,6 +163,15 @@ FormOption = Annotated[
         rich_help_panel=ENDPOINT_FILTERS_PANEL,
     ),
 ]
+SummaryOption = Annotated[
+    Optional[str],
+    typer.Option(
+        "--summary",
+        help="Summary id(s), comma-separated: trough, peak, auc, or none for rows that "
+        "name no summary. Separates trough from AUC FEV1, which share --measurement fev1.",
+        rich_help_panel=ENDPOINT_FILTERS_PANEL,
+    ),
+]
 TimepointOption = Annotated[
     Optional[str],
     typer.Option(
@@ -1385,6 +1394,7 @@ def results_coverage_cmd(
 @app.command()
 def stats(
     measurement: MeasurementOption = None,
+    summary: SummaryOption = None,
     form: FormOption = None,
     timepoint: TimepointOption = None,
     scale: Optional[str] = typer.Option(
@@ -1456,7 +1466,7 @@ def stats(
 
     scope = _study_scope(ta=ta, org=org, phase=phase, drug_class=drug_class, since=since)
     filters = StatsFilters(
-        measurement=measurement, form=form, scale=scale, timepoint=timepoint,
+        measurement=measurement, summary=summary, form=form, scale=scale, timepoint=timepoint,
         ta=scope.ta, org=scope.org, phase=scope.phase, drug_class=scope.drug_class,
         since=scope.since.isoformat() if scope.since else None, source=source,
         arm_role=arm_role, arm_type=arm_type,
@@ -1554,7 +1564,8 @@ def _describe_filters(filters: StatsFilters) -> str:
         return ",".join(value) if isinstance(value, (tuple, list)) else str(value)
 
     parts = [f"{key}={_show(value)}" for key, value in (
-        ("measurement", filters.measurement), ("form", filters.form), ("scale", filters.scale),
+        ("measurement", filters.measurement), ("summary", filters.summary), ("form", filters.form),
+        ("scale", filters.scale),
         ("timepoint", filters.timepoint), ("ta", filters.ta), ("org", filters.org),
         ("phase", filters.phase), ("drug_class", filters.drug_class), ("since", filters.since),
         ("arm_role", filters.arm_role), ("arm_type", filters.arm_type),
@@ -1580,7 +1591,9 @@ def _print_sd(report) -> None:
         return
 
     for group in report["groups"]:
-        header = f"{group.form_id or '(no form)'} · {group.scale_id or '(no unit)'}"
+        header = " · ".join(
+            part for part in (group.form_id or "(no form)", group.summary_id, group.scale_id or "(no unit)") if part
+        )
         if group.converted:
             header += "  [dim](converted via scales.yaml)[/dim]"
         if group.sd_scale != "arithmetic":
@@ -1651,11 +1664,12 @@ def _print_analyses(report) -> None:
 
     if report["effects"]:
         console.print("\n  [bold]effect measures[/bold]")
-        table = Table("effect", "unit", "studies", "analyses", "median", "IQR", "null",
+        table = Table("effect", "summary", "unit", "studies", "analyses", "median", "IQR", "null",
                       box=None, pad_edge=False)
         for effect in report["effects"]:
             table.add_row(
                 effect["effect_kind"],
+                effect["summary_id"] or "-",
                 effect["scale_id"] or "-",
                 str(effect["studies"]),
                 str(effect["analyses"]),
