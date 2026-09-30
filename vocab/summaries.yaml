@@ -68,7 +68,9 @@ terms:
       # boundary after the C, so only the leading edge is anchored.
       - '(?-i:(?<![\w])AUC)'
       - '\barea under the (\w+[- ])*curve\b'
-      - '\btime[- ]weighted average\b'
+      - '\btime[- ]weighted (average|mean)\b'
+      # "Weighted mean FEV1 over 0-3 hours" is the same normalised AUC.
+      - '\bweighted mean\b'
 
 # Earlier wins. AUC first: "AUC of peak-normalised..." is an AUC, and a string
 # naming an AUC window reports the area whatever else it mentions.

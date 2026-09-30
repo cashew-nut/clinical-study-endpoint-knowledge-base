@@ -689,3 +689,60 @@ def test_derived_flags_are_from_the_closed_set(usdm_con, reference_fallback_con)
             for ext in objective["extensionAttributes"]:
                 if ext["url"].endswith(":derived"):
                     assert ext["valueString"] in DERIVED_ATTRIBUTES
+
+
+# ------------------------------------------------------------ summary dimension
+
+
+def _one_endpoint_warehouse(path: Path, measure: str) -> duckdb.DuckDBPyConnection:
+    from clinical_endpoints.conform.pipeline import run_conform
+    from clinical_endpoints.ingest.design import STUDIES_DDL
+    from clinical_endpoints.vocab.loader import default_vocab_dir, load_vocab, write_vocab_tables
+    from clinical_endpoints.db import SCHEMAS
+    from tests.conftest import USDM_STUDIES
+
+    con = duckdb.connect(str(path))
+    for schema in SCHEMAS:
+        con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+    vocab_dir = default_vocab_dir(Path(__file__).parent)
+    write_vocab_tables(con, load_vocab(vocab_dir), vocab_dir=vocab_dir)
+    con.execute(f"CREATE TABLE raw.studies ({STUDIES_DDL})")
+    study = list(USDM_STUDIES[0])
+    con.execute("INSERT INTO raw.studies VALUES (" + ", ".join(["?"] * len(study)) + ")", study)
+    con.execute(
+        "CREATE TABLE raw.design_outcomes (nct_id VARCHAR, outcome_type VARCHAR, measure VARCHAR, "
+        "time_frame VARCHAR, description VARCHAR, population VARCHAR)"
+    )
+    con.execute(
+        "INSERT INTO raw.design_outcomes VALUES (?, 'primary', ?, 'Baseline and Week 24', NULL, NULL)",
+        [study[0], measure],
+    )
+    run_conform(con)
+    return con
+
+
+def test_an_fev1_auc_endpoint_projects_as_fev1_with_summary_auc(tmp_path):
+    """The endpoint that was projecting as pk_auc with no summary."""
+    con = _one_endpoint_warehouse(tmp_path / "w.duckdb", "Change From Baseline in FEV1 AUC0-3 (L) at Week 24")
+    try:
+        nct_id = con.execute("SELECT nct_id FROM raw.studies").fetchone()[0]
+        endpoint = project(con, nct_id, rules=load_projection_rules(con)).endpoints()[0]
+    finally:
+        con.close()
+    decomposition = _extension_class(endpoint, "decomposition")
+    assert decomposition["measurement"] == "fev1"
+    assert decomposition["summary"] == "auc"
+    assert _extension_class(endpoint, "conformance")["summaryMatchMethod"] == "exact"
+    assert set(TAG_RE.findall(endpoint["text"])) >= {"summary", "measurement"}
+    assert "area under the curve of" in endpoint["label"]
+
+
+def test_a_warehouse_conformed_before_the_summary_dimension_says_to_reconform(tmp_path):
+    con = _one_endpoint_warehouse(tmp_path / "w.duckdb", "Change From Baseline in FEV1 AUC0-3 (L) at Week 24")
+    try:
+        con.execute("ALTER TABLE conformed.endpoints DROP COLUMN summary_id")
+        nct_id = con.execute("SELECT nct_id FROM raw.studies").fetchone()[0]
+        with pytest.raises(NotConformed, match="endpoints conform"):
+            fetch_rows(con, nct_id)
+    finally:
+        con.close()

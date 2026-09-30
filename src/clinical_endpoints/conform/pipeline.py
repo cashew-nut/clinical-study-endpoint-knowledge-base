@@ -334,6 +334,11 @@ def run_conform(
         raise ValueError("raw.design_outcomes is empty -- run `endpoints pull` first")
     if not _table_exists(con, "vocab", "matching_cascade"):
         raise ValueError("vocab.matching_cascade is empty -- run `endpoints vocab validate` first")
+    if not _table_exists(con, "vocab", "summaries"):
+        raise ValueError(
+            "vocab.summaries is missing: the warehouse vocabulary predates the summary "
+            "dimension -- run `endpoints vocab validate` first"
+        )
 
     rules = load_rules(con)
     ta_by_nct = _primary_ta_by_nct(con)
@@ -412,6 +417,7 @@ def _source_row(e: ConformedEndpoint) -> SourceRow:
         measure_raw=e.measure_raw, description_raw=e.description_raw, time_frame_raw=e.time_frame_raw,
         population=e.population, conformed=True,
         form_id=e.form_id, measurement_id=e.measurement_id, summary_id=e.summary_id,
+        summary_match_method=e.summary_match_method, summary_confidence=e.summary_confidence,
         reference_id=e.reference_id, event_id=e.event_id, scale_id=e.scale_id, direction_id=e.direction_id,
         timepoint_pattern=e.timepoint_pattern, timepoint_extracted=e.timepoint_extracted,
         threshold_comparator=e.threshold_comparator, threshold_value=e.threshold_value,

@@ -598,7 +598,8 @@ resolved vocabulary ids, `timepointPattern`/`timepointRole`/`timepointRaw` plus
 whatever structured fields the pattern parsed, `threshold*`, `analysable`,
 `analysisPopulationId`); `conformance` carries how confidently and by what
 method each dimension was decided (`formMatchMethod`/`Confidence`,
-`measurementMatchMethod`/`Confidence`, `referenceMatchMethod`/`Confidence`,
+`measurementMatchMethod`/`Confidence`, `summaryMatchMethod`/`Confidence`,
+`referenceMatchMethod`/`Confidence`,
 `eventMatchMethod`/`Confidence`, `fidelity`, `reviewReason`, `sourceRowId`).
 Two different questions, kept in two extension classes rather than one. A
 `derived` flag rides alongside, once per synthesized or defaulted attribute
