@@ -221,21 +221,21 @@ One per form id in `forms.yaml`. Required tags are outside brackets.
 |---|---|
 | `time_to_event` | `Time from {reference} to {measurement}[ up to {timepoint}]` |
 | `event_free_rate_at_timepoint` | `Proportion of participants free of {measurement} at {timepoint}[, measured from {reference}]` |
-| `responder_proportion` | `Proportion of participants achieving {threshold} in [{summary} ]{measurement}[ from {reference}][ at {timepoint}]` |
+| `responder_proportion` | `Proportion of participants achieving {threshold} in [{derivation} ]{measurement}[ from {reference}][ at {timepoint}]` |
 | `incidence_proportion` | `Proportion of participants with {measurement}[ during {timepoint}]` |
 | `proportion_of_time_in_state` | `Proportion of time with {measurement} {threshold}[ during {timepoint}]` |
-| `change_from_baseline` | `Change from {reference} in [{summary} ]{measurement}[ at {timepoint}][ ({scale})]` |
-| `percent_change_from_baseline` | `Percent change from {reference} in [{summary} ]{measurement}[ at {timepoint}]` |
-| `ratio_to_baseline` | `Ratio to {reference} of [{summary} ]{measurement}[ at {timepoint}]` |
-| `shift_from_baseline` | `Shift from {reference} in [{summary} ]{measurement} category[ at {timepoint}]` |
-| `value_at_timepoint` | `[{summary} ]{measurement}[ at {timepoint}][ ({scale})]` |
+| `change_from_baseline` | `Change from {reference} in [{derivation} ]{measurement}[ at {timepoint}][ ({scale})]` |
+| `percent_change_from_baseline` | `Percent change from {reference} in [{derivation} ]{measurement}[ at {timepoint}]` |
+| `ratio_to_baseline` | `Ratio to {reference} of [{derivation} ]{measurement}[ at {timepoint}]` |
+| `shift_from_baseline` | `Shift from {reference} in [{derivation} ]{measurement} category[ at {timepoint}]` |
+| `value_at_timepoint` | `[{derivation} ]{measurement}[ at {timepoint}][ ({scale})]` |
 | `auc_over_time` | `Area under the {measurement} curve[ over {timepoint}]` |
 | `event_count` | `Number of {measurement} events[ during {timepoint}]` |
 | `event_rate` | `Rate of {measurement}[ per {scale}][ during {timepoint}]` |
-| `annualized_rate_of_change` | `Annualised rate of change in [{summary} ]{measurement}[ from {reference}][ over {timepoint}]` |
+| `annualized_rate_of_change` | `Annualised rate of change in [{derivation} ]{measurement}[ from {reference}][ over {timepoint}]` |
 | `event_free_days` | `Days free of {measurement}[ during {timepoint}]` |
-| `correlation` | `Correlation involving [{summary} ]{measurement}[ at {timepoint}]` |
-| `not_stated` | `[{summary} ]{measurement}[ at {timepoint}]` |
+| `correlation` | `Correlation involving [{derivation} ]{measurement}[ at {timepoint}]` |
+| `not_stated` | `[{derivation} ]{measurement}[ at {timepoint}]` |
 | `descriptive` | *(none — always verbatim tier)* |
 
 Two of these carry a flag rather than an approximation:
@@ -598,7 +598,7 @@ resolved vocabulary ids, `timepointPattern`/`timepointRole`/`timepointRaw` plus
 whatever structured fields the pattern parsed, `threshold*`, `analysable`,
 `analysisPopulationId`); `conformance` carries how confidently and by what
 method each dimension was decided (`formMatchMethod`/`Confidence`,
-`measurementMatchMethod`/`Confidence`, `summaryMatchMethod`/`Confidence`,
+`measurementMatchMethod`/`Confidence`, `derivationMatchMethod`/`Confidence`,
 `referenceMatchMethod`/`Confidence`,
 `eventMatchMethod`/`Confidence`, `fidelity`, `reviewReason`, `sourceRowId`).
 Two different questions, kept in two extension classes rather than one. A

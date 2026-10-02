@@ -65,10 +65,10 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         list_references={"applies_to_forms": "form"},
     ),
     DimensionSpec(
-        filename="summaries.yaml",
-        dimension="summary",
-        table="summaries",
-        columns=("id", "label", "inline_label", "definition", "kind", "notes"),
+        filename="derivations.yaml",
+        dimension="derivation",
+        table="derivations",
+        columns=("id", "label", "inline_label", "definition", "kind", "span", "notes"),
     ),
     DimensionSpec(
         filename="scales.yaml",
@@ -137,7 +137,10 @@ MEASUREMENT_DOMAINS = frozenset(
 )
 EVENT_POLARITIES = frozenset({"harm", "benefit"})
 REFERENCE_KINDS = frozenset({"time_origin", "value_reference", "external_standard"})
-SUMMARY_KINDS = frozenset({"position", "extreme", "aggregate", "dispersion"})
+DERIVATION_KINDS = frozenset(
+    {"position", "extreme", "aggregate", "threshold", "persistence", "dispersion", "trend"}
+)
+DERIVATION_SPANS = frozenset({"within_visit", "within_period", "across_visits", "any"})
 
 TIMEPOINT_ROLES = frozenset({"assessment_time", "observation_window", "event_horizon", "unresolved"})
 
@@ -149,7 +152,7 @@ DERIVED_ATTRIBUTES = frozenset({"purpose", "reference", "objective"})
 # it is projected as an AnalysisPopulation linked from the decomposition rather
 # than rendered into the text.
 USDM_TAGS = frozenset(
-    {"measurement", "summary", "concept", "reference", "timepoint", "threshold", "scale", "event"}
+    {"measurement", "derivation", "concept", "reference", "timepoint", "threshold", "scale", "event"}
 )
 
 USDM_OBJECTIVE_KEYS = frozenset({"primary", "secondary", "exploratory", "_unresolved"})

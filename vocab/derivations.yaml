@@ -1,0 +1,426 @@
+# Dimension: DERIVATION, how the value an endpoint reports is derived from
+# potentially many observations of one measurement.
+#
+# Few endpoints report a single reading. Replicate ECGs or blood pressures are
+# averaged at a visit; spirometry takes the best of three manoeuvres, then a
+# trough, a peak or an AUC from serial readings after the dose; a diary is
+# averaged over a week; a CGM trace becomes time in range; visits are averaged
+# or regressed into a slope; a response or a decline counts only once a later
+# assessment confirms it. Which of these produced the number is a property of
+# neither the measurement nor the form, and it is what this dimension records.
+#
+# Each term carries:
+#
+#   kind   what the derivation does with the observations
+#            position     takes the one at a defined point (trough)
+#            extreme      takes the highest, lowest or least favourable
+#                         (peak, nadir, worst, best_attempt)
+#            aggregate    combines them (replicate_mean, period_mean,
+#                         visit_mean, auc, cumulative)
+#            threshold    measures how much of the window meets a criterion
+#                         (proportion_of_time)
+#            persistence  requires a finding to hold on repeat assessment
+#                         (confirmed)
+#            dispersion   measures their spread (variability)
+#            trend        fits their change over time (slope)
+#   span   which observations it draws on
+#            within_visit   replicates or serial readings at one assessment
+#            within_period  a diary or monitoring period (a day, a week)
+#            across_visits  scheduled assessments over the study
+#            any            depends on the endpoint; the timepoint says which
+#
+# No definition names a measurement: trough FEV1 and trough blood pressure are
+# the same derivation, as are peak C-peptide and maximum QTc change, nadir
+# neutrophil count and nadir SpO2, or the slope of eGFR and of FVC.
+#
+# Why not the measurement: trough, peak and AUC FEV1 share `measurement_id =
+# fev1` and so share the SAME_MEASUREMENT join, and differ here instead. Mean
+# 24-hour and office systolic blood pressure are both `systolic_blood_pressure`;
+# worst and average pain are both `pain_intensity_nrs`.
+#
+# Why not the form: "Change from baseline in FEV1 AUC0-3" is a change from
+# baseline (form) in FEV1 (measurement) derived as an AUC. Form answers what
+# kind of number the endpoint reports; derivation answers how the observations
+# of the measurement became that number. Some forms overlap a derivation on
+# purpose, and their rows carry both: `auc_over_time` (an AUC reported as the
+# value itself) with `auc`, `annualized_rate_of_change` with `slope`, and
+# `proportion_of_time_in_state` or `event_free_days` with `proportion_of_time`.
+#
+# Why not the reference: references.yaml's `nadir` is a value an endpoint is
+# compared against ("25% rise over nadir", RECIST progression from the smallest
+# sum). The derivation `nadir` is the reported value itself ("nadir neutrophil
+# count"). Each term vetoes the other's phrasing.
+#
+# A row with no derivation named gets NULL, not a sentinel: most endpoint text
+# names a single reading at a timepoint and nothing to derive.
+#
+# Deliberately left out:
+#   * best overall response. Response criteria (RECIST, iwCLL, IMWG, Lugano)
+#     already define response as the best across assessments, so tagging the
+#     rows that happen to say so would split objective response rate by wording
+#     alone. Confirmation is different and is kept (`confirmed`): confirmed and
+#     unconfirmed response rates are not interchangeable.
+#   * imputation (LOCF, worst-case, BOCF). That is a missing-data rule, not a
+#     derivation from observed values, and belongs to the estimand.
+#   * time of day (morning, trough-time, nocturnal) and the window length
+#     (24-hour, weekly). They say when observations were taken, not how they
+#     were combined; the window is the timepoint's business.
+#   * counts and rates of events per period. Those are forms (event_count,
+#     annualised event rate).
+#   * Named PK parameters keep their measurements (pk_cmax, pk_ctrough, pk_auc),
+#     which are standard quantities in their own right. Where their text uses
+#     a derivation word ("trough concentration", "peak concentration") the
+#     derivation is set as well, and agrees with the measurement.
+#
+# `inline_label` is the prefix the USDM text puts before the measurement's own
+# label, through the optional `{derivation}` tag in usdm_templates.yaml.
+
+version: 1
+dimension: derivation
+terms:
+
+  # --- position -----------------------------------------------------------
+
+  - id: trough
+    label: "Trough"
+    inline_label: "trough"
+    kind: position
+    span: within_visit
+    definition: >-
+      The observation at the end of the dosing interval, immediately before the
+      next dose: the point of lowest expected drug effect.
+    synonyms: ["trough", "pre-dose", "predose", "end of dosing interval"]
+    patterns:
+      - '\btrough\b'
+    notes: >-
+      Not the same as `nadir`. A trough is fixed by the dosing schedule and
+      read whatever its value; a nadir is the lowest value wherever it falls.
+
+  # --- extremes -----------------------------------------------------------
+
+  - id: peak
+    label: "Peak"
+    inline_label: "peak"
+    kind: extreme
+    span: any
+    definition: >-
+      The highest observation over a window: after a dose, during a challenge
+      or stimulation test, or across post-baseline visits.
+    synonyms: ["peak", "maximum post-dose", "maximal post-dose", "highest value",
+               "highest reading", "maximum post-baseline", "highest post-baseline"]
+    patterns:
+      - '\bpeak\b'
+      - '\bmaxim(um|al) (post-?dose |post-?baseline |on-?treatment |observed |recorded )?(value|level|reading|change|increase|response)\b'
+    not_if_matches:
+      # Measurements whose own name contains "peak": the word names the
+      # quantity, not a derivation from serial observations of it.
+      - '\bpeak (expiratory |inspiratory )?flow\b'
+      - '\bpeak (oxygen|VO\s?2)\b'
+      - '\bVO\s?2 ?peak\b'
+    notes: >-
+      Not `maximum` in general: "maximum tolerated dose" and "VO2 max" are not a
+      peak of serial observations, so only "maximum" followed by a reading
+      word counts.
+
+  - id: nadir
+    label: "Nadir"
+    inline_label: "nadir"
+    kind: extreme
+    span: any
+    definition: >-
+      The lowest observation over a window, wherever in the window it falls:
+      the low point of a blood count through a treatment cycle, of oxygen
+      saturation overnight, of a tumour marker after treatment.
+    synonyms: ["nadir", "lowest value", "lowest reading", "lowest level", "minimum value",
+               "lowest post-baseline", "minimum post-baseline"]
+    patterns:
+      - '\bnadir\b'
+    not_if_matches:
+      # The nadir as a reference value the endpoint is compared against
+      # (references.yaml `nadir`), not the reported value.
+      - '\b(from|since|over|above|relative to|compared (with|to)|versus|vs\.?) (the )?(PSA |on-study )?nadir\b'
+      - '\b(smallest sum|lowest value) on study\b'
+      - '\bsmallest sum\b'
+    notes: >-
+      "PSA nadir" is this term; "PSA rise of 25% over nadir" is the reference.
+
+  - id: worst
+    label: "Worst"
+    inline_label: "worst"
+    kind: extreme
+    span: any
+    definition: >-
+      The least favourable observation over a recall or observation window, on
+      a symptom, severity or toxicity scale: worst pain in the past 24 hours,
+      worst itch, worst post-baseline toxicity grade.
+    synonyms: ["worst", "worst post-baseline"]
+    patterns:
+      - '\bworst\b'
+    not_if_matches:
+      # Imputation and hierarchical-analysis rules, not a derivation.
+      - '\bworst[- ]case\b'
+      - '\bworst[- ]rank\b'
+      - '\bworst observation carried forward\b'
+      - '\bWOCF\b'
+    notes: >-
+      Kept apart from `peak` and `nadir` because the direction of "worst"
+      depends on the scale, not on the number: worst itch is the highest score,
+      worst lung function the lowest.
+
+  - id: best_attempt
+    label: "Best of repeated attempts"
+    inline_label: "best-attempt"
+    kind: extreme
+    span: within_visit
+    definition: >-
+      The best of several attempts at an effort-dependent test within one
+      assessment: the best of three acceptable spirometry manoeuvres, the
+      strongest of three grip-strength trials, the longer of two walk tests.
+    synonyms: ["best of three", "best of two", "best of 3", "best of 2", "best effort",
+               "best attempt"]
+    patterns:
+      - '\b(best|highest|maximum|max|largest|longest|fastest) (value )?of (two|three|four|2|3|4|the|several|repeated) (\w+ )?(attempts?|trials?|efforts?|manoeuvres?|maneuvers?|blows|tests|walks|readings|measurements)\b'
+      - '\bbest (effort|attempt|trial|manoeuvre|maneuver)\b'
+    notes: >-
+      Differs from `peak`: the attempts are replicates of one test, and the
+      best is taken because effort, not physiology, makes them differ.
+
+  # --- aggregates ---------------------------------------------------------
+
+  - id: replicate_mean
+    label: "Mean of replicate measurements"
+    inline_label: "replicate-mean"
+    kind: aggregate
+    span: within_visit
+    definition: >-
+      The mean of replicate observations taken together at one assessment:
+      triplicate ECGs, two or three seated office blood pressures, duplicate
+      laboratory determinations.
+    synonyms: ["mean seated", "mean sitting", "mean supine", "mean standing",
+               "mean office", "mean clinic"]
+    patterns:
+      - '\b(average|mean) of (the )?(two|three|2|3|duplicate|triplicate|replicate)\b'
+      - '\b(duplicate|triplicate|replicate)\b'
+      - '\bmean (trough )?(seated|sitting|standing|supine|office|clinic)\b'
+    notes: >-
+      The mean a statistical analysis takes across participants ("mean change
+      from baseline") is not this, nor any other derivation here.
+
+  - id: period_mean
+    label: "Mean over a monitoring or diary period"
+    inline_label: "period-average"
+    kind: aggregate
+    span: within_period
+    definition: >-
+      The mean of observations recorded continuously or repeatedly over a
+      monitoring or diary period: 24-hour ambulatory blood pressure, mean
+      sensor glucose, the weekly average of a daily symptom score, a week of
+      home readings.
+    synonyms: ["weekly average", "weekly mean", "daily average", "mean daily",
+               "average daily", "24-hour mean", "mean 24-hour"]
+    patterns:
+      - '\b(daily|weekly|monthly|nightly|24[- ]?h(ou)?r?|daytime|day-?time|night-?time|nocturnal|\d+[- ]day) (mean|average)\b'
+      - '\b(mean|average) (daily|weekly|nightly|24[- ]?h(ou)?r?|daytime|day-?time|night-?time|nocturnal|morning|evening|ambulatory|home)\b'
+      - '\b(mean|average) of (the )?(last|previous|past|preceding) \d+ (days|nights|diary days)\b'
+      - '\baverage (pain|itch|symptom|score)\b'
+    notes: >-
+      When a text names both a period average and a more specific derivation
+      ("weekly average of daily worst itch", "mean morning trough PEF") the
+      specific one wins on match_precedence.
+
+  - id: visit_mean
+    label: "Mean across visits"
+    inline_label: "visit-averaged"
+    kind: aggregate
+    span: across_visits
+    definition: >-
+      The mean of observations at two or more scheduled visits, taken as one
+      value: averaged over Weeks 10 and 12, or over all post-baseline visits of
+      a treatment period.
+    synonyms: ["averaged over", "averaged across", "average over visits",
+               "mean over visits", "mean of post-baseline visits"]
+    patterns:
+      - '\b(averaged?|mean) (over|across) (all |the |two |2 )?(post-?baseline |scheduled |on-?treatment )?(visits|time ?points|assessments)\b'
+      - '\b(averaged?|mean) (over|across) (weeks?|months?|days?|visits?) \d+'
+      - '\b(mean|average) of (the )?(weeks?|months?|days?|visits?) ?\d+,? (and|to|through|-|–) (weeks?|months?|days?|visits? )?\d+\b'
+      - '\baveraged (over|across)\b'
+    notes: >-
+      Not the "overall" treatment effect a repeated-measures model estimates
+      across visits: that is an analysis of per-visit values, and gets no
+      derivation unless the text says the visits were averaged.
+
+  - id: auc
+    label: "Area under the curve"
+    inline_label: "area under the curve of"
+    kind: aggregate
+    span: any
+    definition: >-
+      The measurement integrated over a window, reported as an area or, divided
+      by the window length, as a time-weighted average in the measurement's own
+      units (FEV1 AUC0-3h in litres, glucose AUC over a meal test).
+    synonyms: ["area under the curve", "time-weighted average", "time weighted average"]
+    patterns:
+      # AUC glued to its window ("AUC0-3", "AUC0-12h", "AUClast") has no word
+      # boundary after the C, so only the leading edge is anchored.
+      - '(?-i:(?<![\w])AUC)'
+      - '\barea under the (\w+[- ])*curve\b'
+      - '\btime[- ]weighted (average|mean)\b'
+      # "Weighted mean FEV1 over 0-3 hours" is the same normalised AUC.
+      - '\bweighted mean\b'
+
+  - id: cumulative
+    label: "Cumulative total"
+    inline_label: "cumulative"
+    kind: aggregate
+    span: any
+    definition: >-
+      The sum of the observations over a window: cumulative corticosteroid
+      dose, total opioid consumption over 48 hours, total rescue-medication use
+      over a treatment period.
+    synonyms: ["cumulative dose", "total consumption", "total dose"]
+    patterns:
+      - '\bcumulative (\w+ ){0,2}(dose|doses|dosage|consumption|use|usage|amount|volume|exposure|requirement)\b'
+      - '\btotal (\w+ ){0,2}(consumption|dose|dosage|amount|use|requirement)\b'
+    not_if_matches:
+      # An event estimator, not a sum of observations.
+      - '\bcumulative incidence\b'
+    notes: >-
+      A daily dose ("mg/day") is the measurement with no derivation or with
+      `period_mean`; a cumulative dose is the sum over the window and has a
+      different scale.
+
+  # --- threshold ----------------------------------------------------------
+
+  - id: proportion_of_time
+    label: "Proportion of time meeting a criterion"
+    inline_label: "time-in-target of"
+    kind: threshold
+    span: within_period
+    definition: >-
+      The share of a monitoring or diary period in which the observations meet
+      a criterion: CGM time in range, percentage of night with SpO2 below 90%,
+      atrial fibrillation burden, symptom-free or rescue-free days.
+    synonyms: ["time in range", "time above range", "time below range", "time in target range",
+               "symptom-free days", "rescue-free days", "T90"]
+    patterns:
+      - '\btime (in|above|below|within|out of) (\w+ ){0,2}range\b'
+      - '\btime (above|below|under|over) (\w+ ){0,2}\d'
+      - '\b(percent(age)?|proportion|fraction) of (the )?(\w+ )?(time|days|nights|hours|readings)\b'
+      - '\b(symptom|rescue|itch|pain|seizure|headache|migraine|wheeze|bleed|exacerbation)[- ]free days\b'
+      - '\b(AF|AT/AF|atrial fibrillation|arrhythmia|PVC|ectopic) burden\b'
+      - '\b(blood pressure|BP) load\b'
+    notes: >-
+      A count of days a criterion holds (monthly migraine days) is an
+      event_count form on its own measurement, not this; the share of the
+      window is this.
+
+  # --- persistence --------------------------------------------------------
+
+  - id: confirmed
+    label: "Confirmed on repeat assessment"
+    inline_label: "confirmed"
+    kind: persistence
+    span: across_visits
+    definition: >-
+      A finding that counts only when a later assessment confirms it, or when
+      it is sustained over a minimum interval: 12-week confirmed disability
+      progression, confirmed objective response, a sustained 40% decline in
+      eGFR, durable response.
+    synonyms: ["confirmed response", "sustained response", "durable response"]
+    patterns:
+      - '\bconfirmed (\S+ ){0,3}(disability|response|remission|progression|worsening|deterioration|decline|improvement|reduction|virologic|virological)\b'
+      - '\bsustained (\S+ ){0,3}(response|remission|reduction|decline|improvement|virologic|virological|disability|progression|worsening|deterioration|benefit|decrease|increase|normali[sz]ation|abstinence|weight loss)\b'
+      - '\bdurable (\w+ ){0,2}(response|remission)\b'
+      - '\b(on|at) (two|2|three|3) (or more )?consecutive (visits|assessments|measurements|occasions|readings|scans)\b'
+      - '\b(\d+|three|six|twelve|twenty-four)[- ](week|month)[- ](confirmed|sustained)\b'
+      - '\bconfirmed (at|after) (\d+|three|six|twelve|twenty-four) (weeks|months)\b'
+    not_if_matches:
+      # "Confirmed" as ascertainment (how a case was established), not repeat
+      # assessment.
+      - '\b\w+ly[- ]confirmed\b'
+      - '\b(laboratory|lab|PCR|RT-PCR|biopsy|culture|histology|imaging|adjudicat\w+|central|clinically|investigator)[- ]confirmed\b'
+      - '\bconfirmed (by|with|using|via)\b'
+      - '\bsustained[- ]release\b'
+    notes: >-
+      Bare "confirmed" is not enough: it far more often says how a case was
+      ascertained ("confirmed COVID-19"). Kept although best overall response
+      is not: confirmed and unconfirmed response rates are different
+      estimates, and regulators treat them so.
+
+  # --- dispersion ---------------------------------------------------------
+
+  - id: variability
+    label: "Within-participant variability"
+    inline_label: "variability of"
+    kind: dispersion
+    span: any
+    definition: >-
+      The variation of a participant's own observations over a window,
+      reported as a standard deviation, coefficient of variation or excursion
+      amplitude: glycaemic variability, visit-to-visit blood pressure
+      variability.
+    synonyms: ["variability", "glycaemic variability", "glycemic variability"]
+    patterns:
+      - '\bvariability\b'
+      - '\bcoefficient of variation\b'
+      - '\bmean amplitude of glyc(a)?emic excursions?\b'
+      - '\bMAGE\b'
+    not_if_matches:
+      # A measurement in its own right, and study-level statistics that are not
+      # a participant's own spread.
+      - '\bheart rate variability\b'
+      - '\bHRV\b'
+      - '\b(inter|between)[- ]?(subject|patient|participant|individual)\b'
+      - '\b(inter|intra)[- ]?(rater|observer|reader|assay|laboratory|operator)\b'
+
+  # --- trend --------------------------------------------------------------
+
+  - id: slope
+    label: "Longitudinal slope"
+    inline_label: "slope of"
+    kind: trend
+    span: across_visits
+    definition: >-
+      The rate of change over time, estimated by fitting a line or model
+      through a participant's observations at successive visits: eGFR slope,
+      annual rate of FVC decline, rate of change in a cognitive or functional
+      score.
+    synonyms: ["slope", "rate of decline", "rate of change", "rate of progression",
+               "rate of loss"]
+    patterns:
+      - '\bslopes?\b'
+      - '\brate of (\w+ )?(decline|change|loss|progression|increase|decrease|deterioration|improvement|worsening)\b'
+      - '\b(annual|annuali[sz]ed|yearly) (\w+ )?(decline|loss)\b'
+      - '\blongitudinal (change|trajector(y|ies))\b'
+    notes: >-
+      Differs from a change from baseline: a slope uses every visit, so it is
+      less noisy and is the preferred endpoint where decline is slow (eGFR in
+      CKD, FVC in IPF, cognition in Alzheimer's disease).
+
+# Earlier wins, most specific derivation first.
+#   auc first: "AUC of peak-normalised..." is an AUC, and a string naming an
+#     AUC window reports the area whatever else it mentions.
+#   slope, variability, confirmed and proportion_of_time next: each is computed
+#     from other derivations ("slope of trough FEV1", "SD of daily mean
+#     glucose", "sustained reduction in mean 24-hour SBP").
+#   cumulative before the extremes and means it may share a sentence with.
+#   best_attempt before peak: "highest of three manoeuvres" is a best attempt.
+#   peak before trough: "peak and trough FEV1" leads with peak.
+#   the three means last, visit before replicate before period: the mean of
+#     trough or worst observations is still a trough or worst observation, and
+#     "mean of two visits" says more than "mean of two".
+match_precedence:
+  - auc
+  - slope
+  - variability
+  - confirmed
+  - proportion_of_time
+  - cumulative
+  - best_attempt
+  - peak
+  - nadir
+  - trough
+  - worst
+  - visit_mean
+  - replicate_mean
+  - period_mean

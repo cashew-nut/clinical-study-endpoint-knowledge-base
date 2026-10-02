@@ -229,7 +229,7 @@ terms:
     patterns:
       # Only the nadir as something compared against. A bare "nadir" ("nadir
       # neutrophil count", "PSA nadir") is the reported value itself, which is
-      # summaries.yaml's `nadir`; that term vetoes these same phrasings.
+      # derivations.yaml's `nadir`; that term vetoes these same phrasings.
       - '\b(from|since|over|above|relative to|compared (with|to)|versus|vs\.?) (the )?(PSA |on-study )?nadir\b'
       - '\bsmallest sum\b'
 

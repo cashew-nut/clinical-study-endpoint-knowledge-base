@@ -196,8 +196,8 @@ rather than twice:
 
 | extension | carries |
 |---|---|
-| `decomposition` | semantics: `form`, `event`, `measurement`, `summary`, `reference`, `direction`, `scale`, `namedEndpoint`, `threshold*`, `timepointPattern`/`Role`/`Raw` + extracted values, `analysable`, `analysisPopulationId` |
-| `conformance` | how it was decided: `formMatchMethod`/`Confidence`, `measurementMatchMethod`/`Confidence`, `summaryMatchMethod`/`Confidence`, `referenceMatchMethod`/`Confidence`, `eventMatchMethod`/`Confidence`, `fidelity`, `reviewReason`, `sourceRowId` |
+| `decomposition` | semantics: `form`, `event`, `measurement`, `derivation`, `reference`, `direction`, `scale`, `namedEndpoint`, `threshold*`, `timepointPattern`/`Role`/`Raw` + extracted values, `analysable`, `analysisPopulationId` |
+| `conformance` | how it was decided: `formMatchMethod`/`Confidence`, `measurementMatchMethod`/`Confidence`, `derivationMatchMethod`/`Confidence`, `referenceMatchMethod`/`Confidence`, `eventMatchMethod`/`Confidence`, `fidelity`, `reviewReason`, `sourceRowId` |
 | `derived` (n×) | synthesis flags, per attribute (change 2) |
 | `tag:*` (n×) | rendering hosts (contract below) |
 

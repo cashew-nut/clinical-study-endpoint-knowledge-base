@@ -691,7 +691,7 @@ def test_derived_flags_are_from_the_closed_set(usdm_con, reference_fallback_con)
                     assert ext["valueString"] in DERIVED_ATTRIBUTES
 
 
-# ------------------------------------------------------------ summary dimension
+# ------------------------------------------------------------ derivation dimension
 
 
 def _one_endpoint_warehouse(path: Path, measure: str) -> duckdb.DuckDBPyConnection:
@@ -721,8 +721,8 @@ def _one_endpoint_warehouse(path: Path, measure: str) -> duckdb.DuckDBPyConnecti
     return con
 
 
-def test_an_fev1_auc_endpoint_projects_as_fev1_with_summary_auc(tmp_path):
-    """The endpoint that was projecting as pk_auc with no summary."""
+def test_an_fev1_auc_endpoint_projects_as_fev1_with_derivation_auc(tmp_path):
+    """The endpoint that was projecting as pk_auc with no derivation."""
     con = _one_endpoint_warehouse(tmp_path / "w.duckdb", "Change From Baseline in FEV1 AUC0-3 (L) at Week 24")
     try:
         nct_id = con.execute("SELECT nct_id FROM raw.studies").fetchone()[0]
@@ -731,16 +731,16 @@ def test_an_fev1_auc_endpoint_projects_as_fev1_with_summary_auc(tmp_path):
         con.close()
     decomposition = _extension_class(endpoint, "decomposition")
     assert decomposition["measurement"] == "fev1"
-    assert decomposition["summary"] == "auc"
-    assert _extension_class(endpoint, "conformance")["summaryMatchMethod"] == "exact"
-    assert set(TAG_RE.findall(endpoint["text"])) >= {"summary", "measurement"}
+    assert decomposition["derivation"] == "auc"
+    assert _extension_class(endpoint, "conformance")["derivationMatchMethod"] == "exact"
+    assert set(TAG_RE.findall(endpoint["text"])) >= {"derivation", "measurement"}
     assert "area under the curve of" in endpoint["label"]
 
 
-def test_a_warehouse_conformed_before_the_summary_dimension_says_to_reconform(tmp_path):
+def test_a_warehouse_conformed_before_the_derivation_dimension_says_to_reconform(tmp_path):
     con = _one_endpoint_warehouse(tmp_path / "w.duckdb", "Change From Baseline in FEV1 AUC0-3 (L) at Week 24")
     try:
-        con.execute("ALTER TABLE conformed.endpoints DROP COLUMN summary_id")
+        con.execute("ALTER TABLE conformed.endpoints DROP COLUMN derivation_id")
         nct_id = con.execute("SELECT nct_id FROM raw.studies").fetchone()[0]
         with pytest.raises(NotConformed, match="endpoints conform"):
             fetch_rows(con, nct_id)

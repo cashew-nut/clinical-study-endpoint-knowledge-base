@@ -387,11 +387,11 @@ terms:
     notes: >-
       The form only when the area is the reported value itself ("C-peptide AUC
       at Week 52", "AUC0-24 of drug X"). "Change from baseline in FEV1 AUC0-3"
-      is a change_from_baseline whose summary is `auc` (summaries.yaml): the
+      is a change_from_baseline whose derivation is `auc` (derivations.yaml): the
       AUC is which reading of FEV1 went into the change, not what kind of
       number the endpoint reports. match_precedence below puts this form after
       the baseline-comparison forms for that reason. Either way the row
-      carries summary `auc`, so every AUC endpoint is one query away.
+      carries derivation `auc`, so every AUC endpoint is one query away.
 
   # --- counts and rates ----------------------------------------------------
   - id: event_count
