@@ -36,8 +36,8 @@ FilterValue = Union[None, str, tuple]
 @dataclass(frozen=True)
 class StatsFilters:
     measurement: FilterValue = None
-    # summaries.yaml ids; `none` selects rows that name no summary.
-    summary: FilterValue = None
+    # derivations.yaml ids; `none` selects rows that name no derivation.
+    derivation: FilterValue = None
     form: FilterValue = None
     scale: Optional[str] = None
     timepoint: FilterValue = None
@@ -70,9 +70,9 @@ class StatsFilters:
 @dataclass
 class SdGroup:
     form_id: Optional[str]
-    # summaries.yaml; None when the endpoint names no summary. Part of the
+    # derivations.yaml; None when the endpoint names no derivation. Part of the
     # group key: the SD of trough FEV1 is not the SD of FEV1 AUC.
-    summary_id: Optional[str]
+    derivation_id: Optional[str]
     scale_id: Optional[str]
     sd_scale: str
     converted: bool
@@ -107,14 +107,14 @@ def _filter_sql(filters: StatsFilters) -> tuple[str, list]:
         if values:
             where.append(f"{column} = ANY(?)")
             params.append(list(values))
-    summaries = split_values(filters.summary)
-    if summaries:
-        named = [v for v in summaries if v != "none"]
-        clauses = ["r.summary_id = ANY(?)"] if named else []
+    derivations = split_values(filters.derivation)
+    if derivations:
+        named = [v for v in derivations if v != "none"]
+        clauses = ["r.derivation_id = ANY(?)"] if named else []
         if named:
             params.append(named)
-        if "none" in summaries:
-            clauses.append("r.summary_id IS NULL")
+        if "none" in derivations:
+            clauses.append("r.derivation_id IS NULL")
         where.append("(" + " OR ".join(clauses) + ")")
     # drug_class is study tier: the results section's group_key links to a
     # protocol arm only by title, so an arm-level join is not yet defensible.
@@ -198,7 +198,7 @@ def _require(con: duckdb.DuckDBPyConnection, filters: Optional[StatsFilters] = N
 
 
 def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> dict:
-    """The arm-level SD distribution, one block per (form, summary, unit) group."""
+    """The arm-level SD distribution, one block per (form, derivation, unit) group."""
     _require(con, filters)
     if filters.source not in SOURCES:
         raise ValueError(f"--source must be one of {SOURCES}, got {filters.source!r}")
@@ -222,7 +222,7 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
             d.sd_scale,
             coalesce(d.sd_estimate_si, d.sd_estimate) AS sd,
             d.sd_method, d.sd_is_approximate, d.sd_is_derived,
-            d.n, r.nct_id, r.timepoint_pattern, r.summary_id
+            d.n, r.nct_id, r.timepoint_pattern, r.derivation_id
         FROM conformed.endpoint_dispersion d
         JOIN conformed.endpoint_results r ON r.result_id = d.result_id
         {arm_join}
@@ -238,14 +238,14 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
 
     denominator_rows = con.execute(
         f"""
-        SELECT r.form_id, r.summary_id, count(DISTINCT r.nct_id)
+        SELECT r.form_id, r.derivation_id, count(DISTINCT r.nct_id)
         FROM conformed.endpoint_results r
         WHERE {where}
         GROUP BY 1, 2
         """,
         params,
     ).fetchall()
-    conformed_by_form = {(form_id, summary_id): n for form_id, summary_id, n in denominator_rows}
+    conformed_by_form = {(form_id, derivation_id): n for form_id, derivation_id, n in denominator_rows}
     conformed_studies = con.execute(
         f"SELECT count(DISTINCT r.nct_id) FROM conformed.endpoint_results r WHERE {where}",
         params,
@@ -256,7 +256,7 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
         grouped.setdefault((row[0], row[11], row[1], row[2], row[3]), []).append(row)
 
     groups: list[SdGroup] = []
-    for (form_id, summary_id, scale_id, converted, sd_scale), members in grouped.items():
+    for (form_id, derivation_id, scale_id, converted, sd_scale), members in grouped.items():
         values = sorted(row[4] for row in members)
         studies = {row[9] for row in members}
         ns = [row[8] for row in members if row[8] is not None]
@@ -270,7 +270,7 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
         groups.append(
             SdGroup(
                 form_id=form_id,
-                summary_id=summary_id,
+                derivation_id=derivation_id,
                 scale_id=scale_id,
                 sd_scale=sd_scale,
                 converted=bool(converted),
@@ -287,10 +287,10 @@ def sd_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters) -> di
                     ((pattern, len(ncts)) for pattern, ncts in timepoints.items()),
                     key=lambda kv: (-kv[1], kv[0] or ""),
                 ),
-                studies_conformed=conformed_by_form.get((form_id, summary_id), 0),
+                studies_conformed=conformed_by_form.get((form_id, derivation_id), 0),
             )
         )
-    groups.sort(key=lambda g: (-g.arms, g.form_id or "", g.summary_id or "", g.scale_id or ""))
+    groups.sort(key=lambda g: (-g.arms, g.form_id or "", g.derivation_id or "", g.scale_id or ""))
 
     skips = dict(
         con.execute(
@@ -462,7 +462,7 @@ def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters)
             a.ci_percent, a.ci_lower_limit, a.ci_upper_limit, a.method,
             a.non_inferiority, a.non_inferiority_type, a.non_inferiority_description,
             r.nct_id, r.form_id, a.group_description, u.pool_scale_id, u.unit_factor,
-            r.summary_id
+            r.derivation_id
         FROM raw.outcome_analyses a
         JOIN conformed.endpoint_results r ON r.source_id = a.outcome_id AND r.result_kind = 'outcome'
         LEFT JOIN (
@@ -481,7 +481,7 @@ def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters)
 
     # Ratio effects are dimensionless and pool on the effect alone; every
     # other effect is on the endpoint's scale and pools per unit, converted
-    # alongside it. Both split by summary: a trough FEV1 difference and an
+    # alongside it. Both split by derivation: a trough FEV1 difference and an
     # FEV1 AUC difference are different effects in the same litres.
     effects: dict[tuple, list] = {}
     effect_labels: dict[tuple, str] = {}
@@ -495,14 +495,14 @@ def analysis_distribution(con: duckdb.DuckDBPyConnection, filters: StatsFilters)
         effect_labels.setdefault(key, row[0] or kind)
 
     effect_summary = []
-    for (kind, summary_id, scale_id), values in sorted(effects.items(), key=lambda kv: -len(kv[1])):
+    for (kind, derivation_id, scale_id), values in sorted(effects.items(), key=lambda kv: -len(kv[1])):
         numbers = sorted(v for v, _nct in values)
         effect_summary.append(
             {
                 "effect_kind": kind,
-                "summary_id": summary_id,
+                "derivation_id": derivation_id,
                 "scale_id": scale_id,
-                "label": effect_labels.get((kind, summary_id, scale_id)),
+                "label": effect_labels.get((kind, derivation_id, scale_id)),
                 "null_value": null_value(kind),
                 "analyses": len(numbers),
                 "studies": len({nct for _v, nct in values}),

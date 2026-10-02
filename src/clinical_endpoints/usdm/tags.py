@@ -2,7 +2,7 @@
 
 * `measurement` / `concept` / `event` -> a `BiomedicalConceptSurrogate` on the
   study version, shared by every endpoint in the trial that resolved that term.
-* `summary` / `reference` / `timepoint` / `threshold` / `scale` -> an `ExtensionAttribute`
+* `derivation` / `reference` / `timepoint` / `threshold` / `scale` -> an `ExtensionAttribute`
   on the endpoint, since USDM has no class for these.
 
 Every value comes from a column `conform` already wrote.
@@ -186,7 +186,7 @@ TAG_HOSTS: dict[str, str] = {
     "measurement": "surrogate",
     "concept": "surrogate",
     "event": "surrogate",
-    "summary": "extension",
+    "derivation": "extension",
     "reference": "extension",
     "timepoint": "extension",
     "threshold": "extension",

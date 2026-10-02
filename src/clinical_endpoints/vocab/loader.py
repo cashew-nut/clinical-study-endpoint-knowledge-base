@@ -31,6 +31,8 @@ from clinical_endpoints.vocab.schema import (
     MEASUREMENT_DOMAINS,
     NAMED_ENDPOINTS_FILENAME,
     REFERENCE_KINDS,
+    DERIVATION_KINDS,
+    DERIVATION_SPANS,
     TIMEPOINT_ROLES,
     USDM_OBJECTIVE_KEYS,
     USDM_TAGS,
@@ -119,6 +121,7 @@ def validate_vocab(docs: dict[str, Any]) -> ValidationResult:
     _validate_forms(docs["form"], ids, result)
     _validate_measurements(docs["measurement"], ids, result)
     _validate_references_file(docs["reference"], result)
+    _validate_derivations(docs["derivation"], result)
     _validate_directions(docs["direction"], ids, result)
     _validate_scales(docs["scale"], result)
     _validate_therapeutic_areas(docs["therapeutic_area"], result)
@@ -467,6 +470,19 @@ def _validate_cross_dimension_synonyms(docs: dict[str, Any], result: ValidationR
         collect("event", term.get("id", "?"), term.get("synonyms"))
     for entry in docs.get("named_endpoints", {}).get("definitions") or []:
         collect("named_endpoint", entry.get("id", "?"), entry.get("synonyms"))
+
+
+def _validate_derivations(doc: dict, result: ValidationResult) -> None:
+    where = "derivations.yaml"
+    term_ids = {t["id"] for t in doc.get("terms") or [] if isinstance(t, dict) and "id" in t}
+    for term in doc.get("terms") or []:
+        kind = term.get("kind")
+        if kind not in DERIVATION_KINDS:
+            result.error(where, f"{term.get('id')}: kind {kind!r} not in {sorted(DERIVATION_KINDS)}")
+        span = term.get("span")
+        if span not in DERIVATION_SPANS:
+            result.error(where, f"{term.get('id')}: span {span!r} not in {sorted(DERIVATION_SPANS)}")
+    _validate_precedence(where, "match_precedence", doc.get("match_precedence"), term_ids, result)
 
 
 def _validate_references_file(doc: dict, result: ValidationResult) -> None:

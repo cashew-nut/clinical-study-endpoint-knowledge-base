@@ -223,12 +223,14 @@ terms:
       baseline, and conflating the two is an error, so it gets its own term.
     implies_form: [responder_proportion, percent_change_from_baseline, time_to_event]
     synonyms:
-      - "nadir"
       - "smallest sum on study"
       - "best response"
       - "lowest value on study"
     patterns:
-      - '\bnadir\b'
+      # Only the nadir as something compared against. A bare "nadir" ("nadir
+      # neutrophil count", "PSA nadir") is the reported value itself, which is
+      # derivations.yaml's `nadir`; that term vetoes these same phrasings.
+      - '\b(from|since|over|above|relative to|compared (with|to)|versus|vs\.?) (the )?(PSA |on-study )?nadir\b'
       - '\bsmallest sum\b'
 
   # --- external standards --------------------------------------------------

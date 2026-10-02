@@ -136,8 +136,8 @@ cascade:
     - field: description
       match_method: syntactic_rule
     - fallback: review_queue          # an unmatched MEASUREMENT is queued, unlike form
-  summary:
-    # summaries.yaml. Most rows name no summary, and that is a resolved state
+  derivation:
+    # derivations.yaml. Most rows name no derivation, and that is a resolved state
     # rather than a gap, so the fallback writes NULL.
     - field: measure
       match_method: exact

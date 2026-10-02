@@ -34,8 +34,8 @@ from clinical_endpoints.usdm.templates import Rendered, parse_template, render
 UNRESOLVED_TERM_IDS = frozenset({"none", "not_stated", "", None})
 
 # Tags whose absence is a resolved state rather than a gap: most endpoints
-# name no summary (summaries.yaml), so dropping `[{summary} ]` is not partial.
-ABSENT_BY_DESIGN_TAGS = frozenset({"summary"})
+# name no derivation (derivations.yaml), so dropping `[{derivation} ]` is not partial.
+ABSENT_BY_DESIGN_TAGS = frozenset({"derivation"})
 
 TIER_TEMPLATED = "templated"
 TIER_PARTIAL = "partial"
@@ -110,9 +110,9 @@ def load_projection_rules(con: duckdb.DuckDBPyConnection) -> ProjectionRules:
         raise NotConformed(
             "vocab.usdm_templates is empty -- run `endpoints vocab validate` first"
         )
-    if not _table_exists(con, "vocab", "summaries"):
+    if not _table_exists(con, "vocab", "derivations"):
         raise NotConformed(
-            "vocab.summaries is missing: the warehouse vocabulary predates the summary "
+            "vocab.derivations is missing: the warehouse vocabulary predates the derivation "
             "dimension -- run `endpoints vocab validate`, then `endpoints conform`"
         )
 
@@ -158,7 +158,7 @@ def load_projection_rules(con: duckdb.DuckDBPyConnection) -> ProjectionRules:
             "reference": _inline_map(con, "references"),
             "scale": _inline_map(con, "scales"),
             "event": _inline_map(con, "events"),
-            "summary": _inline_map(con, "summaries"),
+            "derivation": _inline_map(con, "derivations"),
         },
         definitions={
             "measurement": {m[0]: m[3] for m in measurements if m[3]},
@@ -190,9 +190,9 @@ class SourceRow:
     conformed: bool
     form_id: str | None = None
     measurement_id: str | None = None
-    summary_id: str | None = None
-    summary_match_method: str | None = None
-    summary_confidence: float | None = None
+    derivation_id: str | None = None
+    derivation_match_method: str | None = None
+    derivation_confidence: float | None = None
     reference_id: str | None = None
     event_id: str | None = None
     scale_id: str | None = None
@@ -227,7 +227,7 @@ SELECT endpoint_id, outcome_type, measure_raw, description_raw, time_frame_raw, 
        form_match_method, measurement_match_method, reference_match_method, analysable,
        event_id, event_match_method, named_endpoint_id,
        form_confidence, measurement_confidence, reference_confidence, event_confidence,
-       summary_id, summary_match_method, summary_confidence
+       derivation_id, derivation_match_method, derivation_confidence
 FROM conformed.endpoints WHERE nct_id = ?
 """
 
@@ -246,9 +246,9 @@ def fetch_rows(con: duckdb.DuckDBPyConnection, nct_id: str) -> list[SourceRow]:
         raise NotPulled(f"{nct_id} has not been pulled into raw.studies")
     if not _table_exists(con, "conformed", "endpoints"):
         raise NotConformed("conformed.endpoints is empty -- run `endpoints conform` first")
-    if not _column_exists(con, "conformed", "endpoints", "summary_id"):
+    if not _column_exists(con, "conformed", "endpoints", "derivation_id"):
         raise NotConformed(
-            "conformed.endpoints predates the summary dimension -- run `endpoints vocab validate`, "
+            "conformed.endpoints predates the derivation dimension -- run `endpoints vocab validate`, "
             "then `endpoints conform`"
         )
 
@@ -266,7 +266,7 @@ def fetch_rows(con: duckdb.DuckDBPyConnection, nct_id: str) -> list[SourceRow]:
                 event_id=r[20], event_match_method=r[21], named_endpoint_id=r[22],
                 form_confidence=r[23], measurement_confidence=r[24],
                 reference_confidence=r[25], event_confidence=r[26],
-                summary_id=r[27], summary_match_method=r[28], summary_confidence=r[29],
+                derivation_id=r[27], derivation_match_method=r[28], derivation_confidence=r[29],
             )
         )
     if _table_exists(con, "conformed", "review_queue"):
@@ -353,7 +353,7 @@ def _resolve_tags(
         reference_defaulted = reference is not None
     values = {
         "measurement": measurement,
-        "summary": rules.inline_label("summary", row.summary_id),
+        "derivation": rules.inline_label("derivation", row.derivation_id),
         "concept": _humanise(concept_id) if concept_id else None,
         "reference": reference,
         "event": rules.inline_label("event", row.event_id),
@@ -445,7 +445,7 @@ def _decomposition(
     add("form", row.form_id)
     add("event", row.event_id)
     add("measurement", row.measurement_id)
-    add("summary", row.summary_id)
+    add("derivation", row.derivation_id)
     add("reference", row.reference_id)
     add("direction", row.direction_id)
     add("scale", row.scale_id)
@@ -488,8 +488,8 @@ def _conformance(ids: IdFactory, row: SourceRow, tier: str) -> dict:
     add("formMatchConfidence", row.form_confidence)
     add("measurementMatchMethod", row.measurement_match_method)
     add("measurementMatchConfidence", row.measurement_confidence)
-    add("summaryMatchMethod", row.summary_match_method)
-    add("summaryMatchConfidence", row.summary_confidence)
+    add("derivationMatchMethod", row.derivation_match_method)
+    add("derivationMatchConfidence", row.derivation_confidence)
     add("referenceMatchMethod", row.reference_match_method)
     add("referenceMatchConfidence", row.reference_confidence)
     add("eventMatchMethod", row.event_match_method)

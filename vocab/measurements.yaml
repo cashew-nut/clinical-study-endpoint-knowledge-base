@@ -191,8 +191,8 @@ terms:
       The plan's reference-table fixture for change-from-baseline. Percent-predicted
       variants share this measurement and differ only in Reference
       (predicted_normal) and Scale, so do not create a second term for them.
-      Trough, peak and AUC FEV1 share it too and differ in Summary
-      (summaries.yaml), for the same reason.
+      Trough, peak, AUC and best-of-three FEV1 share it too and differ in
+      Derivation (derivations.yaml), for the same reason, as does FEV1 slope.
 
   - id: fvc
     label: "Forced vital capacity (FVC)"
@@ -205,6 +205,9 @@ terms:
     synonyms: ["FVC", "forced vital capacity", "percent predicted FVC", "FVC% pred", "pFVC", "%pFVC",
                "ppFVC", "FVC%", "slow vital capacity"]
     patterns: ['\bFVC\b', '\bforced vital capacity\b']
+    notes: >-
+      The annual rate of FVC decline is this measurement with Derivation
+      `slope` (derivations.yaml).
 
   - id: dlco
     label: "Diffusing capacity for carbon monoxide (DLCO)"
@@ -295,6 +298,10 @@ terms:
     default_scale: percentage
     typical_ta: [respiratory, anaesthesia_critical_care]
     synonyms: ["SpO2", "oxygen saturation", "SaO2", "pulse oximetry"]
+    notes: >-
+      Nadir SpO2, mean overnight SpO2 and the share of the night below 90%
+      (T90) are this measurement with Derivation `nadir`, `period_mean` or
+      `proportion_of_time`.
 
   - id: lung_hrct_extent
     label: "Quantitative lung HRCT extent"
@@ -679,7 +686,8 @@ terms:
     notes: >-
       The steroid-sparing endpoint of severe-asthma biologic trials, where the
       reduction in maintenance prednisone is the efficacy claim rather than a
-      covariate. 39 rows.
+      covariate. 39 rows. A cumulative dose over the treatment period is this
+      measurement with Derivation `cumulative`; the daily dose carries none.
 
   - id: respiratory_support
     label: "Respiratory support (ventilation, oxygen)"
@@ -836,6 +844,10 @@ terms:
     default_scale: percent_of_time
     typical_ta: [metabolic_endocrine]
     synonyms: ["time in range", "TIR", "time above range", "TAR", "time below range", "TBR", "CGM"]
+    notes: >-
+      Every row carries Derivation `proportion_of_time` as well when its text
+      names the share of time; mean sensor glucose and glycaemic variability
+      are Derivations `period_mean` and `variability` (derivations.yaml).
 
   - id: c_peptide
     label: "C-peptide"
@@ -847,8 +859,8 @@ terms:
     typical_ta: [metabolic_endocrine]
     synonyms: ["C-peptide", "MMTT C-peptide", "mixed meal tolerance test C-peptide", "C-peptide AUC"]
     notes: >-
-      C-peptide AUC and peak C-peptide are this measurement with Summary `auc`
-      or `peak` (summaries.yaml), as trough/peak/AUC FEV1 are all `fev1`.
+      C-peptide AUC and peak C-peptide are this measurement with Derivation
+      `auc` or `peak` (derivations.yaml), as trough/peak/AUC FEV1 are all `fev1`.
 
   - id: body_weight
     label: "Body weight"
@@ -962,6 +974,11 @@ terms:
     default_scale: mmhg
     typical_ta: [cardiovascular]
     synonyms: ["SBP", "systolic blood pressure", "sitting systolic blood pressure", "resting systolic blood pressure"]
+    notes: >-
+      Mean 24-hour ambulatory, mean seated and trough SBP are all this
+      measurement, told apart by Derivation (`period_mean`, `replicate_mean`,
+      `trough`) in derivations.yaml; the same holds for
+      diastolic_blood_pressure.
 
   - id: diastolic_blood_pressure
     label: "Diastolic blood pressure"
@@ -1040,7 +1057,10 @@ terms:
     default_direction: decrease_is_better
     default_scale: milliseconds
     synonyms: ["QTc", "QTcF", "QTcB", "QT interval corrected", "corrected QT interval"]
-    notes: "Safety domain: QTc prolongation is the harm, so a smaller value is the better result."
+    notes: >-
+      Safety domain: QTc prolongation is the harm, so a smaller value is the
+      better result. The mean of triplicate ECGs carries Derivation
+      `replicate_mean`, and the maximum post-dose change Derivation `peak`.
 
   - id: heart_rate
     label: "Heart rate"
@@ -1997,6 +2017,10 @@ terms:
     mcid: 4
     typical_ta: [dermatology]
     synonyms: ["Itch NRS", "WI-NRS", "worst itch numeric rating scale", "pruritus NRS", "itch severity"]
+    notes: >-
+      The Worst-Itch NRS is this measurement with Derivation `worst`; its usual
+      weekly average of daily scores still reads as `worst`, the more specific
+      derivation (derivations.yaml match_precedence).
 
   - id: skin_pain_numeric_rating_scale
     label: "Skin pain numeric rating scale"
@@ -2088,8 +2112,12 @@ terms:
     mcid: 2
     typical_ta: [musculoskeletal_pain, anaesthesia_critical_care]
     synonyms: ["NPRS", "pain NRS", "numeric pain rating scale", "pain intensity", "VAS pain",
-               "low back pain intensity", "pain score", "absolute pain"]
+               "low back pain intensity", "pain score", "absolute pain", "worst pain", "average pain"]
     patterns: ['\bN?PRS\b', '\bpain (intensity|severity|score)\b', '\bVAS\b']
+    notes: >-
+      Worst and average pain (the BPI items, or a daily diary over a recall
+      window) are this measurement with Derivation `worst` or `period_mean`
+      (derivations.yaml), not separate terms.
 
   - id: promis_pain_interference
     label: "PROMIS Pain Interference"
@@ -2120,6 +2148,9 @@ terms:
     default_scale: mme
     typical_ta: [anaesthesia_critical_care, musculoskeletal_pain]
     synonyms: ["opioid consumption", "MME", "morphine milligram equivalents", "post-discharge opioid consumption"]
+    notes: >-
+      Total or cumulative consumption over a postoperative window is this
+      measurement with Derivation `cumulative`.
 
   - id: rescue_medication_use
     label: "Rescue medication use"
@@ -2201,6 +2232,10 @@ terms:
     score_range: [0, 10]
     typical_ta: [neurology]
     synonyms: ["EDSS", "Expanded Disability Status Scale", "confirmed disability progression", "CDP"]
+    notes: >-
+      Confirmed disability progression is this measurement with Derivation
+      `confirmed`: the EDSS increase must persist at a visit 12 or 24 weeks
+      later (derivations.yaml).
 
   - id: timed_25_foot_walk
     label: "Timed 25-Foot Walk (T25-FW)"
@@ -2653,6 +2688,9 @@ terms:
     typical_ta: [nephrology_urology]
     synonyms: ["eGFR", "estimated glomerular filtration rate", "GFR", "eGFR slope",
                "creatinine clearance", "CrCl", "measured GFR"]
+    notes: >-
+      eGFR slope is this measurement with Derivation `slope`, and a sustained
+      40% or 57% decline Derivation `confirmed` (derivations.yaml).
 
   - id: albuminuria
     label: "Albuminuria (UACR)"
@@ -2877,7 +2915,7 @@ terms:
     not_if_matches:
       # An AUC of a response rather than of drug concentration: serial FEV1,
       # MMTT C-peptide, OGTT glucose. The quantity is that measurement, with
-      # summary `auc` (summaries.yaml). Without this, "FEV1 AUC0-3" matched
+      # derivation `auc` (derivations.yaml). Without this, "FEV1 AUC0-3" matched
       # here on length and took a neutral direction and ng*h/mL.
       # Spirometry, C-peptide and glucose veto ANYWHERE in the text: registry
       # titles put the window between them and the AUC ("FEV1 Area Under the

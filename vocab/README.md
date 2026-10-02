@@ -9,7 +9,7 @@ the judgment calls, and the things a reviewer should push back on.
 ```
 forms.yaml               18 terms   what kind of number the endpoint is
 measurements.yaml       242 terms   what quantity or event it is about
-summaries.yaml            3 terms   which reading of a repeated measurement (trough, peak, AUC)
+derivations.yaml         14 terms   how the reported value is derived from the observations (trough, peak, slope...)
 references.yaml          17 terms   what it is measured against
 directions.yaml           7 terms   which way is better (derived, not matched)
 events.yaml              38 terms   what occurrence ends the clock, for a time-to-event endpoint
@@ -143,7 +143,7 @@ rather than a gap in the vocabulary. The conforming pipeline upgrades those from
 change-from-baseline, and records the upgrade in `match_method` rather than
 passing it off as an exact match.
 
-### 4a. Trough, peak and AUC are a summary, not a measurement or a form
+### 4a. Trough, peak and AUC are a derivation, not a measurement or a form
 
 "Change from baseline in FEV1 AUC0-3" used to land in one of two wrong
 places. With a spaced "AUC" it became `auc_over_time`, which sat above
@@ -153,19 +153,66 @@ neutral direction and ng*h/mL for a lung-function endpoint in litres.
 
 The endpoint is a change from baseline (form) in FEV1 (measurement), where
 the FEV1 value is the area under the post-dose curve. That last part is its
-own dimension, `summaries.yaml`: `trough`, `peak` or `auc`, NULL when none is
-named. Trough, peak and AUC FEV1 all keep `measurement_id = fev1`, so the
-SAME_MEASUREMENT join still spans them, and `summary_id` tells them apart.
-C-peptide follows the same rule (`c_peptide` + `auc`).
+own dimension, `derivations.yaml`, NULL when none is named. Trough, peak and
+AUC FEV1 all keep `measurement_id = fev1`, so the SAME_MEASUREMENT join still
+spans them, and `derivation_id` tells them apart. C-peptide follows the same
+rule (`c_peptide` + `auc`).
 
 `auc_over_time` stays for an AUC reported as the value itself ("C-peptide
 AUC at Week 52", "AUC0-24 of drug X") and now sits below every
 baseline-comparison form in `match_precedence`. `pk_auc` carries a
 `not_if_matches` veto for response analytes (FEV1, C-peptide, glucose...) next
-to the AUC. The USDM templates render `[{summary} ]{measurement}` so the text
-says "area under the curve of FEV1" while the measurement surrogate stays
-plain FEV1. `endpoints stats` groups by summary as well as form and unit, and
-`--summary` narrows to one.
+to the AUC. The USDM templates render `[{derivation} ]{measurement}` so the
+text says "area under the curve of FEV1" while the measurement surrogate stays
+plain FEV1. `endpoints stats` groups by derivation as well as form and unit,
+and `--derivation` narrows to one.
+
+### 4b. Derivation covers every way observations become the reported value
+
+The dimension started as `summaries.yaml` with three FEV1-shaped terms. It is
+now `derivations.yaml`: how the value an endpoint reports is derived from
+potentially many observations of one measurement, in any therapeutic area.
+Fourteen terms, each with a `kind` (what it does with the observations) and a
+`span` (which observations it draws on):
+
+| kind | terms | span |
+|---|---|---|
+| position | `trough` | within a visit |
+| extreme | `peak`, `nadir`, `worst` | any window |
+| extreme | `best_attempt` (best of three manoeuvres) | within a visit |
+| aggregate | `replicate_mean` (triplicate ECG, seated BP) | within a visit |
+| aggregate | `period_mean` (24-hour ABPM, weekly diary average) | within a period |
+| aggregate | `visit_mean` (averaged over Weeks 10 and 12) | across visits |
+| aggregate | `auc`, `cumulative` | any window |
+| threshold | `proportion_of_time` (time in range, T90, AF burden) | within a period |
+| persistence | `confirmed` (12-week confirmed progression, sustained eGFR decline) | across visits |
+| dispersion | `variability` | any window |
+| trend | `slope` (eGFR slope, rate of FVC decline) | across visits |
+
+No definition names a measurement, and the validator checks `kind`, `span`
+and that `match_precedence` lists every term. The precedence puts the most
+specific derivation first, so "weekly average of daily worst itch" is `worst`
+and "slope of trough FEV1" is `slope`.
+
+Boundaries worth pushing back on:
+
+* **The three means are a participant's own mean.** "Mean change from
+  baseline" is the analysis mean across participants and gets no derivation,
+  and so does a repeated-measures model's overall effect across visits unless
+  the text says the visits were averaged. Only a mean tied to replicates, a
+  recording period or a set of visits counts.
+* **`nadir` is split between derivation and reference.** "PSA nadir" reports
+  the low point and is derivation `nadir`; "25% rise over nadir" compares
+  against it and is reference `nadir`. Each vetoes the other's phrasing, so a
+  bare "nadir" no longer sets the reference.
+* **`confirmed` needs a repeat-assessment phrase.** Bare "confirmed" more often
+  says how a case was ascertained ("laboratory-confirmed influenza"), so only
+  "confirmed/sustained" followed by a response, progression, decline and
+  similar, or "on two consecutive visits", counts.
+* **Left out on purpose:** best overall response (response criteria already
+  define it, so tagging would split ORR by wording), imputation rules (LOCF,
+  worst-case), time of day and window length (the timepoint's), and counts or
+  rates of events per period (forms).
 
 ### 5. Reference spans time origins and value references, tagged by `kind`
 

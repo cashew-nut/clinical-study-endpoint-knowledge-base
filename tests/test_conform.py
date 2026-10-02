@@ -113,7 +113,7 @@ def test_reference_table_fixtures_conform_end_to_end(con):
         )
 
 
-# ------------------------------------------------------- summary of a measurement
+# ---------------------------------------------------- derivation of a measurement
 
 
 @pytest.mark.parametrize(
@@ -140,25 +140,79 @@ def test_reference_table_fixtures_conform_end_to_end(con):
         ("C-peptide AUC at Week 52", ("auc_over_time", "c_peptide", "auc", "increase_is_better")),
         # Drug exposure AUC is still pk_auc.
         ("AUC0-24 of drug X", ("auc_over_time", "pk_auc", "auc", "neutral")),
-        # "peak" inside a measurement's own name is not a summary.
+        # "peak" inside a measurement's own name is not a derivation.
         ("Change from baseline in peak expiratory flow", ("change_from_baseline", "peak_expiratory_flow", None, "increase_is_better")),
         ("Peak VO2", ("not_stated", "peak_oxygen_uptake", None, "increase_is_better")),
     ],
 )
-def test_trough_peak_and_auc_share_the_measurement_and_differ_in_summary(con, text, expected):
+def test_trough_peak_and_auc_share_the_measurement_and_differ_in_derivation(con, text, expected):
     _insert_outcomes(con, [("NCT000950", "primary", text, None, None, None)])
     run_conform(con)
     row = con.execute(
-        "SELECT form_id, measurement_id, summary_id, direction_id FROM conformed.endpoints WHERE nct_id = 'NCT000950'"
+        "SELECT form_id, measurement_id, derivation_id, direction_id FROM conformed.endpoints WHERE nct_id = 'NCT000950'"
     ).fetchone()
     assert row == expected, text
 
 
-def test_summary_is_its_own_usdm_tag_ahead_of_the_measurement(con):
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Each derivation across therapeutic areas, on the measurement it derives from.
+        ("Change from baseline in mean 24-hour ambulatory systolic blood pressure at Week 8", ("systolic_blood_pressure", "period_mean", "patient_baseline")),
+        ("Change from baseline in mean seated systolic blood pressure at Week 12", ("systolic_blood_pressure", "replicate_mean", "patient_baseline")),
+        ("Mean of triplicate ECG QTcF", ("ecg_qtc", "replicate_mean", "not_stated")),
+        ("Change from baseline in seated systolic blood pressure averaged over Weeks 10 and 12", ("systolic_blood_pressure", "visit_mean", "patient_baseline")),
+        ("Change from baseline in HbA1c averaged across all post-baseline visits", ("hba1c", "visit_mean", "patient_baseline")),
+        ("Change from baseline in mean daily number of rescue medication puffs", ("rescue_medication_use", "period_mean", "patient_baseline")),
+        ("Change from baseline in worst pain intensity at Week 12", ("pain_intensity_nrs", "worst", "patient_baseline")),
+        ("Change from baseline in average pain score", ("pain_intensity_nrs", "period_mean", "patient_baseline")),
+        # The more specific derivation wins over an average of it.
+        ("Change from baseline in weekly average of daily worst itch NRS at Week 16", ("itch_numeric_rating_scale", "worst", "patient_baseline")),
+        ("Mean of Week 10 and Week 12 trough FEV1", ("fev1", "trough", "pre_dose")),
+        ("Change from baseline in FEV1 (best of three manoeuvres)", ("fev1", "best_attempt", "patient_baseline")),
+        ("Maximum change from baseline in QTcF", ("ecg_qtc", "peak", "patient_baseline")),
+        ("Peak C-peptide during mixed meal tolerance test", ("c_peptide", "peak", "not_stated")),
+        ("Nadir oxygen saturation during sleep", ("oxygen_saturation", "nadir", "not_stated")),
+        ("Cumulative oral corticosteroid dose over 52 weeks", ("systemic_corticosteroid_dose", "cumulative", "not_stated")),
+        ("Total opioid consumption in morphine milligram equivalents over 48 hours", ("opioid_consumption", "cumulative", "not_stated")),
+        ("Percentage of time in range 70-180 mg/dL measured by CGM", ("continuous_glucose_time_in_range", "proportion_of_time", "not_stated")),
+        ("Percentage of night time with SpO2 below 90% (T90)", ("oxygen_saturation", "proportion_of_time", "not_stated")),
+        ("Atrial fibrillation burden measured by implantable loop recorder", ("atrial_fibrillation", "proportion_of_time", "not_stated")),
+        ("Change from baseline in glycemic variability measured by CGM coefficient of variation", ("continuous_glucose_time_in_range", "variability", "patient_baseline")),
+        ("Annual rate of decline in FVC", ("fvc", "slope", "not_stated")),
+        ("eGFR slope from Week 12 to Week 104", ("egfr", "slope", "not_stated")),
+        ("Sustained ≥40% decline in eGFR", ("egfr", "confirmed", "not_stated")),
+        ("12-week confirmed disability progression on EDSS", ("edss", "confirmed", "not_stated")),
+        ("Confirmed objective response rate per RECIST 1.1", ("tumour_burden_recist", "confirmed", "not_stated")),
+        # The nadir as the reported value is a derivation; compared against, a reference.
+        ("PSA nadir", ("prostate_specific_antigen", "nadir", "not_stated")),
+        ("Time to PSA progression from nadir", ("prostate_specific_antigen", None, "nadir")),
+        # Words that look like a derivation and are not one.
+        ("Cumulative incidence of venous thromboembolism", ("venous_thromboembolism", None, "not_stated")),
+        ("Worst-case imputation of HbA1c", ("hba1c", None, "not_stated")),
+        ("Mean change from baseline in body weight", ("body_weight", None, "patient_baseline")),
+        ("Mean change from baseline in FEV1 at each visit", ("fev1", None, "patient_baseline")),
+        ("Heart rate variability", ("heart_rate", None, "not_stated")),
+        ("Inter-rater variability of PASI", ("pasi", None, "not_stated")),
+        ("Sustained-release formulation pharmacokinetics Cmax", ("pk_cmax", None, "not_stated")),
+        # Best overall response is left to the response criteria.
+        ("Objective response rate (best overall response of CR or PR)", ("tumour_burden_recist", None, "not_stated")),
+    ],
+)
+def test_derivations_are_measurement_agnostic(con, text, expected):
+    _insert_outcomes(con, [("NCT000952", "primary", text, None, None, None)])
+    run_conform(con)
+    row = con.execute(
+        "SELECT measurement_id, derivation_id, reference_id FROM conformed.endpoints WHERE nct_id = 'NCT000952'"
+    ).fetchone()
+    assert row == expected, text
+
+
+def test_derivation_is_its_own_usdm_tag_ahead_of_the_measurement(con):
     _insert_outcomes(con, [("NCT000951", "primary", "Change From Baseline in FEV1 AUC0-3 (L) at Week 24", None, None, None)])
     run_conform(con)
     usdm_text = con.execute("SELECT usdm_text FROM conformed.endpoints WHERE nct_id = 'NCT000951'").fetchone()[0]
-    assert '<usdm:tag name="summary"/> <usdm:tag name="measurement"/>' in usdm_text
+    assert '<usdm:tag name="derivation"/> <usdm:tag name="measurement"/>' in usdm_text
 
 
 # ------------------------------------------------- specific-vs-generic instrument

@@ -197,12 +197,12 @@ No SD from: dispersion_type_unrecognised 1
 
 Three properties of that output:
 
-**One block per (form, summary, unit) group, always.** The SD of FEV1 change
+**One block per (form, derivation, unit) group, always.** The SD of FEV1 change
 from baseline is not the SD of FEV1, the SD of trough FEV1 is not the SD of
-FEV1 AUC (`vocab/summaries.yaml`; a named summary joins the header, as in
+FEV1 AUC (`vocab/derivations.yaml`; a named derivation joins the header, as in
 `change_from_baseline · auc · litres`), and the SD in litres is not the SD in
-millilitres. `--summary` narrows to one of them, `none` to rows naming no
-summary. Effect sizes under `--analyses` split by summary the same way. Rather than refuse to answer without three flags, `stats` groups
+millilitres. `--derivation` narrows to one of them, `none` to rows naming no
+derivation. Effect sizes under `--analyses` split by derivation the same way. Rather than refuse to answer without three flags, `stats` groups
 and reports each group separately, so `--form` and `--scale` narrow rather than
 enable. The grouping unit is the converted one where `scales.yaml` declares a
 conversion and the reported one where it does not. Because `si_scale_id` is a

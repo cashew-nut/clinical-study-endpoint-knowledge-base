@@ -78,10 +78,10 @@ class ConformedEndpoint:
     measurement_match_method: str
     measurement_confidence: float
     measurement_source_field: str
-    summary_id: str | None
-    summary_match_method: str | None
-    summary_confidence: float | None
-    summary_source_field: str | None
+    derivation_id: str | None
+    derivation_match_method: str | None
+    derivation_confidence: float | None
+    derivation_source_field: str | None
     reference_id: str
     reference_match_method: str
     reference_confidence: float
@@ -123,7 +123,7 @@ class ReviewQueueEntry:
 def conform_row(
     rules: ConformRules, row: dict, *, ta_id: str | None, allocation: str | None = None
 ) -> ConformedEndpoint | ReviewQueueEntry:
-    """Named-endpoint match, then measurement, summary, reference, form, event,
+    """Named-endpoint match, then measurement, derivation, reference, form, event,
     direction. A named-endpoint definition only fills a dimension whose own
     cascade was silent."""
     nct_id, outcome_type = row["nct_id"], row["outcome_type"]
@@ -168,7 +168,7 @@ def conform_row(
             best_semantic_score=candidate.score if candidate else None,
         )
 
-    summary = resolve.resolve_summary(rules, fields)
+    derivation = resolve.resolve_derivation(rules, fields)
 
     # The definition's reference applies only on a randomised study; asserting
     # "from randomisation" on a single-arm trial would be an unannounced default.
@@ -220,10 +220,10 @@ def conform_row(
         form_confidence=form.confidence, form_source_field=form.source_field,
         measurement_id=measurement.term_id, measurement_match_method=measurement.match_method,
         measurement_confidence=measurement.confidence, measurement_source_field=measurement.source_field,
-        summary_id=summary.term_id if summary else None,
-        summary_match_method=summary.match_method if summary else None,
-        summary_confidence=summary.confidence if summary else None,
-        summary_source_field=summary.source_field if summary else None,
+        derivation_id=derivation.term_id if derivation else None,
+        derivation_match_method=derivation.match_method if derivation else None,
+        derivation_confidence=derivation.confidence if derivation else None,
+        derivation_source_field=derivation.source_field if derivation else None,
         reference_id=reference.term_id, reference_match_method=reference.match_method,
         reference_confidence=reference.confidence, reference_source_field=reference.source_field,
         event_id=event_result.term_id if event_result else None,
@@ -250,7 +250,7 @@ CREATE OR REPLACE TABLE conformed.endpoints (
     form_id VARCHAR, form_match_method VARCHAR, form_confidence DOUBLE, form_source_field VARCHAR,
     measurement_id VARCHAR, measurement_match_method VARCHAR, measurement_confidence DOUBLE,
     measurement_source_field VARCHAR,
-    summary_id VARCHAR, summary_match_method VARCHAR, summary_confidence DOUBLE, summary_source_field VARCHAR,
+    derivation_id VARCHAR, derivation_match_method VARCHAR, derivation_confidence DOUBLE, derivation_source_field VARCHAR,
     reference_id VARCHAR, reference_match_method VARCHAR, reference_confidence DOUBLE,
     reference_source_field VARCHAR,
     event_id VARCHAR, event_match_method VARCHAR, event_confidence DOUBLE, event_source_field VARCHAR,
@@ -334,9 +334,9 @@ def run_conform(
         raise ValueError("raw.design_outcomes is empty -- run `endpoints pull` first")
     if not _table_exists(con, "vocab", "matching_cascade"):
         raise ValueError("vocab.matching_cascade is empty -- run `endpoints vocab validate` first")
-    if not _table_exists(con, "vocab", "summaries"):
+    if not _table_exists(con, "vocab", "derivations"):
         raise ValueError(
-            "vocab.summaries is missing: the warehouse vocabulary predates the summary "
+            "vocab.derivations is missing: the warehouse vocabulary predates the derivation "
             "dimension -- run `endpoints vocab validate` first"
         )
 
@@ -416,8 +416,8 @@ def _source_row(e: ConformedEndpoint) -> SourceRow:
         endpoint_id=e.endpoint_id, outcome_type=e.outcome_type,
         measure_raw=e.measure_raw, description_raw=e.description_raw, time_frame_raw=e.time_frame_raw,
         population=e.population, conformed=True,
-        form_id=e.form_id, measurement_id=e.measurement_id, summary_id=e.summary_id,
-        summary_match_method=e.summary_match_method, summary_confidence=e.summary_confidence,
+        form_id=e.form_id, measurement_id=e.measurement_id, derivation_id=e.derivation_id,
+        derivation_match_method=e.derivation_match_method, derivation_confidence=e.derivation_confidence,
         reference_id=e.reference_id, event_id=e.event_id, scale_id=e.scale_id, direction_id=e.direction_id,
         timepoint_pattern=e.timepoint_pattern, timepoint_extracted=e.timepoint_extracted,
         threshold_comparator=e.threshold_comparator, threshold_value=e.threshold_value,
