@@ -154,6 +154,45 @@ def test_trough_peak_and_auc_share_the_measurement_and_differ_in_summary(con, te
     assert row == expected, text
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Each summary across therapeutic areas, on the measurement it reduces.
+        ("Change from baseline in mean 24-hour ambulatory systolic blood pressure at Week 8", ("systolic_blood_pressure", "average", "patient_baseline")),
+        ("Change from baseline in mean seated systolic blood pressure at Week 12", ("systolic_blood_pressure", "average", "patient_baseline")),
+        ("Mean of triplicate ECG QTcF", ("ecg_qtc", "average", "not_stated")),
+        ("Change from baseline in mean daily number of rescue medication puffs", ("rescue_medication_use", "average", "patient_baseline")),
+        ("Change from baseline in worst pain intensity at Week 12", ("pain_intensity_nrs", "worst", "patient_baseline")),
+        ("Change from baseline in average pain score", ("pain_intensity_nrs", "average", "patient_baseline")),
+        # The more specific reduction wins over the weekly average of it.
+        ("Change from baseline in weekly average of daily worst itch NRS at Week 16", ("itch_numeric_rating_scale", "worst", "patient_baseline")),
+        ("Maximum change from baseline in QTcF", ("ecg_qtc", "peak", "patient_baseline")),
+        ("Peak C-peptide during mixed meal tolerance test", ("c_peptide", "peak", "not_stated")),
+        ("Nadir oxygen saturation during sleep", ("oxygen_saturation", "nadir", "not_stated")),
+        ("Cumulative oral corticosteroid dose over 52 weeks", ("systemic_corticosteroid_dose", "cumulative", "not_stated")),
+        ("Total opioid consumption in morphine milligram equivalents over 48 hours", ("opioid_consumption", "cumulative", "not_stated")),
+        ("Change from baseline in glycemic variability measured by CGM coefficient of variation", ("continuous_glucose_time_in_range", "variability", "patient_baseline")),
+        # The nadir as the reported value is a summary; compared against, a reference.
+        ("PSA nadir", ("prostate_specific_antigen", "nadir", "not_stated")),
+        ("Time to PSA progression from nadir", ("prostate_specific_antigen", None, "nadir")),
+        # Words that look like a summary and are not one.
+        ("Cumulative incidence of venous thromboembolism", ("venous_thromboembolism", None, "not_stated")),
+        ("Worst-case imputation of HbA1c", ("hba1c", None, "not_stated")),
+        ("Mean change from baseline in body weight", ("body_weight", None, "patient_baseline")),
+        ("Heart rate variability", ("heart_rate", None, "not_stated")),
+        # Best overall response is left to the response criteria.
+        ("Objective response rate (best overall response of CR or PR)", ("tumour_burden_recist", None, "not_stated")),
+    ],
+)
+def test_summaries_are_measurement_agnostic(con, text, expected):
+    _insert_outcomes(con, [("NCT000952", "primary", text, None, None, None)])
+    run_conform(con)
+    row = con.execute(
+        "SELECT measurement_id, summary_id, reference_id FROM conformed.endpoints WHERE nct_id = 'NCT000952'"
+    ).fetchone()
+    assert row == expected, text
+
+
 def test_summary_is_its_own_usdm_tag_ahead_of_the_measurement(con):
     _insert_outcomes(con, [("NCT000951", "primary", "Change From Baseline in FEV1 AUC0-3 (L) at Week 24", None, None, None)])
     run_conform(con)

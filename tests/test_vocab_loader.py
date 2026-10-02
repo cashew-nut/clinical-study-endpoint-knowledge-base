@@ -115,6 +115,15 @@ def test_precedence_list_out_of_step_with_terms_is_an_error(docs):
     assert any("omits" in e and "time_to_event" in e for e in validate_vocab(broken).errors)
 
 
+def test_summary_needs_a_known_kind_and_a_complete_precedence(docs):
+    broken = copy.deepcopy(docs)
+    broken["summary"]["terms"][0]["kind"] = "vibes"
+    broken["summary"]["match_precedence"].remove("nadir")
+    errors = validate_vocab(broken).errors
+    assert any("summaries.yaml" in e and "kind 'vibes'" in e for e in errors)
+    assert any("summaries.yaml" in e and "omits" in e and "nadir" in e for e in errors)
+
+
 def test_unknown_direction_rule_is_an_error(docs):
     broken = copy.deepcopy(docs)
     broken["form"]["terms"][0]["direction_rule"] = "vibes"

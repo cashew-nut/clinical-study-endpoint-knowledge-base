@@ -295,6 +295,9 @@ terms:
     default_scale: percentage
     typical_ta: [respiratory, anaesthesia_critical_care]
     synonyms: ["SpO2", "oxygen saturation", "SaO2", "pulse oximetry"]
+    notes: >-
+      Nadir and mean overnight SpO2 are this measurement with Summary `nadir`
+      or `average`.
 
   - id: lung_hrct_extent
     label: "Quantitative lung HRCT extent"
@@ -679,7 +682,8 @@ terms:
     notes: >-
       The steroid-sparing endpoint of severe-asthma biologic trials, where the
       reduction in maintenance prednisone is the efficacy claim rather than a
-      covariate. 39 rows.
+      covariate. 39 rows. A cumulative dose over the treatment period is this
+      measurement with Summary `cumulative`; the daily dose carries none.
 
   - id: respiratory_support
     label: "Respiratory support (ventilation, oxygen)"
@@ -962,6 +966,10 @@ terms:
     default_scale: mmhg
     typical_ta: [cardiovascular]
     synonyms: ["SBP", "systolic blood pressure", "sitting systolic blood pressure", "resting systolic blood pressure"]
+    notes: >-
+      Mean 24-hour ambulatory, mean seated and trough SBP are all this
+      measurement, told apart by Summary (`average`, `trough`) in
+      summaries.yaml; the same holds for diastolic_blood_pressure.
 
   - id: diastolic_blood_pressure
     label: "Diastolic blood pressure"
@@ -1040,7 +1048,10 @@ terms:
     default_direction: decrease_is_better
     default_scale: milliseconds
     synonyms: ["QTc", "QTcF", "QTcB", "QT interval corrected", "corrected QT interval"]
-    notes: "Safety domain: QTc prolongation is the harm, so a smaller value is the better result."
+    notes: >-
+      Safety domain: QTc prolongation is the harm, so a smaller value is the
+      better result. The mean of triplicate ECGs carries Summary `average`, and
+      the maximum post-dose change Summary `peak`.
 
   - id: heart_rate
     label: "Heart rate"
@@ -1997,6 +2008,10 @@ terms:
     mcid: 4
     typical_ta: [dermatology]
     synonyms: ["Itch NRS", "WI-NRS", "worst itch numeric rating scale", "pruritus NRS", "itch severity"]
+    notes: >-
+      The Worst-Itch NRS is this measurement with Summary `worst`; its usual
+      weekly average of daily scores still reads as `worst`, the more specific
+      reduction (summaries.yaml match_precedence).
 
   - id: skin_pain_numeric_rating_scale
     label: "Skin pain numeric rating scale"
@@ -2088,8 +2103,12 @@ terms:
     mcid: 2
     typical_ta: [musculoskeletal_pain, anaesthesia_critical_care]
     synonyms: ["NPRS", "pain NRS", "numeric pain rating scale", "pain intensity", "VAS pain",
-               "low back pain intensity", "pain score", "absolute pain"]
+               "low back pain intensity", "pain score", "absolute pain", "worst pain", "average pain"]
     patterns: ['\bN?PRS\b', '\bpain (intensity|severity|score)\b', '\bVAS\b']
+    notes: >-
+      Worst and average pain (the BPI items, or a daily diary over a recall
+      window) are this measurement with Summary `worst` or `average`
+      (summaries.yaml), not separate terms.
 
   - id: promis_pain_interference
     label: "PROMIS Pain Interference"
@@ -2120,6 +2139,9 @@ terms:
     default_scale: mme
     typical_ta: [anaesthesia_critical_care, musculoskeletal_pain]
     synonyms: ["opioid consumption", "MME", "morphine milligram equivalents", "post-discharge opioid consumption"]
+    notes: >-
+      Total or cumulative consumption over a postoperative window is this
+      measurement with Summary `cumulative`.
 
   - id: rescue_medication_use
     label: "Rescue medication use"

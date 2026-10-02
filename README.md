@@ -38,7 +38,7 @@ assembled from:
 |---|---|---|
 | `forms.yaml` | 18 | what kind of number the endpoint is (a change from baseline, a responder proportion, a time to event) |
 | `measurements.yaml` | 242 | what quantity or event it is about (FEV1, PASI, vital status) |
-| `summaries.yaml` | 3 | which reading of a repeated measurement went into it (trough, peak, AUC) |
+| `summaries.yaml` | 8 | how repeated readings of the measurement were reduced to one value (trough, peak, nadir, worst, AUC, average, cumulative, variability) |
 | `references.yaml` | 17 | what it is measured against (own baseline, randomisation, comparator arm) |
 | `events.yaml` | 38 | what occurrence stops the clock on a time-to-event endpoint |
 | `named_endpoints.yaml` | 12 | what a literature name means (PFS, OS, MACE) |

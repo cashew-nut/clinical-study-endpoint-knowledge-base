@@ -68,7 +68,7 @@ DIMENSIONS: tuple[DimensionSpec, ...] = (
         filename="summaries.yaml",
         dimension="summary",
         table="summaries",
-        columns=("id", "label", "inline_label", "definition", "notes"),
+        columns=("id", "label", "inline_label", "definition", "kind", "notes"),
     ),
     DimensionSpec(
         filename="scales.yaml",
@@ -137,6 +137,7 @@ MEASUREMENT_DOMAINS = frozenset(
 )
 EVENT_POLARITIES = frozenset({"harm", "benefit"})
 REFERENCE_KINDS = frozenset({"time_origin", "value_reference", "external_standard"})
+SUMMARY_KINDS = frozenset({"position", "extreme", "aggregate", "dispersion"})
 
 TIMEPOINT_ROLES = frozenset({"assessment_time", "observation_window", "event_horizon", "unresolved"})
 

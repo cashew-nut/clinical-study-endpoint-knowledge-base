@@ -1,24 +1,59 @@
-# Dimension: SUMMARY, how repeated readings of one measurement within a single
-# assessment are reduced to one value.
+# Dimension: SUMMARY, how repeated readings of one measurement over an
+# assessment window are reduced to the one value an endpoint reports.
 #
-# Serial spirometry after a dose yields a curve of FEV1 readings. A registry
-# endpoint reports one number from that curve: the pre-dose reading (trough), the
-# highest post-dose reading (peak), or the area under it over a window (AUC,
-# usually normalised by the window length so it stays in litres). A mixed-meal
-# tolerance test does the same to C-peptide. All three are still FEV1, or still
-# C-peptide, which is the point of keeping this off the measurement: trough,
-# peak and AUC FEV1 share `measurement_id = fev1` and so share the
-# SAME_MEASUREMENT join, and differ here instead.
+# Many measurements are read more than once per assessment: serial spirometry
+# after a dose, a mixed-meal tolerance test, 24-hour ambulatory blood pressure,
+# triplicate ECGs, a daily symptom diary, a week of rescue-medication counts, a
+# blood count drawn through a chemotherapy cycle. The endpoint reports one
+# number from those readings, and which number is a property of neither the
+# measurement nor the form:
 #
-# Kept off the form for the same reason. "Change from baseline in FEV1 AUC0-3"
-# is a change from baseline (form) in FEV1 (measurement) summarised as an AUC
-# (summary). Form answers what kind of number the endpoint reports; summary
-# answers which reading of the measurement went into it. forms.yaml's
-# `auc_over_time` is the form only when the AUC is the reported value itself,
-# with no comparison against a reference, and such rows carry summary `auc` too.
+#   reading by position     trough (end of the dosing interval)
+#   extreme of the readings peak (highest), nadir (lowest), worst (least
+#                           favourable on a symptom or severity scale)
+#   aggregate of readings   average (mean of repeated readings), auc (area
+#                           under the curve or time-weighted average),
+#                           cumulative (total over the window)
+#   spread of the readings  variability (within-participant variation)
+#
+# `kind` carries those four groups, so "any extreme" or "any aggregate" is one
+# predicate. Every term is defined without reference to a particular
+# measurement: trough FEV1, trough blood pressure and trough Ctrough are the
+# same reduction, and peak FEV1, peak C-peptide and maximum QTc change likewise.
+#
+# Why not the measurement: trough, peak and AUC FEV1 share `measurement_id =
+# fev1` and so share the SAME_MEASUREMENT join, and differ here instead. Mean
+# 24-hour and office systolic blood pressure are both `systolic_blood_pressure`;
+# worst and average pain are both `pain_intensity_nrs`.
+#
+# Why not the form: "Change from baseline in FEV1 AUC0-3" is a change from
+# baseline (form) in FEV1 (measurement) summarised as an AUC (summary). Form
+# answers what kind of number the endpoint reports; summary answers which
+# reading of the measurement went into it. forms.yaml's `auc_over_time` is the
+# form only when the AUC is the reported value itself, with no comparison
+# against a reference, and such rows carry summary `auc` too.
+#
+# Why not the reference: references.yaml's `nadir` is a value an endpoint is
+# compared against ("25% rise over nadir", RECIST progression from the smallest
+# sum). The summary `nadir` is the reported value itself ("nadir neutrophil
+# count"). Each term vetoes the other's phrasing.
 #
 # A row with no summary named gets NULL, not a sentinel: most measurements are
 # a single reading per assessment and have nothing to summarise.
+#
+# Deliberately left out:
+#   * best (best overall response). Response criteria (RECIST, iwCLL, IMWG)
+#     already define response as the best across assessments, so tagging the
+#     rows that happen to say so would split objective response rate by wording
+#     alone.
+#   * slope / rate of change. That is the form `annualised_rate_of_change`.
+#   * time of day (morning, evening, nocturnal) and the window length (24-hour,
+#     weekly). They say when readings were taken, not how they were reduced;
+#     the window is the timepoint's business.
+#   * Named PK parameters keep their measurements (pk_cmax, pk_ctrough, pk_auc),
+#     which are standard quantities in their own right. Where their text uses
+#     a summary word ("trough concentration", "peak concentration") the summary
+#     is set as well, and agrees with the measurement.
 #
 # `inline_label` is the prefix the USDM text puts before the measurement's own
 # label, through the optional `{summary}` tag in usdm_templates.yaml.
@@ -27,24 +62,36 @@ version: 1
 dimension: summary
 terms:
 
+  # --- reading by position ------------------------------------------------
+
   - id: trough
     label: "Trough"
     inline_label: "trough"
+    kind: position
     definition: >-
       The reading at the end of the dosing interval, immediately before the next
-      dose: the lowest expected value of a drug effect.
-    synonyms: ["trough", "pre-dose", "predose"]
+      dose: the point of lowest expected drug effect.
+    synonyms: ["trough", "pre-dose", "predose", "end of dosing interval"]
     patterns:
       - '\btrough\b'
+    notes: >-
+      Not the same as `nadir`. A trough is fixed by the dosing schedule and
+      read whatever its value; a nadir is the lowest value wherever it falls.
+
+  # --- extremes of the readings -------------------------------------------
 
   - id: peak
     label: "Peak"
     inline_label: "peak"
+    kind: extreme
     definition: >-
-      The highest reading over a post-dose observation window.
-    synonyms: ["peak", "maximum post-dose", "maximal post-dose"]
+      The highest reading over an observation window: after a dose, during a
+      challenge or stimulation test, or across serial readings.
+    synonyms: ["peak", "maximum post-dose", "maximal post-dose", "highest value",
+               "highest reading"]
     patterns:
       - '\bpeak\b'
+      - '\bmaxim(um|al) (post-?dose |observed |recorded )?(value|level|reading|change|increase|response)\b'
     not_if_matches:
       # Measurements whose own name contains "peak": the word names the
       # quantity, not a reduction of a curve of it.
@@ -53,15 +100,61 @@ terms:
       - '\bVO\s?2 ?peak\b'
     notes: >-
       Not `maximum` in general: "maximum tolerated dose" and "VO2 max" are not a
-      peak of a serial measurement.
+      peak of a serial measurement, so only "maximum" followed by a reading
+      word counts.
+
+  - id: nadir
+    label: "Nadir"
+    inline_label: "nadir"
+    kind: extreme
+    definition: >-
+      The lowest reading over an observation window, wherever in the window it
+      falls: the low point of a blood count through a treatment cycle, of
+      oxygen saturation overnight, of a tumour marker after treatment.
+    synonyms: ["nadir", "lowest value", "lowest reading", "lowest level", "minimum value"]
+    patterns:
+      - '\bnadir\b'
+    not_if_matches:
+      # The nadir as a reference value the endpoint is compared against
+      # (references.yaml `nadir`), not the reported value.
+      - '\b(from|since|over|above|relative to|compared (with|to)|versus|vs\.?) (the )?(PSA |on-study )?nadir\b'
+      - '\b(smallest sum|lowest value) on study\b'
+      - '\bsmallest sum\b'
+    notes: >-
+      "PSA nadir" is this term; "PSA rise of 25% over nadir" is the reference.
+
+  - id: worst
+    label: "Worst"
+    inline_label: "worst"
+    kind: extreme
+    definition: >-
+      The least favourable reading over a recall or observation window, on a
+      symptom, severity or toxicity scale: worst pain in the past 24 hours,
+      worst itch, worst grade of an adverse event.
+    synonyms: ["worst"]
+    patterns:
+      - '\bworst\b'
+    not_if_matches:
+      # Imputation and hierarchical-analysis rules, not a reduction of readings.
+      - '\bworst[- ]case\b'
+      - '\bworst[- ]rank\b'
+      - '\bworst observation carried forward\b'
+      - '\bWOCF\b'
+    notes: >-
+      Kept apart from `peak` and `nadir` because the direction of "worst"
+      depends on the scale, not on the number: worst itch is the highest score,
+      worst lung function the lowest.
+
+  # --- aggregates of the readings -----------------------------------------
 
   - id: auc
     label: "Area under the curve"
     inline_label: "area under the curve of"
+    kind: aggregate
     definition: >-
       The measurement integrated over an observation window, reported as an area
       or, divided by the window length, as a time-weighted average in the
-      measurement's own units (FEV1 AUC0-3h in litres).
+      measurement's own units (FEV1 AUC0-3h in litres, glucose AUC in mmol/L).
     synonyms: ["area under the curve", "time-weighted average", "time weighted average"]
     patterns:
       # AUC glued to its window ("AUC0-3", "AUC0-12h", "AUClast") has no word
@@ -72,9 +165,89 @@ terms:
       # "Weighted mean FEV1 over 0-3 hours" is the same normalised AUC.
       - '\bweighted mean\b'
 
-# Earlier wins. AUC first: "AUC of peak-normalised..." is an AUC, and a string
-# naming an AUC window reports the area whatever else it mentions.
+  - id: average
+    label: "Average of repeated readings"
+    inline_label: "average"
+    kind: aggregate
+    definition: >-
+      The arithmetic mean of a participant's repeated readings within one
+      assessment: triplicate seated blood pressure or ECG readings, 24-hour
+      ambulatory monitoring, or a week of daily diary entries.
+    synonyms: ["weekly average", "weekly mean", "daily average", "mean daily",
+               "average daily", "24-hour mean", "mean 24-hour", "mean seated",
+               "mean sitting"]
+    patterns:
+      - '\b(daily|weekly|monthly|nightly|24[- ]?h(ou)?r?|daytime|day-?time|night-?time|nocturnal|\d+[- ]day) (mean|average)\b'
+      - '\b(mean|average) (daily|weekly|nightly|24[- ]?h(ou)?r?|daytime|day-?time|night-?time|nocturnal|morning|evening|seated|sitting|ambulatory|home|clinic|office)\b'
+      - '\baverage of (the )?(two|three|2|3|duplicate|triplicate|repeated|consecutive|replicate)\b'
+      - '\bmean of (the )?(two|three|2|3|duplicate|triplicate|repeated|consecutive|replicate|last \d+|previous \d+)\b'
+      - '\b(duplicate|triplicate)\b'
+      - '\baverage (pain|itch|symptom|score)\b'
+    notes: >-
+      The mean a statistical analysis takes across participants ("mean change
+      from baseline") is not this: only a mean tied to a recording window,
+      a setting (seated, home, ambulatory), or a count of readings is. When a
+      text names both an average and a more specific reduction ("weekly average
+      of daily worst itch", "mean trough FEV1") the specific one wins.
+
+  - id: cumulative
+    label: "Cumulative total"
+    inline_label: "cumulative"
+    kind: aggregate
+    definition: >-
+      The sum of the readings over an observation window: cumulative
+      corticosteroid dose, total opioid consumption over 48 hours, total
+      rescue-medication puffs over a treatment period.
+    synonyms: ["cumulative dose", "total consumption", "total dose"]
+    patterns:
+      - '\bcumulative (\w+ ){0,2}(dose|doses|dosage|consumption|use|usage|amount|volume|exposure|requirement)\b'
+      - '\btotal (\w+ ){0,2}(consumption|dose|dosage|amount|use|requirement)\b'
+    not_if_matches:
+      # An event estimator, not a sum of readings.
+      - '\bcumulative incidence\b'
+    notes: >-
+      A daily dose ("mg/day") is this measurement with no summary or with
+      `average`; a cumulative dose is the sum over the window and has a
+      different scale.
+
+  # --- spread of the readings ---------------------------------------------
+
+  - id: variability
+    label: "Within-participant variability"
+    inline_label: "variability of"
+    kind: dispersion
+    definition: >-
+      The variation of a participant's own repeated readings over a window,
+      reported as a standard deviation, coefficient of variation or excursion
+      amplitude: glycaemic variability, visit-to-visit blood pressure
+      variability.
+    synonyms: ["variability", "glycaemic variability", "glycemic variability"]
+    patterns:
+      - '\bvariability\b'
+      - '\bmean amplitude of glyc(a)?emic excursions?\b'
+      - '\bMAGE\b'
+    not_if_matches:
+      # A measurement in its own right, and study-level statistics that are not
+      # a participant's own spread.
+      - '\bheart rate variability\b'
+      - '\bHRV\b'
+      - '\b(inter|intra|between)[- ]?(rater|observer|reader|subject|patient|assay|laboratory)\b'
+
+# Earlier wins, most specific reduction first.
+#   auc first: "AUC of peak-normalised..." is an AUC, and a string naming an
+#     AUC window reports the area whatever else it mentions.
+#   variability before the extremes and averages it is computed from ("SD of
+#     daily mean glucose").
+#   cumulative before average: "mean cumulative dose" is a cumulative dose.
+#   peak before trough: "peak and trough FEV1" leads with peak.
+#   average last: it is the least specific, and the mean of trough or worst
+#     readings is still a trough or worst reading.
 match_precedence:
   - auc
+  - variability
+  - cumulative
   - peak
+  - nadir
   - trough
+  - worst
+  - average

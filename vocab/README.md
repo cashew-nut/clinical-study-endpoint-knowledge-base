@@ -9,7 +9,7 @@ the judgment calls, and the things a reviewer should push back on.
 ```
 forms.yaml               18 terms   what kind of number the endpoint is
 measurements.yaml       242 terms   what quantity or event it is about
-summaries.yaml            3 terms   which reading of a repeated measurement (trough, peak, AUC)
+summaries.yaml            8 terms   how repeated readings are reduced to one value (trough, peak, nadir, worst, AUC, average, cumulative, variability)
 references.yaml          17 terms   what it is measured against
 directions.yaml           7 terms   which way is better (derived, not matched)
 events.yaml              38 terms   what occurrence ends the clock, for a time-to-event endpoint
@@ -166,6 +166,33 @@ to the AUC. The USDM templates render `[{summary} ]{measurement}` so the text
 says "area under the curve of FEV1" while the measurement surrogate stays
 plain FEV1. `endpoints stats` groups by summary as well as form and unit, and
 `--summary` narrows to one.
+
+### 4b. The summary vocabulary is measurement-agnostic
+
+The first three terms came from FEV1, but the same reductions recur in every
+therapeutic area: mean 24-hour ambulatory and trough blood pressure, worst and
+average pain, the weekly average of a daily itch score, nadir neutrophil count
+and nadir SpO2, cumulative steroid dose and total opioid consumption,
+glycaemic variability. `summaries.yaml` now has eight terms in four `kind`s:
+`position` (trough), `extreme` (peak, nadir, worst), `aggregate` (auc,
+average, cumulative) and `dispersion` (variability). No definition names a
+measurement, and the validator checks `kind` and that `match_precedence` lists
+every term.
+
+Three boundaries are worth pushing back on:
+
+* **`average` is only a participant's own mean.** "Mean change from baseline"
+  is the analysis mean across participants and gets no summary. Only a mean
+  tied to a recording window (24-hour, weekly, daily), a setting (seated,
+  ambulatory, home) or a count of readings (triplicate) counts, and any more
+  specific reduction beats it: "weekly average of daily worst itch" is `worst`.
+* **`nadir` is split between summary and reference.** "PSA nadir" reports the
+  low point and is summary `nadir`; "25% rise over nadir" compares against it
+  and is reference `nadir`. Each vetoes the other's phrasing, so a bare
+  "nadir" no longer sets the reference.
+* **`best` is left out.** Response criteria already define objective response
+  as the best across assessments, so tagging the rows whose text says "best
+  overall response" would split ORR by wording alone.
 
 ### 5. Reference spans time origins and value references, tagged by `kind`
 

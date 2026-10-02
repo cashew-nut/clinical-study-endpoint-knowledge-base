@@ -167,8 +167,9 @@ SummaryOption = Annotated[
     Optional[str],
     typer.Option(
         "--summary",
-        help="Summary id(s), comma-separated: trough, peak, auc, or none for rows that "
-        "name no summary. Separates trough from AUC FEV1, which share --measurement fev1.",
+        help="Summary id(s), comma-separated: trough, peak, nadir, worst, auc, average, "
+        "cumulative, variability, or none for rows that name no summary. Separates trough "
+        "from AUC FEV1, which share --measurement fev1.",
         rich_help_panel=ENDPOINT_FILTERS_PANEL,
     ),
 ]

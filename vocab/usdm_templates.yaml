@@ -44,7 +44,7 @@
 # {summary} is always an optional prefix, `[{summary} ]{measurement}`: most
 # rows name no summary (summaries.yaml), and it rides as its own tag rather than
 # inside the measurement's label so the measurement surrogate stays shared
-# across trough, peak and AUC readings of the same quantity.
+# across trough, peak, average or AUC readings of the same quantity.
 #
 # WHAT IS NOT A TAG. Direction. It is derived rather than matched
 # (directions.yaml), it can vary by therapeutic area via `direction_by_ta`, and
