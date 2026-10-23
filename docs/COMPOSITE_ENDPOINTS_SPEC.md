@@ -214,7 +214,7 @@ component set looks like an answer.
 ## The traversal
 
 Verified against a fixture with the MACE ladder, net clinical benefit, and ACR20
-(DuckDB 1.5.5). Expanding a variant to its transitive leaf components:
+(DuckDB 1.5.5 and 2.0.0). Expanding a variant to its transitive leaf components:
 
 ```sql
 WITH RECURSIVE expand(root_variant_id, variant_id, component_measurement_id, depth, path) AS (
